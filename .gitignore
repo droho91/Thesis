@@ -18,3 +18,7 @@
 
 # Hardhat coverage reports
 /coverage
+
+# Runtime-generated demo state
+/demo/multichain-addresses.json
+/demo/multichain-relayer-state.json

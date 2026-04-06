@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Owner Portal | Cross-Chain Lending</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      try {
+        const storedTheme =
+          localStorage.getItem("crosschain-lending-theme") ||
+          localStorage.getItem("chainlend-theme");
+        const theme =
+          storedTheme === "light" || storedTheme === "dark"
+            ? storedTheme
+            : window.matchMedia?.("(prefers-color-scheme: light)")?.matches
+              ? "light"
+              : "dark";
+        document.documentElement.dataset.theme = theme;
+      } catch {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
+    <link rel="icon" type="image/png" href="./assets/logo.png?v=5" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="portal-owner" data-portal="owner">
+    <header class="topbar">
+      <div class="brand-stack">
+        <a class="brand-link" href="./index.html" aria-label="Cross-Chain Lending home">
+          <img class="brand-logo" src="./assets/logo.png?v=5" alt="Cross-Chain Lending logo" />
+        </a>
+        <div>
+          <p class="eyebrow">Owner / Risk Admin Portal</p>
+          <h1>Cross-Chain Lending Control</h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div class="theme-toggle" role="group" aria-label="Theme mode">
+          <button class="theme-toggle-option" type="button" data-theme-option="dark" aria-label="Dark mode" title="Dark mode">☾</button>
+          <button class="theme-toggle-option" type="button" data-theme-option="light" aria-label="Light mode" title="Light mode">☀</button>
+        </div>
+        <a class="btn link-btn" href="./user.html">User Portal</a>
+        <button id="connectBtn" class="btn primary">Connect Wallet</button>
+        <button id="refreshBtn" class="btn">Refresh</button>
+      </div>
+    </header>
+
+    <section class="status-grid">
+      <article class="status-card"><h2>Wallet</h2><p id="walletText">Not connected</p></article>
+      <article class="status-card"><h2>Role</h2><p id="roleText">Unknown</p></article>
+      <article class="status-card"><h2>Current Chain</h2><p id="activeChainText">Unknown</p></article>
+    </section>
+
+    <section class="panel market-panel">
+      <div class="market-panel-head">
+        <div>
+          <h3>Active Market</h3>
+          <p id="activeMarketText" class="panel-note">-</p>
+        </div>
+        <div class="market-selectors">
+          <label class="market-select">
+            <span>Collateral Chain</span>
+            <select id="collateralChainSelect"></select>
+          </label>
+          <label class="market-select">
+            <span>Lending Chain</span>
+            <select id="lendingChainSelect"></select>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <main class="panel-grid">
+      <section class="panel wallet-overview wide">
+        <h3>Borrower Snapshot</h3>
+        <div class="wallet-split">
+          <article class="chain-wallet-card chain-a">
+            <div class="chain-wallet-head">
+              <h4 id="sourceCardTitle">Chain A</h4>
+              <span class="chain-tag">Collateral</span>
+            </div>
+            <div class="asset-list">
+              <div class="asset-line"><span id="sourceBalanceLabel">mCOL Wallet</span><strong id="a-user-balance">-</strong></div>
+              <div class="asset-line"><span id="sourceLockedLabel">Locked in Vault</span><strong id="a-locked">-</strong></div>
+            </div>
+          </article>
+
+          <article class="chain-wallet-card chain-b">
+            <div class="chain-wallet-head">
+              <h4 id="destinationCardTitle">Chain B</h4>
+              <span class="chain-tag">Lending</span>
+            </div>
+            <div class="asset-list">
+              <div class="asset-line"><span id="destinationWrappedLabel">wCOL Wallet</span><strong id="b-user-wrapped">-</strong></div>
+              <div class="asset-line"><span id="destinationStableLabel">sUSD Wallet</span><strong id="b-user-stable">-</strong></div>
+              <div class="asset-line"><span id="poolCollateralLabel">Collateral in Pool</span><strong id="pos-collateral">-</strong></div>
+              <div class="asset-line"><span id="debtLabel">Debt</span><strong id="pos-debt">-</strong></div>
+              <div class="asset-line"><span id="maxBorrowLabel">Max Borrow</span><strong id="pos-max-borrow">-</strong></div>
+              <div class="asset-line"><span id="healthFactorLabel">Health Factor</span><strong id="pos-health-factor">-</strong></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel wide workflow-panel">
+        <h3>Operations Console</h3>
+        <div class="workflow-grid">
+          <article class="workflow-card risk-config-card">
+            <div class="workflow-head">
+              <div>
+                <div class="title-inline">
+                  <h4 id="riskPanelTitle">Market Configuration</h4>
+                  <button id="riskPanelInfo" class="info-pill" type="button" data-tooltip="" aria-label="Risk parameter info">i</button>
+                </div>
+              </div>
+            </div>
+            <div class="row four risk-input-row">
+              <input id="collateralFactorInput" type="number" min="1" max="10000" step="1" placeholder="Factor (bps)" />
+              <input id="loanDurationHoursInput" type="number" min="1" step="1" placeholder="Duration (hrs)" />
+              <input id="penaltyBpsInput" type="number" min="0" max="10000" step="1" placeholder="Penalty (bps)" />
+              <input id="bonusBpsInput" type="number" min="0" max="10000" step="1" placeholder="Bonus (bps)" />
+            </div>
+            <div class="row two">
+              <input id="collateralPriceInput" type="number" min="0" step="any" placeholder="wCOL price (USD)" />
+              <input id="stablePriceInput" type="number" min="0" step="any" placeholder="sUSD price (USD)" />
+            </div>
+            <div class="row one">
+              <button id="applyRiskProfileBtn" class="btn primary">Apply Baseline</button>
+            </div>
+            <details class="meta-collapse advanced-actions">
+              <summary class="collapse-summary">
+                <span>Advanced Risk Updates</span>
+                <span class="summary-inline">
+                  <button id="advancedRiskInfo" class="info-pill" type="button" data-tooltip="" aria-label="Advanced risk update info">i</button>
+                  <span class="summary-arrow" aria-hidden="true">▾</span>
+                </span>
+              </summary>
+              <div class="collapse-body">
+                <div class="row four">
+                  <button id="updateFactorBtn" class="btn">Set Factor</button>
+                  <button id="updateDurationBtn" class="btn">Set Duration</button>
+                  <button id="updatePenaltyBtn" class="btn">Set Penalty</button>
+                  <button id="updateBonusBtn" class="btn">Set Bonus</button>
+                </div>
+                <div class="row two">
+                  <button id="updateCollateralPriceBtn" class="btn">Set Wrapped Price</button>
+                  <button id="updateStablePriceBtn" class="btn">Set Stable Price</button>
+                </div>
+              </div>
+            </details>
+          </article>
+
+          <article class="workflow-card">
+            <div class="workflow-head">
+              <div>
+                <div class="title-inline">
+                  <h4 id="liquidityPanelTitle">Liquidity Management</h4>
+                  <button id="liquidityPanelInfo" class="info-pill" type="button" data-tooltip="" aria-label="Seed info">i</button>
+                </div>
+              </div>
+            </div>
+            <div class="row two">
+              <input id="mintCollateralAmount" type="number" min="0" step="any" placeholder="mCOL to user" />
+              <button id="mintCollateralToUserBtn" class="btn">Mint to User</button>
+            </div>
+            <div class="row two">
+              <input id="mintStableToUserAmount" type="number" min="0" step="any" placeholder="sUSD to user" />
+              <button id="mintStableToUserBtn" class="btn">Mint to User</button>
+            </div>
+            <div class="row two">
+              <input id="mintStableAmount" type="number" min="0" step="any" placeholder="sUSD to pool" />
+              <button id="mintStableToPoolBtn" class="btn">Mint to Pool</button>
+            </div>
+          </article>
+
+          <article class="workflow-card">
+            <div class="workflow-head">
+              <div>
+                <div class="title-inline">
+                  <h4>Enforcement</h4>
+                  <button id="enforcePanelInfo" class="info-pill" type="button" data-tooltip="" aria-label="Enforce info">i</button>
+                </div>
+              </div>
+            </div>
+            <div class="row three">
+              <button id="advanceTimeBtn" class="btn">Advance +1 Day</button>
+              <button id="applyPenaltyBtn" class="btn">Apply Penalty</button>
+              <button id="liquidateBtn" class="btn primary">Liquidate User</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel logs wide">
+        <h3>Activity</h3>
+        <ul id="logList"></ul>
+      </section>
+
+      <section class="panel wide">
+        <details class="meta-collapse advanced-shell">
+          <summary class="collapse-summary">
+            <span class="summary-title">Advanced Details</span>
+            <span class="summary-arrow" aria-hidden="true">▾</span>
+          </summary>
+
+          <div class="advanced-tabs" data-tab-group="owner-advanced">
+            <button class="advanced-tab active" type="button" data-tab-target="metrics">Metrics</button>
+            <button class="advanced-tab" type="button" data-tab-target="status">Status</button>
+            <button class="advanced-tab" type="button" data-tab-target="bridge">Bridge</button>
+            <button class="advanced-tab" type="button" data-tab-target="infra">Infra</button>
+          </div>
+
+          <div class="collapse-body advanced-section advanced-metrics active" data-tab-panel="metrics">
+            <h4 class="collapse-title">Runtime Metrics</h4>
+            <div class="metrics-grid compact-grid">
+              <article class="metric-card"><h4>Total Debt</h4><p id="owner-debt-card">-</p></article>
+              <article class="metric-card"><h4>Principal</h4><p id="owner-principal-card">-</p></article>
+              <article class="metric-card"><h4>Interest</h4><p id="owner-interest-card">-</p></article>
+              <article class="metric-card"><h4>Penalty</h4><p id="owner-penalty-card">-</p></article>
+              <article class="metric-card"><h4>Health Factor</h4><p id="owner-health-card">-</p></article>
+              <article class="metric-card"><h4>Max Withdraw</h4><p id="owner-max-withdraw-card">-</p></article>
+              <article class="metric-card"><h4>Due Time</h4><p id="pos-due-time">-</p></article>
+              <article class="metric-card"><h4>Overdue</h4><p id="pos-overdue">-</p></article>
+              <article class="metric-card"><h4>Penalty Applied</h4><p id="pos-penalty">-</p></article>
+              <article class="metric-card"><h4>Exact Debt</h4><p id="pos-debt-exact">-</p></article>
+              <article class="metric-card"><h4>Exact Max Withdraw</h4><p id="pos-max-withdraw-exact">-</p></article>
+              <article class="metric-card"><h4>Pool Liquidity</h4><p id="pool-liquidity">-</p></article>
+              <article class="metric-card"><h4>Borrow APR</h4><p id="pool-apr">-</p></article>
+              <article class="metric-card"><h4>Utilization</h4><p id="pool-utilization">-</p></article>
+            </div>
+          </div>
+
+          <div class="collapse-body advanced-section advanced-status" data-tab-panel="status">
+            <h4 class="collapse-title">Workflow Status</h4>
+            <p id="nextActionText">-</p>
+            <p id="nextActionHint" class="panel-note">-</p>
+          </div>
+
+          <div class="collapse-body advanced-section advanced-bridge" data-tab-panel="bridge">
+            <h4 class="collapse-title">Bridge Queue</h4>
+            <div class="inline-help" style="margin-bottom: 10px;">
+              <button id="ownerBridgeInfo" class="info-pill" type="button" data-tooltip="" aria-label="Bridge queue info">i</button>
+            </div>
+            <div class="metrics-grid compact-grid">
+              <article class="metric-card"><h4>Pending Lock</h4><p id="pendingLockMessage">-</p></article>
+              <article class="metric-card"><h4>Lock Attests</h4><p id="pendingLockAttests">-</p></article>
+              <article class="metric-card"><h4>Lock State</h4><p id="pendingLockState">-</p></article>
+              <article class="metric-card"><h4>Pending Burn</h4><p id="pendingBurnMessage">-</p></article>
+              <article class="metric-card"><h4>Burn Attests</h4><p id="pendingBurnAttests">-</p></article>
+              <article class="metric-card"><h4>Burn State</h4><p id="pendingBurnState">-</p></article>
+            </div>
+          </div>
+
+          <div class="collapse-body advanced-section advanced-infra" data-tab-panel="infra">
+            <h4 class="collapse-title">Infrastructure</h4>
+            <div class="arch-grid">
+              <article class="arch-card">
+                <h4 id="infraSourceTitle">Chain A</h4>
+                <p id="chainAHeader" class="panel-note">-</p>
+                <dl class="kv-list">
+                  <div><dt>Vault</dt><dd id="a-vault">-</dd></div>
+                  <div><dt>Gateway</dt><dd id="a-gateway">-</dd></div>
+                  <div><dt>Token</dt><dd id="a-token">-</dd></div>
+                  <div><dt>Router</dt><dd id="a-router">-</dd></div>
+                </dl>
+              </article>
+
+              <article class="arch-card">
+                <h4 id="infraDestinationTitle">Chain B</h4>
+                <p id="chainBHeader" class="panel-note">-</p>
+                <dl class="kv-list">
+                  <div><dt>Gateway</dt><dd id="b-gateway">-</dd></div>
+                  <div><dt>Wrapped</dt><dd id="b-wrapped">-</dd></div>
+                  <div><dt>Stable</dt><dd id="b-stable">-</dd></div>
+                  <div><dt>Pool</dt><dd id="b-pool">-</dd></div>
+                  <div><dt>Router</dt><dd id="b-router">-</dd></div>
+                </dl>
+              </article>
+
+              <article class="arch-card">
+                <h4>Roles</h4>
+                <dl class="kv-list">
+                  <div><dt>Owner</dt><dd id="owner-address">-</dd></div>
+                  <div><dt>User</dt><dd id="user-address">-</dd></div>
+                  <div><dt>Validators</dt><dd id="validators-addresses">-</dd></div>
+                  <div><dt>Threshold</dt><dd id="bridge-threshold">-</dd></div>
+                </dl>
+              </article>
+            </div>
+          </div>
+        </details>
+      </section>
+    </main>
+
+    <script type="module" src="./theme.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

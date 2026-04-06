@@ -1,31 +1,50 @@
 {
   "name": "thesis",
   "version": "1.0.0",
-  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:solidity": "hardhat test solidity",
+    "node:chainA": "hardhat node --hostname 127.0.0.1 --port 8545 --chain-id 31337",
+    "node:chainB": "npx ganache --server.host 127.0.0.1 --server.port 9545 --chain.chainId 31338 --wallet.mnemonic \"test test test test test test test test test test test junk\"",
+    "deploy:multichain": "npm run compile && node scripts/deploy-multichain.mjs",
+    "seed:multichain": "node scripts/seed-multichain.mjs",
+    "worker:validator:1": "node scripts/validator-worker.mjs --validator-index 1",
+    "worker:validator:2": "node scripts/validator-worker.mjs --validator-index 3",
+    "worker:validator:3": "node scripts/validator-worker.mjs --validator-index 4",
+    "worker:executor": "node scripts/executor-worker.mjs",
+    "worker:hub": "node scripts/worker-hub.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Multi-chain lending thesis prototype with Chain A collateral vault and Chain B lending pool.",
   "devDependencies": {
-    "@nomicfoundation/hardhat-ethers": "^4.0.4",
-    "@nomicfoundation/hardhat-ignition": "^3.0.7",
-    "@nomicfoundation/hardhat-toolbox-mocha-ethers": "^3.0.2",
     "@types/chai": "^4.3.20",
     "@types/chai-as-promised": "^8.0.2",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^22.19.7",
-    "chai": "^5.3.3",
+    "@types/node": "^22.19.11",
+    "chai": "^4.3.7",
     "ethers": "^6.16.0",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
-    "hardhat": "^3.1.5",
+    "hardhat": "^3.1.8",
     "mocha": "^11.7.5",
+    "ts-node": "^10.9.2",
     "typescript": "~5.8.0"
   },
   "type": "module",
   "dependencies": {
     "@openzeppelin/contracts": "^5.4.0"
-  }
+  },
+  "directories": {
+    "test": "test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/droho91/Thesis.git"
+  },
+  "bugs": {
+    "url": "https://github.com/droho91/Thesis/issues"
+  },
+  "homepage": "https://github.com/droho91/Thesis#readme"
 }
