@@ -459,4 +459,33 @@ contract LendingPoolTest is Test {
         assertEq(pool.totalWrittenOffDebt(), debtBeforeWriteOff);
         assertEq(pool.grossDebtExposure(), debtBeforeWriteOff);
     }
+
+    function testPauseBlocksBorrowAndUnpauseRestores() public {
+        vm.prank(user);
+        pool.depositCollateral(100 ether);
+
+        pool.pause();
+
+        vm.expectRevert();
+        vm.prank(user);
+        pool.borrow(1 ether);
+
+        pool.unpause();
+
+        vm.prank(user);
+        pool.borrow(1 ether);
+        (, uint256 principalAmount,,,,) = pool.positions(user);
+        assertEq(principalAmount, 1 ether);
+    }
+
+    function testIsLiquidatableTrueWhenOverdue() public {
+        vm.startPrank(user);
+        pool.depositCollateral(100 ether);
+        pool.borrow(10 ether);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + pool.loanDuration() + 1);
+        assertTrue(pool.isOverdue(user));
+        assertTrue(pool.isLiquidatable(user));
+    }
 }

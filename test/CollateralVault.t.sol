@@ -77,4 +77,19 @@ contract CollateralVaultTest is Test {
         vm.prank(bridge);
         vault.unlockFromBurnEvent(user, 20 ether, burnEventId);
     }
+
+    function testLockRevertsForZeroAmount() public {
+        vm.expectRevert(bytes("AMOUNT_ZERO"));
+        vm.prank(user);
+        vault.lock(0);
+    }
+
+    function testUnlockRevertsForZeroEventId() public {
+        vm.prank(user);
+        vault.lock(100 ether);
+
+        vm.expectRevert(bytes("EVENT_ID_ZERO"));
+        vm.prank(bridge);
+        vault.unlockFromBurnEvent(user, 10 ether, bytes32(0));
+    }
 }

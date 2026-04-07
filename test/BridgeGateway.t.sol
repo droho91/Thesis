@@ -284,4 +284,43 @@ contract BridgeGatewayTest is Test {
         vm.expectRevert(bytes("MINT_FAILED"));
         revertingGateway.execute(txHash, 0, user, 1 ether);
     }
+
+    function testUnlockGatewayExecutesUnlockSelector() public {
+        BridgeGateway unlockGateway = _deployGateway(
+            31338,
+            31337,
+            2,
+            bytes4(keccak256("unlockFromBurnEvent(address,uint256,bytes32)")),
+            bytes4(0),
+            0
+        );
+        unlockGateway.initializeTarget(address(target));
+        unlockGateway.initializeSourceEmitter(sourceEmitter);
+
+        bytes32 txHash = keccak256("SRC_TX_UNLOCK");
+        uint256 amount = 12 ether;
+
+        vm.prank(validator1);
+        unlockGateway.attest(txHash, 1, user, amount);
+        vm.prank(validator2);
+        unlockGateway.attest(txHash, 1, user, amount);
+
+        unlockGateway.execute(txHash, 1, user, amount);
+
+        assertEq(target.lastUser(), user);
+        assertEq(target.lastAmount(), amount);
+        assertEq(target.unlockCount(), 1);
+        assertEq(target.mintCount(), 0);
+    }
+
+    function testOnlyOwnerCanSetTxCap() public {
+        vm.expectRevert(bytes("ONLY_OWNER"));
+        vm.prank(user);
+        gateway.setTxCap(1 ether);
+    }
+
+    function testSetTxCapUpdatesValue() public {
+        gateway.setTxCap(25 ether);
+        assertEq(gateway.txCap(), 25 ether);
+    }
 }
