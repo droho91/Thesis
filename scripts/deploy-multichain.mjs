@@ -129,6 +129,7 @@ async function deployChainStack({
     swapRouter: await swapRouter.getAddress(),
     lendingPool: await lendingPool.getAddress(),
     mintGateway: await mintGateway.getAddress(),
+    unlockGateway: await unlockGateway.getAddress(),
     
     symbols: {
       collateral: collateralSymbol,
