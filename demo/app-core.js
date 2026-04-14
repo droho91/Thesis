@@ -23,13 +23,29 @@ const ABI = {
     "function approve(address spender, uint256 amount) returns (bool)",
     "event BridgeMintedFromLock(address indexed to, uint256 amount, bytes32 indexed lockEventId)",
   ],
-  gateway: [
-    "function computeMessageId(bytes32 srcTxHash, uint256 srcLogIndex, address user, uint256 amount) view returns (bytes32)",
-    "function attestCount(bytes32 messageId) view returns (uint256)",
-    "function executed(bytes32 messageId) view returns (bool)",
-    "function threshold() view returns (uint256)",
-    "function requestBurn(uint256 amount)",
-    "event BurnRequested(address indexed user, uint256 amount)",
+  messageBus: [
+    "event BridgeMessageDispatched(bytes32 indexed messageId, bytes32 indexed routeId, uint8 indexed action, uint256 sourceChainId, uint256 destinationChainId, address sourceSender, address recipient, address asset, uint256 amount, uint256 nonce, bytes32 payloadHash)",
+  ],
+  bridgeRouter: [
+    "function requestBurn(bytes32 routeId, uint256 amount, address recipient) returns (bytes32 messageId)",
+    "event ReleaseRequested(bytes32 indexed messageId, bytes32 indexed routeId, address indexed user, address recipient, uint256 amount)",
+  ],
+  lightClient: [
+    "function isFinalized(uint256 sourceChainId, bytes32 blockHash) view returns (bool)",
+  ],
+  executionHeaderStore: [
+    "function isKnown(uint256 sourceChainId, bytes32 blockHash) view returns (bool)",
+  ],
+  inbox: [
+    "function consumed(bytes32 messageId) view returns (bool)",
+  ],
+  riskManager: [
+    "function routePaused(bytes32 routeId) view returns (bool)",
+    "function routeCursed(bytes32 routeId) view returns (bool)",
+    "function secondaryApproved(bytes32 routeId, bytes32 messageId) view returns (bool)",
+  ],
+  routeRegistry: [
+    "function getRoute(bytes32 routeId) view returns (bool enabled,uint8 action,uint256 sourceChainId,uint256 destinationChainId,address sourceEmitter,address sourceSender,address sourceAsset,address target,uint256 flatFee,uint16 feeBps,uint256 transferCap,uint256 rateLimitAmount,uint256 rateLimitWindow,uint256 highValueThreshold)",
   ],
   oracle: [
     "function getPrice(address token) view returns (uint256)",
@@ -63,12 +79,18 @@ const ABI = {
     "function loanDuration() view returns (uint256)",
     "function overduePenaltyBps() view returns (uint256)",
     "function liquidationBonusBps() view returns (uint256)",
+    "function baseRateBps() view returns (uint256)",
+    "function slope1Bps() view returns (uint256)",
+    "function slope2Bps() view returns (uint256)",
+    "function kinkBps() view returns (uint256)",
     "function collateralValueUsd(address user) view returns (uint256)",
     "function debtValueUsd(address user) view returns (uint256)",
     "function setCollateralFactorBps(uint256 value)",
+    "function setLiquidationThresholdBps(uint256 value)",
     "function setLoanDuration(uint256 value)",
     "function setOverduePenaltyBps(uint256 value)",
     "function setLiquidationBonusBps(uint256 value)",
+    "function setInterestModel(uint256 baseRateBps, uint256 slope1Bps, uint256 slope2Bps, uint256 kinkBps)",
     "function applyOverduePenalty(address user)",
     "function liquidate(address user, uint256 repayAmount)",
     "event Borrowed(address indexed user, uint256 amount)",
@@ -86,6 +108,8 @@ const ACTION_META = {
   updateBonusBtn: { role: "owner", chain: "destination", label: "Set liquidation bonus" },
   updateCollateralPriceBtn: { role: "owner", chain: "destination", label: "Set wrapped price" },
   updateStablePriceBtn: { role: "owner", chain: "destination", label: "Set stable price" },
+  updateLiquidationThresholdBtn: { role: "owner", chain: "destination", label: "Set liquidation threshold" },
+  updateInterestModelBtn: { role: "owner", chain: "destination", label: "Set interest model" },
   mintCollateralToUserBtn: { role: "owner", chain: "source", label: "Mint local collateral to user" },
   mintStableToUserBtn: { role: "owner", chain: "destination", label: "Mint stable to user" },
   mintStableToPoolBtn: { role: "owner", chain: "destination", label: "Mint stable to pool" },
@@ -448,7 +472,7 @@ function chainNameById(chainId) {
 
 function roleText(role) {
   if (role === "owner") return "Owner";
-  if (role === "validator") return "Validator";
+  if (role === "relayer") return "Relayer";
   if (role === "user") return "User";
   if (role === "any") return "Any";
   return "Unknown";
@@ -460,7 +484,7 @@ function currentRole() {
 
   if (address === getOwnerAddress().toLowerCase()) return "owner";
   if (address === getUserAddress().toLowerCase()) return "user";
-  if ((cfg.roles.validators || []).some((v) => v.toLowerCase() === address)) return "validator";
+  if ((cfg.roles.relayers || []).some((v) => v.toLowerCase() === address)) return "relayer";
   return "unknown";
 }
 
@@ -570,11 +594,11 @@ function renderStaticConfig() {
   setText("infraDestinationTitle", chainB.name || "Chain B");
 
   setText("a-vault", chainA.collateralVault || "-");
-  setText("a-gateway", `mint ${chainA.mintGateway || "-"} | unlock ${chainA.unlockGateway || "-"}`);
+  setText("a-gateway", `router ${chainA.bridgeRouter || "-"} | bus ${chainA.messageBus || "-"}`);
   setText("a-token", chainA.localCollateralToken || "-");
   setText("a-router", chainA.swapRouter || "-");
 
-  setText("b-gateway", `mint ${chainB.mintGateway || "-"} | unlock ${chainB.unlockGateway || "-"}`);
+  setText("b-gateway", `router ${chainB.bridgeRouter || "-"} | bus ${chainB.messageBus || "-"}`);
   setText("b-wrapped", chainB.wrappedRemoteToken || "-");
   setText("b-stable", chainB.stableToken || "-");
   setText("b-pool", chainB.lendingPool || "-");
@@ -582,8 +606,8 @@ function renderStaticConfig() {
 
   setText("owner-address", getOwnerAddress());
   setText("user-address", getUserAddress());
-  setText("validators-addresses", (cfg.roles.validators || []).join(", "));
-  setText("bridge-threshold", String(cfg.roles.bridgeThreshold));
+  setText("relayer-addresses", (cfg.roles.relayers || []).join(", "));
+  setText("proof-mode", cfg.proofDefaults?.verifierMode || "light-client + receipt proof");
 }
 
 function marketDescription(market) {
@@ -681,7 +705,7 @@ function renderMarketLabels() {
   setTooltip("releaseFlowInfo", `After debt is cleared or reduced, withdraw ${symbols.wrapped} back to wallet and burn it on ${destination.name} to unlock ${symbols.collateral} on ${source.name}.`);
   setTooltip("closeWithCollateralInfo", `Sell ${symbols.wrapped} collateral to repay debt on ${destination.name}. This reduces the amount of wrapped collateral you can later burn to unlock ${symbols.collateral} on ${source.name}. Use Repay All if you want to preserve as much collateral as possible.`);
   setText("sellCollateralWarning", `Selling ${symbols.wrapped} to repay debt reduces how much ${symbols.collateral} you can later unlock on ${source.name}.`);
-  setTooltip("bridgePanelInfo", "Main bridge queue: see what message is pending, how many validator attestations are in, and whether execute is ready.");
+  setTooltip("bridgePanelInfo", "Main bridge queue: message dispatch, finalized header relay, execution-header availability, proof verification, route policy, and consumption.");
   setTooltip("termLtvInfo", "LTV = Loan-To-Value. How much debt is allowed compared to collateral value.");
   setTooltip("termHfInfo", "HF = Health Factor. Above 1.00 is safer; below 1.00 means liquidatable.");
   setTooltip("termPenaltyInfo", "Penalty is extra debt added when a loan is overdue.");
@@ -690,9 +714,10 @@ function renderMarketLabels() {
   setText("termHfText", "Safety score of your position.");
   setText("termPenaltyText", "Extra debt added when overdue.");
   setText("termCloseFactorText", "Max debt chunk liquidated per normal liquidation.");
-  setTooltip("ownerBridgeInfo", "Tracks pending bridge messages, validator attestations, and execution status for the active market.");
+  setTooltip("ownerBridgeInfo", "Tracks proof-based bridge messages, route policy, header relay, proof readiness, and consumed message state for the active market.");
   setTooltip("riskPanelInfo", `Set market risk parameters and prices for the lending side on ${destination.name}.`);
   setTooltip("advancedRiskInfo", "Update one market parameter at a time without reapplying the full baseline.");
+  setTooltip("advancedInterestSettingsInfo", "Tune liquidation threshold and the kinked APR model for the lending pool on the destination chain.");
   setTooltip("liquidityPanelInfo", `Seed borrower collateral on ${source.name}, mint stable to the borrower on ${destination.name} for Repay All demos, or add stable liquidity to the pool on ${destination.name}.`);
   setTooltip("enforcePanelInfo", "Use admin actions to advance time, apply overdue penalty, or liquidate unsafe positions.");
 
@@ -726,7 +751,13 @@ function sourceContracts(signerOrProvider) {
   return {
     collateral: new ethers.Contract(source.localCollateralToken, ABI.erc20, signerOrProvider),
     vault: new ethers.Contract(source.collateralVault, ABI.vault, signerOrProvider),
-    unlockGateway: new ethers.Contract(source.unlockGateway, ABI.gateway, signerOrProvider),
+    messageBus: new ethers.Contract(source.messageBus, ABI.messageBus, signerOrProvider),
+    bridgeRouter: new ethers.Contract(source.bridgeRouter, ABI.bridgeRouter, signerOrProvider),
+    lightClient: new ethers.Contract(source.lightClient, ABI.lightClient, signerOrProvider),
+    executionHeaderStore: new ethers.Contract(source.executionHeaderStore, ABI.executionHeaderStore, signerOrProvider),
+    inbox: new ethers.Contract(source.messageInbox, ABI.inbox, signerOrProvider),
+    riskManager: new ethers.Contract(source.riskManager, ABI.riskManager, signerOrProvider),
+    routeRegistry: new ethers.Contract(source.routeRegistry, ABI.routeRegistry, signerOrProvider),
   };
 }
 
@@ -759,7 +790,13 @@ function destinationContracts(signerOrProvider) {
     oracle: new ethers.Contract(destination.priceOracle, ABI.oracle, signerOrProvider),
     router: new ethers.Contract(destination.swapRouter, ABI.router, signerOrProvider),
     pool: new ethers.Contract(destination.lendingPool, ABI.pool, signerOrProvider),
-    mintGateway: new ethers.Contract(destination.mintGateway, ABI.gateway, signerOrProvider),
+    messageBus: new ethers.Contract(destination.messageBus, ABI.messageBus, signerOrProvider),
+    bridgeRouter: new ethers.Contract(destination.bridgeRouter, ABI.bridgeRouter, signerOrProvider),
+    lightClient: new ethers.Contract(destination.lightClient, ABI.lightClient, signerOrProvider),
+    executionHeaderStore: new ethers.Contract(destination.executionHeaderStore, ABI.executionHeaderStore, signerOrProvider),
+    inbox: new ethers.Contract(destination.messageInbox, ABI.inbox, signerOrProvider),
+    riskManager: new ethers.Contract(destination.riskManager, ABI.riskManager, signerOrProvider),
+    routeRegistry: new ethers.Contract(destination.routeRegistry, ABI.routeRegistry, signerOrProvider),
   };
 }
 
@@ -769,23 +806,50 @@ function getEventLogIndex(ev) {
   return 0n;
 }
 
-async function findPendingEventForGateway(events, gateway, userArgName) {
+async function findPendingBusMessage(events, destination, providerSource, sourceChainId, routeId) {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
-    const user = ev.args[userArgName];
-    const amount = ev.args.amount;
-    const logIndex = getEventLogIndex(ev);
-    const messageId = await gateway.computeMessageId(ev.transactionHash, logIndex, user, amount);
-    if (await gateway.executed(messageId)) continue;
+    const user = ev.args.recipient;
+    if (user.toLowerCase() !== getUserAddress().toLowerCase()) continue;
 
-    const attestCount = await gateway.attestCount(messageId);
+    const amount = ev.args.amount;
+    const messageId = ev.args.messageId;
+    if (await destination.inbox.consumed(messageId)) continue;
+
+    const block = await providerSource.getBlock(ev.blockNumber);
+    const blockHash = block?.hash || ethers.ZeroHash;
+    const [headerRelayed, executionHeaderStored, routePaused, routeCursed, route] = await Promise.all([
+      destination.lightClient.isFinalized(sourceChainId, blockHash),
+      destination.executionHeaderStore.isKnown(sourceChainId, blockHash),
+      destination.riskManager.routePaused(routeId),
+      destination.riskManager.routeCursed(routeId),
+      destination.routeRegistry.getRoute(routeId),
+    ]);
+
+    const highValueRequired = route.highValueThreshold > 0n && amount >= route.highValueThreshold;
+    const highValueApproved = highValueRequired
+      ? await destination.riskManager.secondaryApproved(routeId, messageId)
+      : true;
+    const proofStepCount = (headerRelayed ? 1n : 0n) + (executionHeaderStored ? 1n : 0n);
+
     return {
       txHash: ev.transactionHash,
-      logIndex,
+      logIndex: getEventLogIndex(ev),
       user,
       amount,
       messageId,
-      attestCount,
+      blockHash,
+      headerRelayed,
+      executionHeaderStored,
+      routePaused,
+      routeCursed,
+      routeEnabled: route.enabled,
+      highValueRequired,
+      highValueApproved,
+      transferCap: route.transferCap,
+      rateLimitAmount: route.rateLimitAmount,
+      rateLimitWindow: route.rateLimitWindow,
+      proofStepCount,
     };
   }
 
@@ -795,20 +859,23 @@ async function findPendingEventForGateway(events, gateway, userArgName) {
 function updateBridgeStatus(state) {
   setText("pendingLockMessage", state.pendingLockEvent ? short(state.pendingLockEvent.messageId) : "-");
   setText("pendingBurnMessage", state.pendingBurnEvent ? short(state.pendingBurnEvent.messageId) : "-");
-  setText("pendingLockAttests", `${state.pendingLockAttestCount}/${state.destinationMintThreshold}`);
-  setText("pendingBurnAttests", `${state.pendingBurnAttestCount}/${state.sourceUnlockThreshold}`);
+  setText("pendingLockProof", proofStatusText(state.pendingLockEvent));
+  setText("pendingBurnProof", proofStatusText(state.pendingBurnEvent));
 
-  const lockReady = state.pendingLockEvent && state.pendingLockAttestCount >= state.destinationMintThreshold;
-  const burnReady = state.pendingBurnEvent && state.pendingBurnAttestCount >= state.sourceUnlockThreshold;
+  const lockReady = proofReady(state.pendingLockEvent);
+  const burnReady = proofReady(state.pendingBurnEvent);
   const hasLock = state.lockEvents > 0;
-  const lockAttested = state.pendingLockEvent ? lockReady : state.mintEvents > 0;
+  const lockHeaderRelayed = state.pendingLockEvent ? state.pendingLockEvent.headerRelayed : state.mintEvents > 0;
   const mintExecuted = state.mintEvents > 0;
   const hasBurn = state.burnRequestEvents > 0;
-  const burnAttested = state.pendingBurnEvent ? burnReady : state.unlockEvents > 0;
+  const burnHeaderRelayed = state.pendingBurnEvent ? state.pendingBurnEvent.headerRelayed : state.unlockEvents > 0;
   const unlockExecuted = state.unlockEvents > 0;
 
-  setText("pendingLockState", state.pendingLockEvent ? (lockReady ? "Ready for execute" : "Waiting attest") : "No pending lock");
-  setText("pendingBurnState", state.pendingBurnEvent ? (burnReady ? "Ready for execute" : "Waiting attest") : "No pending burn");
+  const lockState = bridgeExecutionState(state.pendingLockEvent);
+  const burnState = bridgeExecutionState(state.pendingBurnEvent);
+
+  setText("pendingLockState", lockState);
+  setText("pendingBurnState", burnState);
 
   setClass("pendingLockState", "state-good", Boolean(lockReady));
   setClass("pendingLockState", "state-bad", Boolean(state.pendingLockEvent) && !lockReady);
@@ -822,16 +889,16 @@ function updateBridgeStatus(state) {
     hasLock ? `Detected (${state.lockEvents})` : "Waiting user lock tx"
   );
   setBridgeStep(
-    "bridgeStepAttestLock",
-    "bridgeStepAttestLockText",
-    lockAttested ? "done" : hasLock ? "active" : "idle",
-    `${state.pendingLockAttestCount}/${state.destinationMintThreshold} attestations`
+    "bridgeStepHeaderLock",
+    "bridgeStepHeaderLockText",
+    lockHeaderRelayed ? "done" : hasLock ? "active" : "idle",
+    state.pendingLockEvent ? proofStatusText(state.pendingLockEvent) : mintExecuted ? "Header accepted" : "Waiting finalized header"
   );
   setBridgeStep(
     "bridgeStepMint",
     "bridgeStepMintText",
-    mintExecuted ? "done" : lockAttested ? "active" : "idle",
-    mintExecuted ? `Minted (${state.mintEvents})` : lockAttested ? "Executor can mint now" : "Waiting lock attest"
+    mintExecuted ? "done" : lockHeaderRelayed ? "active" : "idle",
+    mintExecuted ? `Minted (${state.mintEvents})` : lockReady ? "Proof relayer can mint now" : lockHeaderRelayed ? lockState : "Waiting proof path"
   );
   setBridgeStep(
     "bridgeStepBurn",
@@ -840,23 +907,57 @@ function updateBridgeStatus(state) {
     hasBurn ? `Requested (${state.burnRequestEvents})` : mintExecuted ? "Waiting user burn request" : "Waiting mint first"
   );
   setBridgeStep(
-    "bridgeStepAttestBurn",
-    "bridgeStepAttestBurnText",
-    burnAttested ? "done" : hasBurn ? "active" : "idle",
-    `${state.pendingBurnAttestCount}/${state.sourceUnlockThreshold} attestations`
+    "bridgeStepHeaderBurn",
+    "bridgeStepHeaderBurnText",
+    burnHeaderRelayed ? "done" : hasBurn ? "active" : "idle",
+    state.pendingBurnEvent ? proofStatusText(state.pendingBurnEvent) : unlockExecuted ? "Header accepted" : "Waiting finalized header"
   );
   setBridgeStep(
     "bridgeStepUnlock",
     "bridgeStepUnlockText",
-    unlockExecuted ? "done" : burnAttested ? "active" : "idle",
-    unlockExecuted ? `Unlocked (${state.unlockEvents})` : burnAttested ? "Executor can unlock now" : "Waiting burn attest"
+    unlockExecuted ? "done" : burnHeaderRelayed ? "active" : "idle",
+    unlockExecuted ? `Unlocked (${state.unlockEvents})` : burnReady ? "Proof relayer can unlock now" : burnHeaderRelayed ? burnState : "Waiting proof path"
   );
+}
+
+function proofReady(event) {
+  return Boolean(
+    event &&
+      event.headerRelayed &&
+      event.executionHeaderStored &&
+      event.routeEnabled &&
+      !event.routePaused &&
+      !event.routeCursed &&
+      event.highValueApproved
+  );
+}
+
+function proofStatusText(event) {
+  if (!event) return "-";
+  return `${event.proofStepCount}/2 header steps`;
+}
+
+function bridgeExecutionState(event) {
+  if (!event) return "No pending message";
+  if (!event.routeEnabled) return "Route disabled";
+  if (event.routeCursed) return "Route cursed";
+  if (event.routePaused) return "Route paused";
+  if (event.highValueRequired && !event.highValueApproved) return "High-value approval required";
+  if (!event.headerRelayed) return "Waiting finalized header";
+  if (!event.executionHeaderStored) return "Waiting execution header";
+  return "Proof ready";
+}
+
+function formatBridgeTime(value) {
+  const timestamp = Number(value || 0n);
+  if (!timestamp) return "-";
+  return new Date(timestamp * 1000).toLocaleTimeString();
 }
 
 function roleExpectedText(role) {
   if (role === "owner") return short(getOwnerAddress());
   if (role === "user") return short(getUserAddress());
-  if (role === "validator") return (cfg.roles.validators || []).map(short).join(", ");
+  if (role === "relayer") return (cfg.roles.relayers || []).map(short).join(", ");
   return "Any";
 }
 
@@ -911,10 +1012,10 @@ function guardForUserAction(actionId, state) {
   if (actionId === "requestBurnBtn" || actionId === "burnMaxBtn") {
     if (state.debt > 0n) return { disabled: true, reason: `Cannot burn: repay ${symbols.stable} debt first.`, tone: "reason-bad" };
     if (state.userWrapped <= 0n) return { disabled: true, reason: `Cannot burn: wallet has 0 ${symbols.wrapped}.`, tone: "reason-bad" };
-    if (state.pendingBurnEvent && state.pendingBurnAttestCount < state.sourceUnlockThreshold) {
+    if (state.pendingBurnEvent) {
       return {
         disabled: true,
-        reason: `Cannot burn now: bridge burn already queued (${state.pendingBurnAttestCount}/${state.sourceUnlockThreshold} attests).`,
+        reason: `Cannot burn now: release message already queued (${bridgeExecutionState(state.pendingBurnEvent)}).`,
         tone: "reason-bad",
       };
     }
@@ -1051,18 +1152,39 @@ function nextActionInfo(state) {
 
   if (state.userWrapped === 0n && state.positionCollateral === 0n) {
     if (state.pendingLockEvent) {
-      if (state.pendingLockAttestCount < state.destinationMintThreshold) {
+      if (!state.pendingLockEvent.headerRelayed) {
         return {
           buttonId: null,
-          text: `Waiting validators to attest ${market.id} lock event.`,
-          hint: `Current attestations ${state.pendingLockAttestCount}/${state.destinationMintThreshold}.`,
+          text: `Waiting for finalized ${source.name} header for ${market.id}.`,
+          hint: `Message ${short(state.pendingLockEvent.messageId)} is dispatched; header relayer must update ${destination.name}.`,
+        };
+      }
+      if (state.pendingLockEvent.routePaused || state.pendingLockEvent.routeCursed) {
+        return {
+          buttonId: null,
+          text: `Route policy blocks the lock message (${bridgeExecutionState(state.pendingLockEvent)}).`,
+          hint: "Risk controls are secondary safety layers and can be cleared by the configured admin.",
+        };
+      }
+      if (state.pendingLockEvent.highValueRequired && !state.pendingLockEvent.highValueApproved) {
+        return {
+          buttonId: null,
+          text: "High-value approval is required before mint.",
+          hint: `Message ${short(state.pendingLockEvent.messageId)} exceeds the route high-value threshold.`,
+        };
+      }
+      if (!state.pendingLockEvent.executionHeaderStored) {
+        return {
+          buttonId: null,
+          text: `Finalized header relayed; waiting execution header for ${market.id}.`,
+          hint: "The proof relayer can submit the receipt proof after the execution header is stored.",
         };
       }
 
       return {
         buttonId: null,
-        text: `Attest threshold reached; executor should mint ${symbols.wrapped} soon.`,
-        hint: `Current attestations ${state.pendingLockAttestCount}/${state.destinationMintThreshold}.`,
+        text: `Proof path is ready; relayer should mint ${symbols.wrapped} soon.`,
+        hint: "Destination contracts will verify the receipt proof and consume the message atomically.",
       };
     }
 
@@ -1173,18 +1295,39 @@ function nextActionInfo(state) {
     }
 
     if (state.pendingBurnEvent) {
-      if (state.pendingBurnAttestCount < state.sourceUnlockThreshold) {
+      if (!state.pendingBurnEvent.headerRelayed) {
         return {
           buttonId: null,
-          text: `Waiting validators to attest ${market.id} burn event.`,
-          hint: `Current attestations ${state.pendingBurnAttestCount}/${state.sourceUnlockThreshold}.`,
+          text: `Waiting for finalized ${destination.name} header for release.`,
+          hint: `Message ${short(state.pendingBurnEvent.messageId)} is dispatched; header relayer must update ${source.name}.`,
+        };
+      }
+      if (state.pendingBurnEvent.routePaused || state.pendingBurnEvent.routeCursed) {
+        return {
+          buttonId: null,
+          text: `Route policy blocks the burn message (${bridgeExecutionState(state.pendingBurnEvent)}).`,
+          hint: "Risk controls are secondary safety layers and can be cleared by the configured admin.",
+        };
+      }
+      if (state.pendingBurnEvent.highValueRequired && !state.pendingBurnEvent.highValueApproved) {
+        return {
+          buttonId: null,
+          text: "High-value approval is required before unlock.",
+          hint: `Message ${short(state.pendingBurnEvent.messageId)} exceeds the route high-value threshold.`,
+        };
+      }
+      if (!state.pendingBurnEvent.executionHeaderStored) {
+        return {
+          buttonId: null,
+          text: `Finalized header relayed; waiting execution header for release.`,
+          hint: "The proof relayer can submit the receipt proof after the execution header is stored.",
         };
       }
 
       return {
         buttonId: null,
-        text: `Attest threshold reached; executor should unlock ${symbols.collateral} on ${source.name}.`,
-        hint: `Current attestations ${state.pendingBurnAttestCount}/${state.sourceUnlockThreshold}.`,
+        text: `Proof path is ready; relayer should unlock ${symbols.collateral} on ${source.name}.`,
+        hint: "Source contracts will verify the receipt proof and consume the message atomically.",
       };
     }
   }
@@ -1416,6 +1559,10 @@ function renderState(state) {
     `LoanDuration: ${(Number(state.loanDuration) / 3600).toFixed(2)}h | Penalty: ${fmtPctBps(state.overduePenaltyBps)} | Bonus: ${fmtPctBps(state.liquidationBonusBps)} | Close factor: ${fmtPctBps(state.closeFactorBps)} | Liq threshold: ${fmtPctBps(state.liquidationThresholdBps)} | Router fee: ${fmtPctBps(state.routerFeeBps)} | ${symbols.wrapped}: ${(Number(state.collateralPriceE8) / ORACLE_DECIMALS).toFixed(4)} USD | ${symbols.stable}: ${(Number(state.stablePriceE8) / ORACLE_DECIMALS).toFixed(4)} USD`
   );
   setTooltip(
+    "advancedInterestSettingsInfo",
+    `Liq threshold: ${fmtPctBps(state.liquidationThresholdBps)} | Base: ${fmtPctBps(state.baseRateBps)} | Slope1: ${fmtPctBps(state.slope1Bps)} | Slope2: ${fmtPctBps(state.slope2Bps)} | Kink: ${fmtPctBps(state.kinkBps)}`
+  );
+  setTooltip(
     "termLtvInfo",
     `LTV (Loan-To-Value) is your borrow limit. Here: ${(Number(state.factor) / 100).toFixed(2)}%. If your debt tries to go above this limit, borrow/withdraw will be blocked.`
   );
@@ -1500,13 +1647,15 @@ async function refreshState() {
     await Promise.all([
       ensureContractDeployed(providerSource, source.localCollateralToken, `${source.name} local collateral token`),
       ensureContractDeployed(providerSource, source.collateralVault, `${source.name} collateral vault`),
-      ensureContractDeployed(providerSource, source.unlockGateway, `${source.name} unlock gateway`),
+      ensureContractDeployed(providerSource, source.bridgeRouter, `${source.name} bridge router`),
+      ensureContractDeployed(providerSource, source.messageBus, `${source.name} message bus`),
       ensureContractDeployed(providerDestination, destination.wrappedRemoteToken, `${destination.name} wrapped token`),
       ensureContractDeployed(providerDestination, destination.stableToken, `${destination.name} stable token`),
       ensureContractDeployed(providerDestination, destination.lendingPool, `${destination.name} lending pool`),
       ensureContractDeployed(providerDestination, destination.priceOracle, `${destination.name} price oracle`),
       ensureContractDeployed(providerDestination, destination.swapRouter, `${destination.name} swap router`),
-      ensureContractDeployed(providerDestination, destination.mintGateway, `${destination.name} mint gateway`),
+      ensureContractDeployed(providerDestination, destination.bridgeRouter, `${destination.name} bridge router`),
+      ensureContractDeployed(providerDestination, destination.messageBus, `${destination.name} message bus`),
       ensureContractDeployed(providerA, chainA.localCollateralToken, `${chainA.name} local collateral token`),
       ensureContractDeployed(providerA, chainA.collateralVault, `${chainA.name} collateral vault`),
       ensureContractDeployed(providerA, chainA.wrappedRemoteToken, `${chainA.name} wrapped token`),
@@ -1545,12 +1694,18 @@ async function refreshState() {
       loanDuration,
       overduePenaltyBps,
       liquidationBonusBps,
+      baseRateBps,
+      slope1Bps,
+      slope2Bps,
+      kinkBps,
       isOverdue,
       collateralPriceE8,
       stablePriceE8,
       routerFeeBps,
-      sourceUnlockThreshold,
-      destinationMintThreshold,
+      sourceBridgeBlock,
+      destinationBridgeBlock,
+      sourceUnlockProofGoal,
+      destinationMintProofGoal,
       lockEvents,
       unlockEvents,
       mintEvents,
@@ -1590,16 +1745,22 @@ async function refreshState() {
       destinationRead.pool.loanDuration(),
       destinationRead.pool.overduePenaltyBps(),
       destinationRead.pool.liquidationBonusBps(),
+      destinationRead.pool.baseRateBps(),
+      destinationRead.pool.slope1Bps(),
+      destinationRead.pool.slope2Bps(),
+      destinationRead.pool.kinkBps(),
       destinationRead.pool.isOverdue(getUserAddress()),
       destinationRead.oracle.getPrice(destination.wrappedRemoteToken),
       destinationRead.oracle.getPrice(destination.stableToken),
       destinationRead.router.feeBps(),
-      sourceRead.unlockGateway.threshold(),
-      destinationRead.mintGateway.threshold(),
-      sourceRead.vault.queryFilter(sourceRead.vault.filters.Locked(getUserAddress()), 0, "latest"),
+      providerSource.getBlock("latest"),
+      providerDestination.getBlock("latest"),
+      2n,
+      2n,
+      sourceRead.messageBus.queryFilter(sourceRead.messageBus.filters.BridgeMessageDispatched(null, market.lockRouteId), 0, "latest"),
       sourceRead.vault.queryFilter(sourceRead.vault.filters.UnlockedFromBurn(getUserAddress()), 0, "latest"),
       destinationRead.wrapped.queryFilter(destinationRead.wrapped.filters.BridgeMintedFromLock(getUserAddress()), 0, "latest"),
-      destinationRead.mintGateway.queryFilter(destinationRead.mintGateway.filters.BurnRequested(getUserAddress()), 0, "latest"),
+      destinationRead.messageBus.queryFilter(destinationRead.messageBus.filters.BridgeMessageDispatched(null, market.burnRouteId), 0, "latest"),
       destinationRead.pool.queryFilter(destinationRead.pool.filters.Borrowed(getUserAddress()), 0, "latest"),
       destinationRead.pool.queryFilter(destinationRead.pool.filters.Repaid(getUserAddress()), 0, "latest"),
       destinationRead.pool.queryFilter(destinationRead.pool.filters.Liquidated(getUserAddress()), 0, "latest"),
@@ -1616,8 +1777,20 @@ async function refreshState() {
       chainBRead.stable.balanceOf(getUserAddress()),
     ]);
 
-    const pendingLockEvent = await findPendingEventForGateway(lockEvents, destinationRead.mintGateway, "user");
-    const pendingBurnEvent = await findPendingEventForGateway(burnRequestEvents, sourceRead.unlockGateway, "user");
+    const pendingLockEvent = await findPendingBusMessage(
+      lockEvents,
+      destinationRead,
+      providerSource,
+      source.chainId,
+      market.lockRouteId
+    );
+    const pendingBurnEvent = await findPendingBusMessage(
+      burnRequestEvents,
+      sourceRead,
+      providerDestination,
+      destination.chainId,
+      market.burnRouteId
+    );
     const userReleasableLocked = locked < (userWrapped + position.collateralAmount) ? locked : userWrapped + position.collateralAmount;
     const lockedResidual = locked > userReleasableLocked ? locked - userReleasableLocked : 0n;
 
@@ -1651,18 +1824,24 @@ async function refreshState() {
       loanDuration,
       overduePenaltyBps,
       liquidationBonusBps,
+      baseRateBps,
+      slope1Bps,
+      slope2Bps,
+      kinkBps,
       isOverdue,
       collateralPriceE8,
       stablePriceE8,
       routerFeeBps,
+      sourceBridgeTimestamp: BigInt(sourceBridgeBlock.timestamp),
+      destinationBridgeTimestamp: BigInt(destinationBridgeBlock.timestamp),
+      sourceUnlockProofGoal,
+      destinationMintProofGoal,
       userReleasableLocked,
       lockedResidual,
-      sourceUnlockThreshold,
-      destinationMintThreshold,
       pendingLockEvent,
       pendingBurnEvent,
-      pendingLockAttestCount: pendingLockEvent?.attestCount ?? 0n,
-      pendingBurnAttestCount: pendingBurnEvent?.attestCount ?? 0n,
+      pendingLockProofStepCount: pendingLockEvent?.proofStepCount ?? 0n,
+      pendingBurnProofStepCount: pendingBurnEvent?.proofStepCount ?? 0n,
       lockEvents: lockEvents.length,
       unlockEvents: unlockEvents.length,
       mintEvents: mintEvents.length,
@@ -2156,6 +2335,37 @@ function bindOwnerActions() {
     });
   });
 
+  bindClick("updateLiquidationThresholdBtn", async () => {
+    await executeAction("updateLiquidationThresholdBtn", "Set liquidation threshold", async () => {
+      const destination = destinationContracts(ctx.signer);
+      const threshold = parseBps(
+        "liquidationThresholdInput",
+        latestState?.liquidationThresholdBps?.toString() || "8500",
+        1,
+        10000,
+        "Liquidation threshold"
+      );
+      await runTx(`Set liquidation threshold (${threshold} bps)`, () => destination.pool.setLiquidationThresholdBps(threshold));
+      clearInputs(["liquidationThresholdInput"]);
+    });
+  });
+
+  bindClick("updateInterestModelBtn", async () => {
+    await executeAction("updateInterestModelBtn", "Set interest model", async () => {
+      const destination = destinationContracts(ctx.signer);
+      const baseRate = parseBps("baseRateInput", latestState?.baseRateBps?.toString() || "200", 0, 50000, "Base rate");
+      const slope1 = parseBps("slope1Input", latestState?.slope1Bps?.toString() || "800", 0, 100000, "Slope 1");
+      const slope2 = parseBps("slope2Input", latestState?.slope2Bps?.toString() || "4000", 0, 200000, "Slope 2");
+      const kink = parseBps("kinkInput", latestState?.kinkBps?.toString() || "8000", 1, 10000, "Kink");
+
+      await runTx(
+        `Set interest model (base ${baseRate}, slope1 ${slope1}, slope2 ${slope2}, kink ${kink})`,
+        () => destination.pool.setInterestModel(baseRate, slope1, slope2, kink)
+      );
+      clearInputs(["baseRateInput", "slope1Input", "slope2Input", "kinkInput"]);
+    });
+  });
+
   bindClick("mintCollateralToUserBtn", async () => {
     await executeAction("mintCollateralToUserBtn", "Mint collateral to user", async () => {
       const symbols = getMarketConfig().symbols;
@@ -2363,7 +2573,9 @@ function bindUserActions() {
         throw new Error("No wrapped collateral available in wallet.");
       }
 
-      await runTx(`User request burn max ${fmtToken(amount)} ${getMarketConfig().symbols.wrapped}`, () => destination.mintGateway.requestBurn(amount));
+      await runTx(`User request burn max ${fmtToken(amount)} ${getMarketConfig().symbols.wrapped}`, () =>
+        destination.bridgeRouter.requestBurn(getMarketConfig().burnRouteId, amount, getUserAddress())
+      );
       clearInputs(["burnAmount"]);
     });
   });
@@ -2454,7 +2666,9 @@ function bindUserActions() {
       const destination = destinationContracts(ctx.signer);
 
       await validateBurnRequest(amount, destination);
-      await runTx(`User request burn ${fmtToken(amount)} ${symbols.wrapped}`, () => destination.mintGateway.requestBurn(amount));
+      await runTx(`User request burn ${fmtToken(amount)} ${symbols.wrapped}`, () =>
+        destination.bridgeRouter.requestBurn(getMarketConfig().burnRouteId, amount, getUserAddress())
+      );
       clearInputs(["burnAmount"]);
     });
   });

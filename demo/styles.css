@@ -565,6 +565,9 @@ body.portal-owner .risk-config-card .risk-input-row {
   letter-spacing: -0.01em;
   line-height: 1.2;
   font-family: "IBM Plex Mono", monospace;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .metric-card h4 {
@@ -1532,6 +1535,16 @@ html[data-theme="light"] .theme-toggle-option.is-active {
 .advanced-infra .panel-note,
 .advanced-bridge .panel-note {
   margin-top: 10px;
+}
+
+.advanced-metrics .metrics-grid,
+.advanced-metrics .metric-card {
+  min-width: 0;
+}
+
+.advanced-metrics .metric-card p {
+  font-size: clamp(1rem, 0.9rem + 0.35vw, 1.1875rem);
+  line-height: 1.28;
 }
 
 .advanced-infra .arch-grid {

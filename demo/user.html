@@ -226,38 +226,38 @@
             <h4>Lock Event</h4>
             <p id="bridgeStepLockText">-</p>
           </article>
-          <article id="bridgeStepAttestLock" class="bridge-step">
+          <article id="bridgeStepHeaderLock" class="bridge-step">
             <span class="bridge-step-index">2</span>
-            <h4>Lock Attested</h4>
-            <p id="bridgeStepAttestLockText">-</p>
+            <h4>Header Relayed</h4>
+            <p id="bridgeStepHeaderLockText">-</p>
           </article>
           <article id="bridgeStepMint" class="bridge-step">
             <span class="bridge-step-index">3</span>
-            <h4>Mint Executed</h4>
+            <h4>Proof Verified</h4>
             <p id="bridgeStepMintText">-</p>
           </article>
           <article id="bridgeStepBurn" class="bridge-step">
             <span class="bridge-step-index">4</span>
-            <h4>Burn Requested</h4>
+            <h4>Burn Message</h4>
             <p id="bridgeStepBurnText">-</p>
           </article>
-          <article id="bridgeStepAttestBurn" class="bridge-step">
+          <article id="bridgeStepHeaderBurn" class="bridge-step">
             <span class="bridge-step-index">5</span>
-            <h4>Burn Attested</h4>
-            <p id="bridgeStepAttestBurnText">-</p>
+            <h4>Header Relayed</h4>
+            <p id="bridgeStepHeaderBurnText">-</p>
           </article>
           <article id="bridgeStepUnlock" class="bridge-step">
             <span class="bridge-step-index">6</span>
-            <h4>Unlock Executed</h4>
+            <h4>Message Consumed</h4>
             <p id="bridgeStepUnlockText">-</p>
           </article>
         </div>
         <div class="bridge-facts">
           <div class="bridge-fact"><span>Pending Lock</span><strong id="pendingLockMessage">-</strong></div>
-          <div class="bridge-fact"><span>Lock Attests</span><strong id="pendingLockAttests">-</strong></div>
+          <div class="bridge-fact"><span>Lock Proof</span><strong id="pendingLockProof">-</strong></div>
           <div class="bridge-fact"><span>Lock State</span><strong id="pendingLockState">-</strong></div>
           <div class="bridge-fact"><span>Pending Burn</span><strong id="pendingBurnMessage">-</strong></div>
-          <div class="bridge-fact"><span>Burn Attests</span><strong id="pendingBurnAttests">-</strong></div>
+          <div class="bridge-fact"><span>Burn Proof</span><strong id="pendingBurnProof">-</strong></div>
           <div class="bridge-fact"><span>Burn State</span><strong id="pendingBurnState">-</strong></div>
         </div>
       </section>
@@ -428,7 +428,7 @@
                 <p id="chainAHeader" class="panel-note">-</p>
                 <dl class="kv-list">
                   <div><dt>Vault</dt><dd id="a-vault">-</dd></div>
-                  <div><dt>Gateway</dt><dd id="a-gateway">-</dd></div>
+                  <div><dt>Router / Bus</dt><dd id="a-gateway">-</dd></div>
                   <div><dt>Token</dt><dd id="a-token">-</dd></div>
                   <div><dt>Router</dt><dd id="a-router">-</dd></div>
                 </dl>
@@ -438,7 +438,7 @@
                 <h4 id="infraDestinationTitle">Chain B</h4>
                 <p id="chainBHeader" class="panel-note">-</p>
                 <dl class="kv-list">
-                  <div><dt>Gateway</dt><dd id="b-gateway">-</dd></div>
+                  <div><dt>Router / Bus</dt><dd id="b-gateway">-</dd></div>
                   <div><dt>Wrapped</dt><dd id="b-wrapped">-</dd></div>
                   <div><dt>Stable</dt><dd id="b-stable">-</dd></div>
                   <div><dt>Pool</dt><dd id="b-pool">-</dd></div>
@@ -451,8 +451,8 @@
                 <dl class="kv-list">
                   <div><dt>Owner</dt><dd id="owner-address">-</dd></div>
                   <div><dt>User</dt><dd id="user-address">-</dd></div>
-                  <div><dt>Validators</dt><dd id="validators-addresses">-</dd></div>
-                  <div><dt>Threshold</dt><dd id="bridge-threshold">-</dd></div>
+                  <div><dt>Relayers</dt><dd id="relayer-addresses">-</dd></div>
+                  <div><dt>Proof Mode</dt><dd id="proof-mode">-</dd></div>
                 </dl>
               </article>
             </div>

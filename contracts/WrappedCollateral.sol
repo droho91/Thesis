@@ -5,7 +5,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title WrappedCollateral
 /// @notice ERC20 representing collateral locked on another chain.
-/// @dev Only trusted bridge can mint and burn.
+/// @dev Only BridgeRouter can mint after proof verification and burn for release messages.
 contract WrappedCollateral is ERC20 {
     address public immutable bridge;
     mapping(bytes32 => bool) public processedLockEvents;

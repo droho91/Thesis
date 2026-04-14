@@ -264,15 +264,12 @@ contract LendingPoolTest is Test {
         pool.borrow(40 ether);
         vm.stopPrank();
 
-        vm.warp(block.timestamp + 365 days);
+        vm.warp(block.timestamp + 730 days);
         pool.accrueInterest(user);
-        (, , uint256 firstAccrued,,,) = pool.positions(user);
+        (, uint256 principalAmount, uint256 totalAccrued,,,) = pool.positions(user);
 
-        vm.warp(block.timestamp + 365 days);
-        pool.accrueInterest(user);
-        (, , uint256 totalAccrued,,,) = pool.positions(user);
-
-        assertEq(totalAccrued - firstAccrued, firstAccrued);
+        uint256 expectedSimpleInterest = (principalAmount * 1_000 * 730 days) / (pool.BPS() * pool.YEAR());
+        assertEq(totalAccrued, expectedSimpleInterest);
     }
 
     function testPenaltyDoesNotAccrueAdditionalInterest() public {

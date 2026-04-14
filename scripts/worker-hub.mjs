@@ -5,10 +5,9 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const workers = [
-  { name: "validator-1", args: ["scripts/validator-worker.mjs", "--validator-index", "1"] },
-  { name: "validator-2", args: ["scripts/validator-worker.mjs", "--validator-index", "3"] },
-  { name: "validator-3", args: ["scripts/validator-worker.mjs", "--validator-index", "4"] },
-  { name: "executor", args: ["scripts/executor-worker.mjs"] },
+  { name: "header-relayer", args: ["scripts/header-relayer.mjs"] },
+  { name: "proof-relayer", args: ["scripts/proof-relayer.mjs"] },
+  { name: "risk-watcher", args: ["scripts/risk-watcher.mjs"] },
 ];
 
 const children = [];
@@ -54,5 +53,5 @@ function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-console.log("worker-hub started: validator-1, validator-2, validator-3, executor");
+console.log("worker-hub started: header-relayer, proof-relayer, risk-watcher");
 console.log("Press Ctrl+C to stop all workers.");

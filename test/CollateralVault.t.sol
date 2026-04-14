@@ -4,17 +4,23 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {CollateralVault} from "../contracts/CollateralVault.sol";
 import {StableToken} from "../contracts/StableToken.sol";
+import {MessageBus} from "../contracts/bridge/MessageBus.sol";
 
 contract CollateralVaultTest is Test {
     StableToken internal collateral;
     CollateralVault internal vault;
+    MessageBus internal messageBus;
 
     address internal user = address(0x1111);
     address internal bridge = address(0xBEEF);
+    bytes32 internal routeId = keccak256("LOCK_ROUTE");
+    uint256 internal destinationChainId = 31338;
 
     function setUp() public {
         collateral = new StableToken("Mock Collateral", "mCOL");
+        messageBus = new MessageBus(31337);
         vault = new CollateralVault(address(collateral), bridge);
+        vault.configureDefaultRoute(address(messageBus), routeId, destinationChainId);
 
         collateral.mint(user, 1_000 ether);
 
@@ -24,11 +30,13 @@ contract CollateralVaultTest is Test {
 
     function testLockUpdatesBalanceAndTransfersToken() public {
         vm.prank(user);
-        vault.lock(100 ether);
+        bytes32 messageId = vault.lock(100 ether);
 
         assertEq(vault.lockedBalance(user), 100 ether);
         assertEq(collateral.balanceOf(address(vault)), 100 ether);
         assertEq(collateral.balanceOf(user), 900 ether);
+        assertTrue(messageId != bytes32(0));
+        assertEq(messageBus.nonces(address(vault)), 1);
     }
 
     function testUnlockByBridgeWorks() public {

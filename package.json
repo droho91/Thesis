@@ -9,10 +9,9 @@
     "node:chainB": "npx ganache --server.host 127.0.0.1 --server.port 9545 --chain.chainId 31338 --wallet.mnemonic \"test test test test test test test test test test test junk\"",
     "deploy:multichain": "npm run compile && node scripts/deploy-multichain.mjs",
     "seed:multichain": "node scripts/seed-multichain.mjs",
-    "worker:validator:1": "node scripts/validator-worker.mjs --validator-index 1",
-    "worker:validator:2": "node scripts/validator-worker.mjs --validator-index 3",
-    "worker:validator:3": "node scripts/validator-worker.mjs --validator-index 4",
-    "worker:executor": "node scripts/executor-worker.mjs",
+    "worker:header": "node scripts/header-relayer.mjs",
+    "worker:proof": "node scripts/proof-relayer.mjs",
+    "worker:risk": "node scripts/risk-watcher.mjs",
     "worker:hub": "node scripts/worker-hub.mjs"
   },
   "keywords": [],

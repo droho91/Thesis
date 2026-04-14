@@ -160,6 +160,30 @@
             <div class="workflow-head">
               <div>
                 <div class="title-inline">
+                  <h4>Advanced Interest &amp; Liquidation Settings</h4>
+                  <button id="advancedInterestSettingsInfo" class="info-pill" type="button" data-tooltip="" aria-label="Advanced interest and liquidation settings info">i</button>
+                </div>
+              </div>
+            </div>
+            <div class="row one">
+              <input id="liquidationThresholdInput" type="number" min="1" max="10000" step="1" placeholder="Liquidation Threshold (bps)" />
+            </div>
+            <div class="row four">
+              <input id="baseRateInput" type="number" min="0" max="50000" step="1" placeholder="Base Rate (bps)" />
+              <input id="slope1Input" type="number" min="0" max="100000" step="1" placeholder="Slope 1 (bps)" />
+              <input id="slope2Input" type="number" min="0" max="200000" step="1" placeholder="Slope 2 (bps)" />
+              <input id="kinkInput" type="number" min="1" max="10000" step="1" placeholder="Kink (bps)" />
+            </div>
+            <div class="row two">
+              <button id="updateLiquidationThresholdBtn" class="btn">Set Liq Threshold</button>
+              <button id="updateInterestModelBtn" class="btn">Set Interest Model</button>
+            </div>
+          </article>
+
+          <article class="workflow-card">
+            <div class="workflow-head">
+              <div>
+                <div class="title-inline">
                   <h4 id="liquidityPanelTitle">Liquidity Management</h4>
                   <button id="liquidityPanelInfo" class="info-pill" type="button" data-tooltip="" aria-label="Seed info">i</button>
                 </div>
@@ -249,10 +273,10 @@
             </div>
             <div class="metrics-grid compact-grid">
               <article class="metric-card"><h4>Pending Lock</h4><p id="pendingLockMessage">-</p></article>
-              <article class="metric-card"><h4>Lock Attests</h4><p id="pendingLockAttests">-</p></article>
+              <article class="metric-card"><h4>Lock Proof</h4><p id="pendingLockProof">-</p></article>
               <article class="metric-card"><h4>Lock State</h4><p id="pendingLockState">-</p></article>
               <article class="metric-card"><h4>Pending Burn</h4><p id="pendingBurnMessage">-</p></article>
-              <article class="metric-card"><h4>Burn Attests</h4><p id="pendingBurnAttests">-</p></article>
+              <article class="metric-card"><h4>Burn Proof</h4><p id="pendingBurnProof">-</p></article>
               <article class="metric-card"><h4>Burn State</h4><p id="pendingBurnState">-</p></article>
             </div>
           </div>
@@ -265,7 +289,7 @@
                 <p id="chainAHeader" class="panel-note">-</p>
                 <dl class="kv-list">
                   <div><dt>Vault</dt><dd id="a-vault">-</dd></div>
-                  <div><dt>Gateway</dt><dd id="a-gateway">-</dd></div>
+                  <div><dt>Router / Bus</dt><dd id="a-gateway">-</dd></div>
                   <div><dt>Token</dt><dd id="a-token">-</dd></div>
                   <div><dt>Router</dt><dd id="a-router">-</dd></div>
                 </dl>
@@ -275,7 +299,7 @@
                 <h4 id="infraDestinationTitle">Chain B</h4>
                 <p id="chainBHeader" class="panel-note">-</p>
                 <dl class="kv-list">
-                  <div><dt>Gateway</dt><dd id="b-gateway">-</dd></div>
+                  <div><dt>Router / Bus</dt><dd id="b-gateway">-</dd></div>
                   <div><dt>Wrapped</dt><dd id="b-wrapped">-</dd></div>
                   <div><dt>Stable</dt><dd id="b-stable">-</dd></div>
                   <div><dt>Pool</dt><dd id="b-pool">-</dd></div>
@@ -288,8 +312,8 @@
                 <dl class="kv-list">
                   <div><dt>Owner</dt><dd id="owner-address">-</dd></div>
                   <div><dt>User</dt><dd id="user-address">-</dd></div>
-                  <div><dt>Validators</dt><dd id="validators-addresses">-</dd></div>
-                  <div><dt>Threshold</dt><dd id="bridge-threshold">-</dd></div>
+                  <div><dt>Relayers</dt><dd id="relayer-addresses">-</dd></div>
+                  <div><dt>Proof Mode</dt><dd id="proof-mode">-</dd></div>
                 </dl>
               </article>
             </div>
