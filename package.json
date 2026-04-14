@@ -9,15 +9,15 @@
     "node:chainB": "npx ganache --server.host 127.0.0.1 --server.port 9545 --chain.chainId 31338 --wallet.mnemonic \"test test test test test test test test test test test junk\"",
     "deploy:multichain": "npm run compile && node scripts/deploy-multichain.mjs",
     "seed:multichain": "node scripts/seed-multichain.mjs",
-    "worker:header": "node scripts/header-relayer.mjs",
-    "worker:proof": "node scripts/proof-relayer.mjs",
+    "worker:checkpoint": "node scripts/checkpoint-relayer.mjs",
+    "worker:message": "node scripts/message-relayer.mjs",
     "worker:risk": "node scripts/risk-watcher.mjs",
     "worker:hub": "node scripts/worker-hub.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Multi-chain lending thesis prototype with Chain A collateral vault and Chain B lending pool.",
+  "description": "Bank-chain lending prototype with signed checkpoints and Merkle message proofs.",
   "devDependencies": {
     "@types/chai": "^4.3.20",
     "@types/chai-as-promised": "^8.0.2",

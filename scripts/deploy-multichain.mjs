@@ -11,6 +11,8 @@ const DEFAULT_ROUTE_RATE_LIMIT_WEI = ethers.parseUnits(process.env.ROUTE_RATE_LI
 const DEFAULT_ROUTE_WINDOW_SECONDS = Number(process.env.ROUTE_WINDOW_SECONDS || 3600);
 const DEFAULT_HIGH_VALUE_THRESHOLD_WEI = ethers.parseUnits(process.env.HIGH_VALUE_THRESHOLD || "200", 18);
 const RELAYER_REWARD_BPS = Number(process.env.RELAYER_REWARD_BPS || 0);
+const VALIDATOR_SET_ID = BigInt(process.env.VALIDATOR_SET_ID || 1);
+const VALIDATOR_INDICES = (process.env.VALIDATOR_INDICES || "3,4,5").split(",").map((value) => Number(value.trim()));
 
 const ACTION_LOCK_TO_MINT = 1;
 const ACTION_BURN_TO_UNLOCK = 2;
@@ -32,7 +34,7 @@ async function deploy(artifact, signer, args = []) {
 }
 
 function chainLabel(key) {
-  return key === "A" ? "Chain A" : "Chain B";
+  return key === "A" ? "Bank A" : "Bank B";
 }
 
 function marketLabel(sourceKey, destinationKey) {
@@ -94,10 +96,7 @@ async function configureVault(vaultArtifact, signer, vaultAddress, messageBus, r
 
 async function deployRouterInfra({ owner, chainId, artifacts }) {
   const messageBus = await deploy(artifacts.messageBus, owner, [chainId]);
-  const headerVerifier = await deploy(artifacts.devHeaderUpdateVerifier, owner, []);
-  const lightClient = await deploy(artifacts.lightClient, owner, [await headerVerifier.getAddress()]);
-  const executionHeaderStore = await deploy(artifacts.executionHeaderStore, owner, [await lightClient.getAddress()]);
-  const receiptProofVerifier = await deploy(artifacts.receiptProofVerifier, owner, [await executionHeaderStore.getAddress()]);
+  const checkpointClient = await deploy(artifacts.checkpointClient, owner, []);
   const messageInbox = await deploy(artifacts.messageInbox, owner, []);
   const routeRegistry = await deploy(artifacts.routeRegistry, owner, []);
   const riskManager = await deploy(artifacts.riskManager, owner, [await routeRegistry.getAddress()]);
@@ -105,7 +104,7 @@ async function deployRouterInfra({ owner, chainId, artifacts }) {
   const bridgeRouter = await deploy(artifacts.bridgeRouter, owner, [
     chainId,
     await messageBus.getAddress(),
-    await receiptProofVerifier.getAddress(),
+    await checkpointClient.getAddress(),
     await messageInbox.getAddress(),
     await routeRegistry.getAddress(),
     await riskManager.getAddress(),
@@ -118,10 +117,7 @@ async function deployRouterInfra({ owner, chainId, artifacts }) {
 
   return {
     messageBus: await messageBus.getAddress(),
-    devHeaderUpdateVerifier: await headerVerifier.getAddress(),
-    lightClient: await lightClient.getAddress(),
-    executionHeaderStore: await executionHeaderStore.getAddress(),
-    receiptProofVerifier: await receiptProofVerifier.getAddress(),
+    checkpointClient: await checkpointClient.getAddress(),
     messageInbox: await messageInbox.getAddress(),
     routeRegistry: await routeRegistry.getAddress(),
     riskManager: await riskManager.getAddress(),
@@ -212,16 +208,24 @@ async function loadArtifacts() {
     priceOracle: await loadArtifact("MockPriceOracle.sol", "MockPriceOracle"),
     swapRouter: await loadArtifact("MockSwapRouter.sol", "MockSwapRouter"),
     messageBus: await loadArtifact("bridge/MessageBus.sol", "MessageBus"),
-    lightClient: await loadArtifact("lightclient/LightClient.sol", "LightClient"),
-    devHeaderUpdateVerifier: await loadArtifact("lightclient/LightClient.sol", "DevHeaderUpdateVerifier"),
-    executionHeaderStore: await loadArtifact("lightclient/ExecutionHeaderStore.sol", "ExecutionHeaderStore"),
-    receiptProofVerifier: await loadArtifact("lightclient/ReceiptProofVerifier.sol", "ReceiptProofVerifier"),
+    checkpointClient: await loadArtifact("checkpoint/BankCheckpointClient.sol", "BankCheckpointClient"),
     messageInbox: await loadArtifact("bridge/MessageInbox.sol", "MessageInbox"),
     bridgeRouter: await loadArtifact("bridge/BridgeRouter.sol", "BridgeRouter"),
     routeRegistry: await loadArtifact("risk/RouteRegistry.sol", "RouteRegistry"),
     riskManager: await loadArtifact("risk/RiskManager.sol", "RiskManager"),
     feeVault: await loadArtifact("fees/FeeVault.sol", "FeeVault"),
   };
+}
+
+async function validatorAddresses(provider, indices) {
+  return Promise.all(indices.map(async (index) => provider.getSigner(index).then((signer) => signer.getAddress())));
+}
+
+async function installRemoteValidatorSet({ checkpointArtifact, owner, checkpointClient, sourceChainId, validatorAddresses }) {
+  const client = new ethers.Contract(checkpointClient, checkpointArtifact.abi, owner);
+  const powers = validatorAddresses.map(() => 1n);
+  const tx = await client.setValidatorSet(sourceChainId, VALIDATOR_SET_ID, validatorAddresses, powers, true);
+  await tx.wait();
 }
 
 async function main() {
@@ -232,7 +236,7 @@ async function main() {
   const chainBId = Number((await chainBProvider.getNetwork()).chainId);
   if (chainAId === chainBId) {
     throw new Error(
-      `Both RPC endpoints are on the same chainId (${chainAId}). Start chain B with a different chainId (recommended 31338).`
+      `Both RPC endpoints are on the same chainId (${chainAId}). Start Bank B with a different chainId (recommended 31338).`
     );
   }
 
@@ -249,6 +253,8 @@ async function main() {
   const userB = await chainBProvider.getSigner(2);
   const relayerA = await chainAProvider.getSigner(Number(process.env.RELAYER_INDEX_A || 1));
   const relayerB = await chainBProvider.getSigner(Number(process.env.RELAYER_INDEX_B || 1));
+  const validatorsA = await validatorAddresses(chainAProvider, VALIDATOR_INDICES);
+  const validatorsB = await validatorAddresses(chainBProvider, VALIDATOR_INDICES);
 
   const artifacts = await loadArtifacts();
 
@@ -266,6 +272,21 @@ async function main() {
     owner: ownerB,
     chainId: chainBId,
     artifacts,
+  });
+
+  await installRemoteValidatorSet({
+    checkpointArtifact: artifacts.checkpointClient,
+    owner: ownerB,
+    checkpointClient: chainBStack.checkpointClient,
+    sourceChainId: chainAId,
+    validatorAddresses: validatorsA,
+  });
+  await installRemoteValidatorSet({
+    checkpointArtifact: artifacts.checkpointClient,
+    owner: ownerA,
+    checkpointClient: chainAStack.checkpointClient,
+    sourceChainId: chainBId,
+    validatorAddresses: validatorsB,
   });
 
   const lockAToBRouteId = computeRouteId(
@@ -402,20 +423,25 @@ async function main() {
   const userAddress = await userA.getAddress();
 
   const output = {
-    architecture: "light-client-proof-router",
+    architecture: "bank-checkpoint-router",
     roles: {
       owner: ownerAddress,
       user: userAddress,
       relayers: [await relayerA.getAddress(), await relayerB.getAddress()],
-      note: "Relayers are permissionless transport. Light-client and receipt proof checks are the trust boundary.",
+      note: "Relayers are permissionless transport. Signed bank checkpoints and Merkle inclusion proofs are the trust boundary.",
     },
-    proofDefaults: {
+    validatorSimulation: {
+      validatorSetId: VALIDATOR_SET_ID.toString(),
+      validatorIndices: VALIDATOR_INDICES,
+      note: "Local-only consortium simulation. Validators are local dev-node accounts.",
+    },
+    checkpointDefaults: {
       routeTransferCapWei: DEFAULT_ROUTE_TRANSFER_CAP_WEI.toString(),
       routeRateLimitWei: DEFAULT_ROUTE_RATE_LIMIT_WEI.toString(),
       routeWindowSeconds: DEFAULT_ROUTE_WINDOW_SECONDS,
       highValueThresholdWei: DEFAULT_HIGH_VALUE_THRESHOLD_WEI.toString(),
       relayerRewardBps: RELAYER_REWARD_BPS,
-      verifierMode: "strict-dev-header-and-receipt-verifier",
+      verifierMode: "signed-checkpoints-and-merkle-inclusion",
     },
     chains: {
       A: {
@@ -450,15 +476,11 @@ async function main() {
         sourceVault: chainAStack.collateralVault,
         sourceMessageBus: chainAStack.messageBus,
         sourceBridgeRouter: chainAStack.bridgeRouter,
-        sourceLightClient: chainAStack.lightClient,
-        sourceExecutionHeaderStore: chainAStack.executionHeaderStore,
-        sourceReceiptProofVerifier: chainAStack.receiptProofVerifier,
+        sourceCheckpointClient: chainAStack.checkpointClient,
         sourceRiskManager: chainAStack.riskManager,
         destinationMessageBus: chainBStack.messageBus,
         destinationBridgeRouter: chainBStack.bridgeRouter,
-        destinationLightClient: chainBStack.lightClient,
-        destinationExecutionHeaderStore: chainBStack.executionHeaderStore,
-        destinationReceiptProofVerifier: chainBStack.receiptProofVerifier,
+        destinationCheckpointClient: chainBStack.checkpointClient,
         destinationRiskManager: chainBStack.riskManager,
         destinationWrappedToken: chainBStack.wrappedRemoteToken,
         destinationStableToken: chainBStack.stableToken,
@@ -480,15 +502,11 @@ async function main() {
         sourceVault: chainBStack.collateralVault,
         sourceMessageBus: chainBStack.messageBus,
         sourceBridgeRouter: chainBStack.bridgeRouter,
-        sourceLightClient: chainBStack.lightClient,
-        sourceExecutionHeaderStore: chainBStack.executionHeaderStore,
-        sourceReceiptProofVerifier: chainBStack.receiptProofVerifier,
+        sourceCheckpointClient: chainBStack.checkpointClient,
         sourceRiskManager: chainBStack.riskManager,
         destinationMessageBus: chainAStack.messageBus,
         destinationBridgeRouter: chainAStack.bridgeRouter,
-        destinationLightClient: chainAStack.lightClient,
-        destinationExecutionHeaderStore: chainAStack.executionHeaderStore,
-        destinationReceiptProofVerifier: chainAStack.receiptProofVerifier,
+        destinationCheckpointClient: chainAStack.checkpointClient,
         destinationRiskManager: chainAStack.riskManager,
         destinationWrappedToken: chainAStack.wrappedRemoteToken,
         destinationStableToken: chainAStack.stableToken,
@@ -506,7 +524,7 @@ async function main() {
   const outPath = resolve(process.cwd(), "demo", "multichain-addresses.json");
   await writeFile(outPath, JSON.stringify(output, null, 2), "utf8");
 
-  console.log("Multi-chain light-client bridge deployment complete.");
+  console.log("Bank checkpoint bridge deployment complete.");
   console.log(JSON.stringify(output, null, 2));
   console.log(`Saved: ${outPath}`);
 }

@@ -82,7 +82,7 @@
         <div class="wallet-split">
           <article class="chain-wallet-card chain-a">
             <div class="chain-wallet-head">
-              <h4 id="sourceCardTitle">Chain A</h4>
+              <h4 id="sourceCardTitle">Bank A</h4>
               <span class="chain-tag">Collateral</span>
             </div>
             <div class="asset-list">
@@ -93,7 +93,7 @@
 
           <article class="chain-wallet-card chain-b">
             <div class="chain-wallet-head">
-              <h4 id="destinationCardTitle">Chain B</h4>
+              <h4 id="destinationCardTitle">Bank B</h4>
               <span class="chain-tag">Lending</span>
             </div>
             <div class="asset-list">
@@ -236,7 +236,7 @@
           <div class="advanced-tabs" data-tab-group="owner-advanced">
             <button class="advanced-tab active" type="button" data-tab-target="metrics">Metrics</button>
             <button class="advanced-tab" type="button" data-tab-target="status">Status</button>
-            <button class="advanced-tab" type="button" data-tab-target="bridge">Bridge</button>
+            <button class="advanced-tab" type="button" data-tab-target="bridge">Checkpoints</button>
             <button class="advanced-tab" type="button" data-tab-target="infra">Infra</button>
           </div>
 
@@ -267,16 +267,16 @@
           </div>
 
           <div class="collapse-body advanced-section advanced-bridge" data-tab-panel="bridge">
-            <h4 class="collapse-title">Bridge Queue</h4>
+            <h4 class="collapse-title">Checkpoint Queue</h4>
             <div class="inline-help" style="margin-bottom: 10px;">
               <button id="ownerBridgeInfo" class="info-pill" type="button" data-tooltip="" aria-label="Bridge queue info">i</button>
             </div>
             <div class="metrics-grid compact-grid">
               <article class="metric-card"><h4>Pending Lock</h4><p id="pendingLockMessage">-</p></article>
-              <article class="metric-card"><h4>Lock Proof</h4><p id="pendingLockProof">-</p></article>
+              <article class="metric-card"><h4>Lock Checkpoint</h4><p id="pendingLockProof">-</p></article>
               <article class="metric-card"><h4>Lock State</h4><p id="pendingLockState">-</p></article>
               <article class="metric-card"><h4>Pending Burn</h4><p id="pendingBurnMessage">-</p></article>
-              <article class="metric-card"><h4>Burn Proof</h4><p id="pendingBurnProof">-</p></article>
+              <article class="metric-card"><h4>Burn Checkpoint</h4><p id="pendingBurnProof">-</p></article>
               <article class="metric-card"><h4>Burn State</h4><p id="pendingBurnState">-</p></article>
             </div>
           </div>
@@ -285,7 +285,7 @@
             <h4 class="collapse-title">Infrastructure</h4>
             <div class="arch-grid">
               <article class="arch-card">
-                <h4 id="infraSourceTitle">Chain A</h4>
+                <h4 id="infraSourceTitle">Bank A</h4>
                 <p id="chainAHeader" class="panel-note">-</p>
                 <dl class="kv-list">
                   <div><dt>Vault</dt><dd id="a-vault">-</dd></div>
@@ -296,7 +296,7 @@
               </article>
 
               <article class="arch-card">
-                <h4 id="infraDestinationTitle">Chain B</h4>
+                <h4 id="infraDestinationTitle">Bank B</h4>
                 <p id="chainBHeader" class="panel-note">-</p>
                 <dl class="kv-list">
                   <div><dt>Router / Bus</dt><dd id="b-gateway">-</dd></div>
@@ -313,7 +313,7 @@
                   <div><dt>Owner</dt><dd id="owner-address">-</dd></div>
                   <div><dt>User</dt><dd id="user-address">-</dd></div>
                   <div><dt>Relayers</dt><dd id="relayer-addresses">-</dd></div>
-                  <div><dt>Proof Mode</dt><dd id="proof-mode">-</dd></div>
+                  <div><dt>Verification</dt><dd id="proof-mode">-</dd></div>
                 </dl>
               </article>
             </div>

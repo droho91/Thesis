@@ -2,9 +2,7 @@ import { ethers } from "ethers";
 import {
   ABI,
   POLL_MS,
-  blockHeaderForEvent,
-  devReceiptProofRoot,
-  getEventLogIndex,
+  buildSingleLeafProof,
   getMarketEntries,
   loadConfig,
   messageFromEvent,
@@ -23,35 +21,13 @@ function signerForDestination(signers, chainKey) {
   return chainKey === "A" ? signers.A : signers.B;
 }
 
-async function buildProof(cfg, leg, bus, ev, message) {
-  const sourceChain = cfg.chains[leg.sourceChainKey];
-  const sourceProvider = providerFor(cfg, leg.sourceChainKey);
-  const { executionHeader } = await blockHeaderForEvent(sourceProvider, sourceChain.chainId, ev);
-  const eventHash = await bus.computeEventHash(message);
-  const logIndex = getEventLogIndex(ev);
-
-  return {
-    sourceChainId: BigInt(sourceChain.chainId),
-    blockHash: executionHeader.blockHash,
-    receiptsRoot: executionHeader.receiptsRoot,
-    emitter: leg.sourceMessageBus,
-    logIndex,
-    proofRoot: devReceiptProofRoot({
-      sourceChainId: sourceChain.chainId,
-      blockHash: executionHeader.blockHash,
-      receiptsRoot: executionHeader.receiptsRoot,
-      emitter: leg.sourceMessageBus,
-      logIndex,
-      eventHash,
-    }),
-  };
-}
-
 async function processLeg(cfg, leg, signers) {
   const sourceProvider = providerFor(cfg, leg.sourceChainKey);
   const destinationProvider = providerFor(cfg, leg.destinationChainKey);
   const destinationSigner = signerForDestination(signers, leg.destinationChainKey);
-  const { bus, events } = await queryMessages(sourceProvider, leg.sourceMessageBus, leg.routeId);
+  const sourceChain = cfg.chains[leg.sourceChainKey];
+  const { events } = await queryMessages(sourceProvider, leg.sourceMessageBus, leg.routeId);
+  const checkpointClient = new ethers.Contract(leg.destinationCheckpointClient, ABI.checkpointClient, destinationProvider);
   const inbox = new ethers.Contract(leg.destinationInbox, ABI.inbox, destinationProvider);
   const router = new ethers.Contract(leg.destinationBridgeRouter, ABI.router, destinationSigner);
   let delivered = 0;
@@ -60,20 +36,26 @@ async function processLeg(cfg, leg, signers) {
     const messageId = ev.args.messageId;
     if (await inbox.consumed(messageId)) continue;
 
+    const checkpointHash = await checkpointClient.checkpointHashBySequence(
+      sourceChain.chainId,
+      BigInt(ev.args.messageSequence)
+    );
+    if (checkpointHash === ethers.ZeroHash) continue;
+
     const message = messageFromEvent(ev);
-    const proof = await buildProof(cfg, leg, bus, ev, message);
+    const proof = buildSingleLeafProof(checkpointHash);
 
     try {
       const tx = await router.relayMessage(message, proof);
       await tx.wait();
       delivered += 1;
       console.log(
-        `[proof] ${leg.kind} verified ${prettyHash(messageId)} ${leg.sourceChainKey}->${leg.destinationChainKey} tx=${prettyHash(tx.hash)}`
+        `[message] ${leg.kind} proof verified ${prettyHash(messageId)} ${leg.sourceChainKey}->${leg.destinationChainKey} tx=${prettyHash(tx.hash)}`
       );
     } catch (err) {
       const msg = err?.shortMessage || err?.message || String(err);
       if (!msg.includes("MESSAGE_ALREADY_CONSUMED")) {
-        console.log(`[proof] ${leg.kind} delivery skipped ${prettyHash(messageId)}: ${msg}`);
+        console.log(`[message] ${leg.kind} delivery skipped ${prettyHash(messageId)}: ${msg}`);
       }
     }
   }
@@ -88,10 +70,10 @@ async function main() {
     B: await signerFor(cfg, "B", RELAYER_INDEX_B),
   };
 
-  console.log("proof-relayer started");
+  console.log("message-relayer started");
   console.log(`- relayer A ${await signers.A.getAddress()} | ${cfg.chains.A.rpc}`);
   console.log(`- relayer B ${await signers.B.getAddress()} | ${cfg.chains.B.rpc}`);
-  console.log("- proof submissions are permissionless; invalid proofs are rejected on-chain");
+  console.log("- message delivery is permissionless; invalid inclusion proofs are rejected on-chain");
 
   while (true) {
     try {
@@ -101,11 +83,9 @@ async function main() {
           delivered += await processLeg(cfg, leg, signers);
         }
       }
-      if (delivered > 0) {
-        console.log(`cycle complete | messagesDelivered=${delivered}`);
-      }
+      if (delivered > 0) console.log(`cycle complete | messagesDelivered=${delivered}`);
     } catch (err) {
-      console.log(`proof cycle error: ${err?.shortMessage || err?.message || err}`);
+      console.log(`message cycle error: ${err?.shortMessage || err?.message || err}`);
     }
 
     await sleep(POLL_MS);
@@ -113,7 +93,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("proof-relayer failed:");
+  console.error("message-relayer failed:");
   console.error(err);
   process.exit(1);
 });

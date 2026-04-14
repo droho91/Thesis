@@ -1,53 +1,44 @@
 # Test Cases
 
-## Bridge Proof Model
+## Bank Checkpoint Verification
 
-Primary file:
-- `test/BridgeRouter.t.sol`
+`test/BridgeRouter.t.sol` proves the canonical bank-chain verification path:
 
-Required bridge assertions:
-1. `lock -> mint` succeeds only after a finalized source header and receipt-proof path.
-2. `burn -> unlock` succeeds only after a finalized destination header and receipt-proof path.
-3. Replaying a consumed message ID fails.
-4. Invalid proof roots fail.
-5. Unknown or wrong routes fail.
-6. Wrong source emitter fails before execution.
-7. Wrong source adapter fails before execution.
-8. Paused routes fail.
-9. Per-window rate limits fail when exceeded.
-10. High-value transfers require secondary approval.
-11. Any address can relay headers and proofs; correctness does not depend on relayer identity.
+- `>= 2/3` validator voting power accepts a checkpoint.
+- insufficient signatures fail.
+- signatures bound to the wrong validator set fail.
+- rotated-out validator sets fail.
+- wrong checkpoint parent fails.
+- wrong checkpoint sequence fails.
+- conflicting checkpoints at the same source sequence freeze the source client.
+- frozen source clients block message processing.
 
-The local verifier is intentionally strict and deterministic, but not mainnet-grade. It models the proof boundary while keeping relayers untrusted.
+## Message Inclusion and Routing
 
-## Lending
+The same test file covers message delivery:
 
-Primary file:
-- `test/LendingPool.t.sol`
+- deterministic message leaves are proven with Merkle siblings.
+- invalid Merkle siblings fail.
+- consumed messages cannot replay.
+- wrong route IDs fail.
+- wrong source emitter fails.
+- wrong source sender fails.
+- any relayer address may submit valid checkpoints and message proofs.
 
-Coverage:
-- deposit wrapped collateral
-- borrow within collateral factor
-- reject borrow/withdraw that breaks LTV
-- repay exact, repay all, repay available
-- repay with collateral through mock router
-- liquidation, overdue penalty, bad-debt write-off
-- owner risk parameter updates
+## Secondary Risk Controls
 
-## Assets
+Risk controls execute only after checkpoint and inclusion proof verification:
 
-Primary files:
-- `test/CollateralVault.t.sol`
-- `test/WrappedCollateral.t.sol`
-- `test/StableToken.t.sol`
+- paused routes fail.
+- frozen routes fail.
+- high-value transfers require secondary approval.
+- route caps, rate windows, and fees remain route-level policy.
 
-Coverage:
-- vault lock dispatches through `MessageBus`
-- vault unlock is restricted to `BridgeRouter`
-- wrapped mint/burn is restricted to `BridgeRouter`
-- duplicate lock/burn message IDs cannot be replayed in adapter accounting
-- stable token minting remains owner-only for local demo liquidity
+## Lending Flow
 
-## Bridge Test Scope
+The business path remains end to end:
 
-Bridge coverage lives in `test/BridgeRouter.t.sol`, which exercises the current header/proof router directly.
+- Bank A lock -> Bank B wrapped mint -> Bank B lending deposit/borrow.
+- Bank B repay/withdraw/burn -> Bank A unlock.
+
+Legacy header, receipt, and validator-attestation bridge tests were removed because they are not part of the final architecture.

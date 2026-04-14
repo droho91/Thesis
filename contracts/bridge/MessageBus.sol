@@ -4,26 +4,31 @@ pragma solidity ^0.8.28;
 import {MessageLib} from "./MessageLib.sol";
 
 /// @title MessageBus
-/// @notice Source-chain canonical event emitter for bridge messages.
-/// @dev The event is the object that destination light-client proof verification targets.
+/// @notice Source-chain canonical outbox for checkpoint-committed bridge messages.
 contract MessageBus {
     using MessageLib for MessageLib.Message;
 
     uint256 public immutable localChainId;
     mapping(address => uint256) public nonces;
+    uint256 public messageSequence;
+    mapping(uint256 => bytes32) public messageLeafAt;
+    mapping(bytes32 => bool) public dispatched;
 
     event BridgeMessageDispatched(
         bytes32 indexed messageId,
         bytes32 indexed routeId,
         uint8 indexed action,
+        uint256 messageSequence,
         uint256 sourceChainId,
         uint256 destinationChainId,
+        address sourceEmitter,
         address sourceSender,
         address recipient,
         address asset,
         uint256 amount,
         uint256 nonce,
-        bytes32 payloadHash
+        bytes32 payloadHash,
+        bytes32 leaf
     );
 
     constructor(uint256 _localChainId) {
@@ -56,6 +61,7 @@ contract MessageBus {
             action: action,
             sourceChainId: localChainId,
             destinationChainId: destinationChainId,
+            sourceEmitter: address(this),
             sourceSender: msg.sender,
             recipient: recipient,
             asset: asset,
@@ -65,18 +71,26 @@ contract MessageBus {
         });
 
         messageId = message.messageId();
+        bytes32 leaf = message.leafHash();
+        messageSequence += 1;
+        messageLeafAt[messageSequence] = leaf;
+        dispatched[messageId] = true;
+
         emit BridgeMessageDispatched(
             messageId,
             routeId,
             action,
+            messageSequence,
             localChainId,
             destinationChainId,
+            address(this),
             msg.sender,
             recipient,
             asset,
             amount,
             nonce,
-            payloadHash
+            payloadHash,
+            leaf
         );
     }
 
@@ -84,7 +98,7 @@ contract MessageBus {
         return MessageLib.messageId(message);
     }
 
-    function computeEventHash(MessageLib.Message calldata message) external pure returns (bytes32) {
-        return MessageLib.eventHash(message);
+    function computeLeafHash(MessageLib.Message calldata message) external pure returns (bytes32) {
+        return MessageLib.leafHash(message);
     }
 }

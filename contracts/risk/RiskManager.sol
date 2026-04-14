@@ -5,7 +5,7 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {RouteRegistry} from "./RouteRegistry.sol";
 
 /// @title RiskManager
-/// @notice Defense-in-depth route controls. It never replaces light-client proof verification.
+/// @notice Defense-in-depth route controls. It never replaces checkpoint or proof verification.
 contract RiskManager is AccessControl {
     bytes32 public constant RISK_ADMIN_ROLE = keccak256("RISK_ADMIN_ROLE");
     bytes32 public constant POLICY_CALLER_ROLE = keccak256("POLICY_CALLER_ROLE");
@@ -13,6 +13,7 @@ contract RiskManager is AccessControl {
     uint256 private constant BPS = 10_000;
 
     RouteRegistry public immutable routeRegistry;
+    uint256 public unpauseCooldown;
 
     struct Window {
         uint256 windowStart;
@@ -20,12 +21,14 @@ contract RiskManager is AccessControl {
     }
 
     mapping(bytes32 => bool) public routePaused;
-    mapping(bytes32 => bool) public routeCursed;
+    mapping(bytes32 => bool) public routeFrozen;
+    mapping(bytes32 => uint256) public unpausedAt;
     mapping(bytes32 => Window) public windows;
     mapping(bytes32 => mapping(bytes32 => bool)) public secondaryApproved;
 
     event RoutePaused(bytes32 indexed routeId, bool paused);
-    event RouteCursed(bytes32 indexed routeId, bool cursed);
+    event RouteFrozen(bytes32 indexed routeId, bool frozen);
+    event UnpauseCooldownUpdated(uint256 oldCooldown, uint256 newCooldown);
     event SecondaryApproval(bytes32 indexed routeId, bytes32 indexed messageId, address indexed approver);
     event RoutePolicyConsumed(bytes32 indexed routeId, bytes32 indexed messageId, uint256 amount, uint256 usedAmount);
 
@@ -44,12 +47,21 @@ contract RiskManager is AccessControl {
 
     function setRoutePaused(bytes32 routeId, bool paused) external onlyRole(RISK_ADMIN_ROLE) {
         routePaused[routeId] = paused;
+        if (!paused) {
+            unpausedAt[routeId] = block.timestamp;
+        }
         emit RoutePaused(routeId, paused);
     }
 
-    function setRouteCursed(bytes32 routeId, bool cursed) external onlyRole(RISK_ADMIN_ROLE) {
-        routeCursed[routeId] = cursed;
-        emit RouteCursed(routeId, cursed);
+    function setRouteFrozen(bytes32 routeId, bool frozen) external onlyRole(RISK_ADMIN_ROLE) {
+        routeFrozen[routeId] = frozen;
+        emit RouteFrozen(routeId, frozen);
+    }
+
+    function setUnpauseCooldown(uint256 newCooldown) external onlyRole(RISK_ADMIN_ROLE) {
+        uint256 oldCooldown = unpauseCooldown;
+        unpauseCooldown = newCooldown;
+        emit UnpauseCooldownUpdated(oldCooldown, newCooldown);
     }
 
     function approveHighValue(bytes32 routeId, bytes32 messageId) external onlyRole(SECONDARY_APPROVER_ROLE) {
@@ -72,7 +84,10 @@ contract RiskManager is AccessControl {
         RouteRegistry.RouteConfig memory config = routeRegistry.getRoute(routeId);
         require(config.enabled, "ROUTE_DISABLED");
         require(!routePaused[routeId], "ROUTE_PAUSED");
-        require(!routeCursed[routeId], "ROUTE_CURSED");
+        require(!routeFrozen[routeId], "ROUTE_FROZEN");
+        if (unpauseCooldown > 0 && unpausedAt[routeId] != 0) {
+            require(block.timestamp >= unpausedAt[routeId] + unpauseCooldown, "UNPAUSE_COOLDOWN");
+        }
         require(amount > 0, "AMOUNT_ZERO");
 
         if (config.transferCap > 0) {

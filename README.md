@@ -1,159 +1,91 @@
-# Cross-Chain Lending
+# Bank-Chain Cross-Chain Lending Prototype
 
-Production-oriented cross-chain lending architecture for a two-chain local demo.
+This repo models interoperability between two local permissioned EVM bank chains:
 
-Bridge correctness comes from finalized source-chain headers, on-chain light-client state, execution-header linkage, receipt/event inclusion proofs, replay protection, and route-level risk policy. Relayers are permissionless transport only.
+- Bank A runs its own chain and validator set.
+- Bank B runs its own chain and validator set.
+- Relayers are permissionless transporters.
+- Destination-chain correctness comes from signed finalized checkpoints plus Merkle message inclusion proofs.
+- Risk controls are secondary safety layers, not the bridge trust anchor.
 
-## Core Flow
+No public RPC, paid prover, cloud service, mainnet deployment, or subscription API is required.
 
-Lock -> Mint:
-1. User locks native collateral in `CollateralVault` on the source chain.
-2. `CollateralVault` dispatches a canonical message through `MessageBus`.
-3. Any relayer submits a finalized source-chain header to the destination `LightClient`.
-4. Any relayer stores the finalized execution header in `ExecutionHeaderStore`.
-5. Any relayer submits the message plus receipt proof to `BridgeRouter`.
-6. `BridgeRouter` verifies the route, proof, replay state, and risk policy, then mints `WrappedCollateral`.
-7. User deposits wrapped collateral into `LendingPool` and borrows `StableToken`.
+## Canonical Flow
 
-Burn -> Unlock:
-1. User repays debt, withdraws wrapped collateral, and calls `BridgeRouter.requestBurn`.
-2. `BridgeRouter` burns wrapped collateral and dispatches a release message through local `MessageBus`.
-3. The opposite chain verifies finalized header, execution header, and receipt proof.
-4. `BridgeRouter` consumes the message and unlocks native collateral from `CollateralVault`.
+### Lock on Bank A, Mint and Borrow on Bank B
 
-Relayers are permissionless. They move headers and proofs; they are not trusted for correctness.
+1. User locks Bank A collateral in `CollateralVault`.
+2. `MessageBus` emits a normalized message and deterministic Merkle leaf.
+3. Bank A validators certify a finalized checkpoint containing the message root.
+4. Any relayer submits the signed checkpoint to Bank B `BankCheckpointClient`.
+5. Any relayer submits the message and Merkle proof to Bank B `BridgeRouter`.
+6. Bank B verifies checkpoint finality, inclusion, replay state, route policy, and risk policy.
+7. Bank B mints `WrappedCollateral`.
+8. User deposits wrapped collateral and borrows `StableToken` from `LendingPool`.
 
-## Architecture
+### Burn on Bank B, Unlock on Bank A
 
-```mermaid
-flowchart LR
-  subgraph Source["Source Chain"]
-    User[User]
-    Vault[CollateralVault]
-    BusA[MessageBus]
-    RouterA[BridgeRouter]
-  end
+1. User repays or closes debt on Bank B.
+2. User withdraws wrapped collateral and calls `BridgeRouter.requestBurn`.
+3. Bank B burns wrapped collateral and dispatches a release message through `MessageBus`.
+4. Bank B validators certify a checkpoint containing the release message root.
+5. Any relayer submits the checkpoint and inclusion proof to Bank A.
+6. Bank A verifies the proof path and unlocks original collateral from `CollateralVault`.
 
-  subgraph Destination["Destination Chain"]
-    LC[LightClient]
-    HeaderStore[ExecutionHeaderStore]
-    Proof[ReceiptProofVerifier]
-    Inbox[MessageInbox]
-    Routes[RouteRegistry]
-    Risk[RiskManager]
-    Fees[FeeVault]
-    RouterB[BridgeRouter]
-    Wrapped[WrappedCollateral]
-    Pool[LendingPool]
-    Stable[StableToken]
-  end
+## Core Contracts
 
-  User -->|lock collateral| Vault
-  Vault -->|canonical message event| BusA
-  BusA -. finalized header .-> LC
-  LC --> HeaderStore
-  BusA -. receipt proof .-> Proof
-  Proof --> RouterB
-  HeaderStore --> Proof
-  Routes --> RouterB
-  Risk --> RouterB
-  Fees --> RouterB
-  Inbox --> RouterB
-  RouterB -->|mint after proof| Wrapped
-  Wrapped --> Pool
-  Pool --> Stable
-```
+- `contracts/checkpoint/BankCheckpointClient.sol`: stores source-chain validator sets, verifies `>= 2/3` voting power signatures, stores verified checkpoints, verifies Merkle inclusion, detects conflicting checkpoints, and freezes a source chain.
+- `contracts/bridge/MessageBus.sol`: canonical source outbox. It normalizes messages, assigns nonces/sequences, emits deterministic message leaves, and provides the data committed into bank checkpoints.
+- `contracts/bridge/BridgeRouter.sol`: destination executor. It accepts only messages proven against verified checkpoints, then applies replay protection and secondary route/risk policy before minting or unlocking.
+- `contracts/bridge/MessageInbox.sol`: one-time message consumption and replay protection.
+- `contracts/risk/RouteRegistry.sol`: route configuration, emitter/sender/asset/target binding, caps, fees, rate windows, and high-value thresholds.
+- `contracts/risk/RiskManager.sol`: pause, freeze, rate limit, cooldown, and high-value approval checks after proof verification.
+- `contracts/fees/FeeVault.sol`: route fee collection and optional relayer reward.
+- `contracts/CollateralVault.sol`, `contracts/WrappedCollateral.sol`, `contracts/LendingPool.sol`: lending business flow.
 
-## Contracts
+## Local Scripts
 
-- `contracts/bridge/MessageBus.sol`: canonical source-chain event emitter with deterministic message IDs.
-- `contracts/lightclient/LightClient.sol`: stores finalized source-chain checkpoints accepted by a pluggable verifier.
-- `contracts/lightclient/ExecutionHeaderStore.sol`: stores finalized execution headers and receipt roots.
-- `contracts/lightclient/ReceiptProofVerifier.sol`: verifies event inclusion against stored execution headers. The repo uses a strict dev verifier for local tests.
-- `contracts/bridge/MessageInbox.sol`: consumes message IDs and blocks replay.
-- `contracts/bridge/BridgeRouter.sol`: verifies proof flow and performs mint/unlock. Also burns wrapped collateral for release messages.
-- `contracts/risk/RouteRegistry.sol`: route config for source/destination chains, canonical emitter, expected source adapter, assets, fees, caps, rate limits, and high-value thresholds.
-- `contracts/risk/RiskManager.sol`: secondary controls for route pause, cursed route, transfer caps, rate windows, and high-value approval.
-- `contracts/fees/FeeVault.sol`: route fee collection and optional relayer rewards.
-- `contracts/CollateralVault.sol`: source adapter that locks collateral and dispatches `MessageBus` messages.
-- `contracts/WrappedCollateral.sol`: mint/burn token controlled by `BridgeRouter`.
-- `contracts/LendingPool.sol`: lending market logic preserved from the thesis prototype.
+- `npm run node:chainA`: starts Bank A local EVM.
+- `npm run node:chainB`: starts Bank B local EVM.
+- `npm run deploy:multichain`: deploys both bank stacks, installs local validator sets, configures routes, and writes `demo/multichain-addresses.json`.
+- `npm run worker:checkpoint`: simulates source-bank validator checkpoint certification and relays signed checkpoints.
+- `npm run worker:message`: relays message inclusion proofs and lets destination contracts decide validity.
+- `npm run worker:risk`: observes route policy and can pause/freeze when explicitly configured.
+- `npm run worker:hub`: runs checkpoint relayer, message relayer, and risk watcher together.
 
-## Local Run
-
-```bash
-npm install
-npm run compile
-npm run node:chainA
-npm run node:chainB
-npm run deploy:multichain
-npm run seed:multichain
-npm run worker:hub
-```
-
-Serve the demo:
-
-```bash
-cd demo
-python -m http.server 5500
-```
-
-Open:
-- `http://localhost:5500/user.html`
-- `http://localhost:5500/owner.html`
-
-Worker scripts:
-- `scripts/header-relayer.mjs`: submits finalized header updates and execution headers.
-- `scripts/proof-relayer.mjs`: submits receipt proofs and messages to `BridgeRouter`.
-- `scripts/risk-watcher.mjs`: monitors route policy and can pause/curse configured routes.
-
-## Deployment Output
-
-`scripts/deploy-multichain.mjs` writes `demo/multichain-addresses.json` with:
-- chain-level `messageBus`, `lightClient`, `executionHeaderStore`, `receiptProofVerifier`, `messageInbox`, `bridgeRouter`, `routeRegistry`, `riskManager`, `feeVault`
-- market-level lock and burn route IDs
-- lending pool, token, vault, oracle, and swap router addresses
-- relayer addresses for demo convenience only
+The validator simulation uses local dev-node accounts by default. Set `VALIDATOR_INDICES` and `LOCAL_VALIDATOR_MNEMONIC` to change the local consortium accounts.
 
 ## Tests
 
 Run:
 
 ```bash
-TMPDIR=/tmp XDG_CACHE_HOME=/tmp/hardhat-cache npm run test:solidity
+TMPDIR=/tmp XDG_CACHE_HOME=/tmp/.cache npm run test:solidity
 ```
 
-The bridge test suite covers:
-1. lock -> mint only after finalized header and proof path
-2. burn -> unlock only after finalized header and proof path
-3. replay attack rejection
-4. invalid proof rejection
-5. wrong route rejection
-6. wrong source emitter rejection
-7. wrong source adapter rejection
-8. paused route rejection
-9. rate-limit rejection
-10. high-value secondary approval
-11. arbitrary relayer submission
+The bridge tests cover:
 
-## Current Bridge Surface
+- valid `>= 2/3` checkpoint quorum
+- insufficient signatures
+- wrong validator set ID
+- validator-set rotation and stale-set failure
+- wrong parent and wrong sequence
+- conflicting checkpoint freeze
+- valid and invalid Merkle proofs
+- replay prevention
+- wrong route, source emitter, and source sender
+- paused and frozen routes
+- high-value approval
+- reverse burn/release to unlock
+- arbitrary relayer addresses submitting valid data
 
-The repo contains only the proof-based bridge surface:
-- deterministic canonical messages
-- finalized header updates
-- execution-header storage
-- receipt inclusion proof verification
-- message inbox replay protection
-- route-scoped policy and risk controls
-- permissionless relayers
+## Local Simulation Boundaries
 
-## Production Readiness Gaps
+This is intentionally zero-cost and local:
 
-This repo is architecturally proof-based, but it is still a local demo:
-- `DevHeaderUpdateVerifier` and dev receipt proofs must be replaced with real chain-specific consensus and receipt proof verifiers.
-- Execution ancestry from consensus checkpoints to execution payloads is simplified to finalized execution blocks in local mode.
-- No production oracle aggregation, sequencer/finality-delay policy, or reorg monitoring.
-- No governance timelock or multi-sig administration for route and risk updates.
-- No full fee market, relayer reimbursement strategy, or slashing mechanism.
-- No audited MPT/SNARK proof verifier implementation.
-- No mainnet-grade monitoring, incident response, or formal verification.
+- Validators are local dev accounts, not independent bank infrastructure.
+- Checkpoint construction is simulated by scripts instead of a production bank-chain consensus export.
+- Message roots are single-leaf roots in the default relayer script, while contracts support indexed Merkle proofs.
+- Governance recovery is represented by authorized unfreeze and route policy functions.
+
+The canonical on-chain path is still checkpoint and Merkle proof based. There is no validator-attestation bridge path, no header/receipt dev verifier path, and no fake proof success path.

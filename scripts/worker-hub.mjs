@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const workers = [
-  { name: "header-relayer", args: ["scripts/header-relayer.mjs"] },
-  { name: "proof-relayer", args: ["scripts/proof-relayer.mjs"] },
+  { name: "checkpoint-relayer", args: ["scripts/checkpoint-relayer.mjs"] },
+  { name: "message-relayer", args: ["scripts/message-relayer.mjs"] },
   { name: "risk-watcher", args: ["scripts/risk-watcher.mjs"] },
 ];
 
@@ -53,5 +53,5 @@ function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-console.log("worker-hub started: header-relayer, proof-relayer, risk-watcher");
+console.log("worker-hub started: checkpoint-relayer, message-relayer, risk-watcher");
 console.log("Press Ctrl+C to stop all workers.");

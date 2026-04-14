@@ -24,24 +24,22 @@ const ABI = {
     "event BridgeMintedFromLock(address indexed to, uint256 amount, bytes32 indexed lockEventId)",
   ],
   messageBus: [
-    "event BridgeMessageDispatched(bytes32 indexed messageId, bytes32 indexed routeId, uint8 indexed action, uint256 sourceChainId, uint256 destinationChainId, address sourceSender, address recipient, address asset, uint256 amount, uint256 nonce, bytes32 payloadHash)",
+    "event BridgeMessageDispatched(bytes32 indexed messageId, bytes32 indexed routeId, uint8 indexed action, uint256 messageSequence, uint256 sourceChainId, uint256 destinationChainId, address sourceEmitter, address sourceSender, address recipient, address asset, uint256 amount, uint256 nonce, bytes32 payloadHash, bytes32 leaf)",
   ],
   bridgeRouter: [
     "function requestBurn(bytes32 routeId, uint256 amount, address recipient) returns (bytes32 messageId)",
     "event ReleaseRequested(bytes32 indexed messageId, bytes32 indexed routeId, address indexed user, address recipient, uint256 amount)",
   ],
-  lightClient: [
-    "function isFinalized(uint256 sourceChainId, bytes32 blockHash) view returns (bool)",
-  ],
-  executionHeaderStore: [
-    "function isKnown(uint256 sourceChainId, bytes32 blockHash) view returns (bool)",
+  checkpointClient: [
+    "function checkpointHashBySequence(uint256 sourceChainId, uint256 sequence) view returns (bytes32)",
+    "function sourceFrozen(uint256 sourceChainId) view returns (bool)",
   ],
   inbox: [
     "function consumed(bytes32 messageId) view returns (bool)",
   ],
   riskManager: [
     "function routePaused(bytes32 routeId) view returns (bool)",
-    "function routeCursed(bytes32 routeId) view returns (bool)",
+    "function routeFrozen(bytes32 routeId) view returns (bool)",
     "function secondaryApproved(bytes32 routeId, bytes32 messageId) view returns (bool)",
   ],
   routeRegistry: [
@@ -590,8 +588,8 @@ function renderStaticConfig() {
 
   setText("chainAHeader", physicalChainDetails(chainA));
   setText("chainBHeader", physicalChainDetails(chainB));
-  setText("infraSourceTitle", chainA.name || "Chain A");
-  setText("infraDestinationTitle", chainB.name || "Chain B");
+  setText("infraSourceTitle", chainA.name || "Bank A");
+  setText("infraDestinationTitle", chainB.name || "Bank B");
 
   setText("a-vault", chainA.collateralVault || "-");
   setText("a-gateway", `router ${chainA.bridgeRouter || "-"} | bus ${chainA.messageBus || "-"}`);
@@ -607,7 +605,7 @@ function renderStaticConfig() {
   setText("owner-address", getOwnerAddress());
   setText("user-address", getUserAddress());
   setText("relayer-addresses", (cfg.roles.relayers || []).join(", "));
-  setText("proof-mode", cfg.proofDefaults?.verifierMode || "light-client + receipt proof");
+  setText("proof-mode", cfg.checkpointDefaults?.verifierMode || "signed checkpoints + Merkle proofs");
 }
 
 function marketDescription(market) {
@@ -705,7 +703,7 @@ function renderMarketLabels() {
   setTooltip("releaseFlowInfo", `After debt is cleared or reduced, withdraw ${symbols.wrapped} back to wallet and burn it on ${destination.name} to unlock ${symbols.collateral} on ${source.name}.`);
   setTooltip("closeWithCollateralInfo", `Sell ${symbols.wrapped} collateral to repay debt on ${destination.name}. This reduces the amount of wrapped collateral you can later burn to unlock ${symbols.collateral} on ${source.name}. Use Repay All if you want to preserve as much collateral as possible.`);
   setText("sellCollateralWarning", `Selling ${symbols.wrapped} to repay debt reduces how much ${symbols.collateral} you can later unlock on ${source.name}.`);
-  setTooltip("bridgePanelInfo", "Main bridge queue: message dispatch, finalized header relay, execution-header availability, proof verification, route policy, and consumption.");
+  setTooltip("bridgePanelInfo", "Bank-chain queue: dispatch, message-root commitment, validator-certified checkpoint, inclusion proof, route policy, and consumption.");
   setTooltip("termLtvInfo", "LTV = Loan-To-Value. How much debt is allowed compared to collateral value.");
   setTooltip("termHfInfo", "HF = Health Factor. Above 1.00 is safer; below 1.00 means liquidatable.");
   setTooltip("termPenaltyInfo", "Penalty is extra debt added when a loan is overdue.");
@@ -714,7 +712,7 @@ function renderMarketLabels() {
   setText("termHfText", "Safety score of your position.");
   setText("termPenaltyText", "Extra debt added when overdue.");
   setText("termCloseFactorText", "Max debt chunk liquidated per normal liquidation.");
-  setTooltip("ownerBridgeInfo", "Tracks proof-based bridge messages, route policy, header relay, proof readiness, and consumed message state for the active market.");
+  setTooltip("ownerBridgeInfo", "Tracks checkpoint-backed messages, route policy, validator certification, proof readiness, and consumed message state for the active market.");
   setTooltip("riskPanelInfo", `Set market risk parameters and prices for the lending side on ${destination.name}.`);
   setTooltip("advancedRiskInfo", "Update one market parameter at a time without reapplying the full baseline.");
   setTooltip("advancedInterestSettingsInfo", "Tune liquidation threshold and the kinked APR model for the lending pool on the destination chain.");
@@ -753,8 +751,7 @@ function sourceContracts(signerOrProvider) {
     vault: new ethers.Contract(source.collateralVault, ABI.vault, signerOrProvider),
     messageBus: new ethers.Contract(source.messageBus, ABI.messageBus, signerOrProvider),
     bridgeRouter: new ethers.Contract(source.bridgeRouter, ABI.bridgeRouter, signerOrProvider),
-    lightClient: new ethers.Contract(source.lightClient, ABI.lightClient, signerOrProvider),
-    executionHeaderStore: new ethers.Contract(source.executionHeaderStore, ABI.executionHeaderStore, signerOrProvider),
+    checkpointClient: new ethers.Contract(source.checkpointClient, ABI.checkpointClient, signerOrProvider),
     inbox: new ethers.Contract(source.messageInbox, ABI.inbox, signerOrProvider),
     riskManager: new ethers.Contract(source.riskManager, ABI.riskManager, signerOrProvider),
     routeRegistry: new ethers.Contract(source.routeRegistry, ABI.routeRegistry, signerOrProvider),
@@ -792,8 +789,7 @@ function destinationContracts(signerOrProvider) {
     pool: new ethers.Contract(destination.lendingPool, ABI.pool, signerOrProvider),
     messageBus: new ethers.Contract(destination.messageBus, ABI.messageBus, signerOrProvider),
     bridgeRouter: new ethers.Contract(destination.bridgeRouter, ABI.bridgeRouter, signerOrProvider),
-    lightClient: new ethers.Contract(destination.lightClient, ABI.lightClient, signerOrProvider),
-    executionHeaderStore: new ethers.Contract(destination.executionHeaderStore, ABI.executionHeaderStore, signerOrProvider),
+    checkpointClient: new ethers.Contract(destination.checkpointClient, ABI.checkpointClient, signerOrProvider),
     inbox: new ethers.Contract(destination.messageInbox, ABI.inbox, signerOrProvider),
     riskManager: new ethers.Contract(destination.riskManager, ABI.riskManager, signerOrProvider),
     routeRegistry: new ethers.Contract(destination.routeRegistry, ABI.routeRegistry, signerOrProvider),
@@ -816,33 +812,34 @@ async function findPendingBusMessage(events, destination, providerSource, source
     const messageId = ev.args.messageId;
     if (await destination.inbox.consumed(messageId)) continue;
 
-    const block = await providerSource.getBlock(ev.blockNumber);
-    const blockHash = block?.hash || ethers.ZeroHash;
-    const [headerRelayed, executionHeaderStored, routePaused, routeCursed, route] = await Promise.all([
-      destination.lightClient.isFinalized(sourceChainId, blockHash),
-      destination.executionHeaderStore.isKnown(sourceChainId, blockHash),
+    const messageSequence = BigInt(ev.args.messageSequence);
+    const [checkpointHash, sourceFrozen, routePaused, routeFrozen, route] = await Promise.all([
+      destination.checkpointClient.checkpointHashBySequence(sourceChainId, messageSequence),
+      destination.checkpointClient.sourceFrozen(sourceChainId),
       destination.riskManager.routePaused(routeId),
-      destination.riskManager.routeCursed(routeId),
+      destination.riskManager.routeFrozen(routeId),
       destination.routeRegistry.getRoute(routeId),
     ]);
+    const checkpointCertified = checkpointHash !== ethers.ZeroHash;
 
     const highValueRequired = route.highValueThreshold > 0n && amount >= route.highValueThreshold;
     const highValueApproved = highValueRequired
       ? await destination.riskManager.secondaryApproved(routeId, messageId)
       : true;
-    const proofStepCount = (headerRelayed ? 1n : 0n) + (executionHeaderStored ? 1n : 0n);
+    const proofStepCount = (checkpointCertified ? 1n : 0n) + (checkpointCertified ? 1n : 0n);
 
     return {
       txHash: ev.transactionHash,
       logIndex: getEventLogIndex(ev),
+      messageSequence,
       user,
       amount,
       messageId,
-      blockHash,
-      headerRelayed,
-      executionHeaderStored,
+      checkpointHash,
+      checkpointCertified,
+      sourceFrozen,
       routePaused,
-      routeCursed,
+      routeFrozen,
       routeEnabled: route.enabled,
       highValueRequired,
       highValueApproved,
@@ -865,10 +862,10 @@ function updateBridgeStatus(state) {
   const lockReady = proofReady(state.pendingLockEvent);
   const burnReady = proofReady(state.pendingBurnEvent);
   const hasLock = state.lockEvents > 0;
-  const lockHeaderRelayed = state.pendingLockEvent ? state.pendingLockEvent.headerRelayed : state.mintEvents > 0;
+  const lockCheckpointCertified = state.pendingLockEvent ? state.pendingLockEvent.checkpointCertified : state.mintEvents > 0;
   const mintExecuted = state.mintEvents > 0;
   const hasBurn = state.burnRequestEvents > 0;
-  const burnHeaderRelayed = state.pendingBurnEvent ? state.pendingBurnEvent.headerRelayed : state.unlockEvents > 0;
+  const burnCheckpointCertified = state.pendingBurnEvent ? state.pendingBurnEvent.checkpointCertified : state.unlockEvents > 0;
   const unlockExecuted = state.unlockEvents > 0;
 
   const lockState = bridgeExecutionState(state.pendingLockEvent);
@@ -891,14 +888,14 @@ function updateBridgeStatus(state) {
   setBridgeStep(
     "bridgeStepHeaderLock",
     "bridgeStepHeaderLockText",
-    lockHeaderRelayed ? "done" : hasLock ? "active" : "idle",
-    state.pendingLockEvent ? proofStatusText(state.pendingLockEvent) : mintExecuted ? "Header accepted" : "Waiting finalized header"
+    lockCheckpointCertified ? "done" : hasLock ? "active" : "idle",
+    state.pendingLockEvent ? proofStatusText(state.pendingLockEvent) : mintExecuted ? "Checkpoint accepted" : "Waiting certified checkpoint"
   );
   setBridgeStep(
     "bridgeStepMint",
     "bridgeStepMintText",
-    mintExecuted ? "done" : lockHeaderRelayed ? "active" : "idle",
-    mintExecuted ? `Minted (${state.mintEvents})` : lockReady ? "Proof relayer can mint now" : lockHeaderRelayed ? lockState : "Waiting proof path"
+    mintExecuted ? "done" : lockCheckpointCertified ? "active" : "idle",
+    mintExecuted ? `Minted (${state.mintEvents})` : lockReady ? "Message relayer can mint now" : lockCheckpointCertified ? lockState : "Waiting checkpoint proof"
   );
   setBridgeStep(
     "bridgeStepBurn",
@@ -909,43 +906,43 @@ function updateBridgeStatus(state) {
   setBridgeStep(
     "bridgeStepHeaderBurn",
     "bridgeStepHeaderBurnText",
-    burnHeaderRelayed ? "done" : hasBurn ? "active" : "idle",
-    state.pendingBurnEvent ? proofStatusText(state.pendingBurnEvent) : unlockExecuted ? "Header accepted" : "Waiting finalized header"
+    burnCheckpointCertified ? "done" : hasBurn ? "active" : "idle",
+    state.pendingBurnEvent ? proofStatusText(state.pendingBurnEvent) : unlockExecuted ? "Checkpoint accepted" : "Waiting certified checkpoint"
   );
   setBridgeStep(
     "bridgeStepUnlock",
     "bridgeStepUnlockText",
-    unlockExecuted ? "done" : burnHeaderRelayed ? "active" : "idle",
-    unlockExecuted ? `Unlocked (${state.unlockEvents})` : burnReady ? "Proof relayer can unlock now" : burnHeaderRelayed ? burnState : "Waiting proof path"
+    unlockExecuted ? "done" : burnCheckpointCertified ? "active" : "idle",
+    unlockExecuted ? `Unlocked (${state.unlockEvents})` : burnReady ? "Message relayer can unlock now" : burnCheckpointCertified ? burnState : "Waiting checkpoint proof"
   );
 }
 
 function proofReady(event) {
   return Boolean(
     event &&
-      event.headerRelayed &&
-      event.executionHeaderStored &&
+      event.checkpointCertified &&
+      !event.sourceFrozen &&
       event.routeEnabled &&
       !event.routePaused &&
-      !event.routeCursed &&
+      !event.routeFrozen &&
       event.highValueApproved
   );
 }
 
 function proofStatusText(event) {
   if (!event) return "-";
-  return `${event.proofStepCount}/2 header steps`;
+  return event.checkpointCertified ? "Checkpoint certified, proof ready" : "Waiting validator checkpoint";
 }
 
 function bridgeExecutionState(event) {
   if (!event) return "No pending message";
   if (!event.routeEnabled) return "Route disabled";
-  if (event.routeCursed) return "Route cursed";
+  if (event.sourceFrozen) return "Source frozen";
+  if (event.routeFrozen) return "Route frozen";
   if (event.routePaused) return "Route paused";
   if (event.highValueRequired && !event.highValueApproved) return "High-value approval required";
-  if (!event.headerRelayed) return "Waiting finalized header";
-  if (!event.executionHeaderStored) return "Waiting execution header";
-  return "Proof ready";
+  if (!event.checkpointCertified) return "Waiting validator-certified checkpoint";
+  return "Inclusion proof ready";
 }
 
 function formatBridgeTime(value) {
@@ -1152,14 +1149,14 @@ function nextActionInfo(state) {
 
   if (state.userWrapped === 0n && state.positionCollateral === 0n) {
     if (state.pendingLockEvent) {
-      if (!state.pendingLockEvent.headerRelayed) {
+      if (!state.pendingLockEvent.checkpointCertified) {
         return {
           buttonId: null,
-          text: `Waiting for finalized ${source.name} header for ${market.id}.`,
-          hint: `Message ${short(state.pendingLockEvent.messageId)} is dispatched; header relayer must update ${destination.name}.`,
+          text: `Waiting for ${source.name} validator checkpoint for ${market.id}.`,
+          hint: `Message ${short(state.pendingLockEvent.messageId)} is dispatched and must be committed into a signed checkpoint on ${destination.name}.`,
         };
       }
-      if (state.pendingLockEvent.routePaused || state.pendingLockEvent.routeCursed) {
+      if (state.pendingLockEvent.sourceFrozen || state.pendingLockEvent.routePaused || state.pendingLockEvent.routeFrozen) {
         return {
           buttonId: null,
           text: `Route policy blocks the lock message (${bridgeExecutionState(state.pendingLockEvent)}).`,
@@ -1173,18 +1170,10 @@ function nextActionInfo(state) {
           hint: `Message ${short(state.pendingLockEvent.messageId)} exceeds the route high-value threshold.`,
         };
       }
-      if (!state.pendingLockEvent.executionHeaderStored) {
-        return {
-          buttonId: null,
-          text: `Finalized header relayed; waiting execution header for ${market.id}.`,
-          hint: "The proof relayer can submit the receipt proof after the execution header is stored.",
-        };
-      }
-
       return {
         buttonId: null,
-        text: `Proof path is ready; relayer should mint ${symbols.wrapped} soon.`,
-        hint: "Destination contracts will verify the receipt proof and consume the message atomically.",
+        text: `Checkpoint proof is ready; relayer should mint ${symbols.wrapped} soon.`,
+        hint: "Destination contracts verify the checkpoint, Merkle proof, replay state, and route policy atomically.",
       };
     }
 
@@ -1295,14 +1284,14 @@ function nextActionInfo(state) {
     }
 
     if (state.pendingBurnEvent) {
-      if (!state.pendingBurnEvent.headerRelayed) {
+      if (!state.pendingBurnEvent.checkpointCertified) {
         return {
           buttonId: null,
-          text: `Waiting for finalized ${destination.name} header for release.`,
-          hint: `Message ${short(state.pendingBurnEvent.messageId)} is dispatched; header relayer must update ${source.name}.`,
+          text: `Waiting for ${destination.name} validator checkpoint for release.`,
+          hint: `Message ${short(state.pendingBurnEvent.messageId)} must be committed into a signed checkpoint on ${source.name}.`,
         };
       }
-      if (state.pendingBurnEvent.routePaused || state.pendingBurnEvent.routeCursed) {
+      if (state.pendingBurnEvent.sourceFrozen || state.pendingBurnEvent.routePaused || state.pendingBurnEvent.routeFrozen) {
         return {
           buttonId: null,
           text: `Route policy blocks the burn message (${bridgeExecutionState(state.pendingBurnEvent)}).`,
@@ -1316,18 +1305,10 @@ function nextActionInfo(state) {
           hint: `Message ${short(state.pendingBurnEvent.messageId)} exceeds the route high-value threshold.`,
         };
       }
-      if (!state.pendingBurnEvent.executionHeaderStored) {
-        return {
-          buttonId: null,
-          text: `Finalized header relayed; waiting execution header for release.`,
-          hint: "The proof relayer can submit the receipt proof after the execution header is stored.",
-        };
-      }
-
       return {
         buttonId: null,
-        text: `Proof path is ready; relayer should unlock ${symbols.collateral} on ${source.name}.`,
-        hint: "Source contracts will verify the receipt proof and consume the message atomically.",
+        text: `Checkpoint proof is ready; relayer should unlock ${symbols.collateral} on ${source.name}.`,
+        hint: "Source contracts verify the checkpoint, Merkle proof, replay state, and route policy atomically.",
       };
     }
   }
@@ -1387,7 +1368,7 @@ function positionStatusInfo(state) {
   }
 
   if (state.locked > 0n) {
-    return { text: "Bridge In Flight", variant: "status-info" };
+    return { text: "Checkpoint Delivery In Flight", variant: "status-info" };
   }
 
   return { text: "No Debt", variant: "status-safe" };
@@ -1613,7 +1594,7 @@ function renderState(state) {
       outcomeTitle = "Settled By Collateral Sale";
       outcomeHint = `Debt is cleared, but ${fmtToken(lockedResidual, { decimals: 4, tinyLabel: false, floor: true })} ${symbols.collateral} remains locked as backing for wrapped collateral sold to repay debt. It is no longer withdrawable by this borrower.`;
     } else {
-      outcomeHint = `${fmtToken(lockedResidual, { decimals: 4, tinyLabel: false, floor: true })} ${symbols.collateral} remains locked as bridge backing not currently controlled by this borrower.`;
+      outcomeHint = `${fmtToken(lockedResidual, { decimals: 4, tinyLabel: false, floor: true })} ${symbols.collateral} remains locked as cross-bank backing not currently controlled by this borrower.`;
     }
   } else if (state.locked > 0n && userReleasableLocked > 0n) {
     outcomeHint = `All currently locked ${symbols.collateral} is still traceable to borrower-controlled ${symbols.wrapped} and can be released by withdraw/burn actions.`;
@@ -1647,14 +1628,14 @@ async function refreshState() {
     await Promise.all([
       ensureContractDeployed(providerSource, source.localCollateralToken, `${source.name} local collateral token`),
       ensureContractDeployed(providerSource, source.collateralVault, `${source.name} collateral vault`),
-      ensureContractDeployed(providerSource, source.bridgeRouter, `${source.name} bridge router`),
+      ensureContractDeployed(providerSource, source.bridgeRouter, `${source.name} checkpoint router`),
       ensureContractDeployed(providerSource, source.messageBus, `${source.name} message bus`),
       ensureContractDeployed(providerDestination, destination.wrappedRemoteToken, `${destination.name} wrapped token`),
       ensureContractDeployed(providerDestination, destination.stableToken, `${destination.name} stable token`),
       ensureContractDeployed(providerDestination, destination.lendingPool, `${destination.name} lending pool`),
       ensureContractDeployed(providerDestination, destination.priceOracle, `${destination.name} price oracle`),
       ensureContractDeployed(providerDestination, destination.swapRouter, `${destination.name} swap router`),
-      ensureContractDeployed(providerDestination, destination.bridgeRouter, `${destination.name} bridge router`),
+      ensureContractDeployed(providerDestination, destination.bridgeRouter, `${destination.name} checkpoint router`),
       ensureContractDeployed(providerDestination, destination.messageBus, `${destination.name} message bus`),
       ensureContractDeployed(providerA, chainA.localCollateralToken, `${chainA.name} local collateral token`),
       ensureContractDeployed(providerA, chainA.collateralVault, `${chainA.name} collateral vault`),

@@ -138,7 +138,7 @@
         <div class="wallet-split">
           <article class="chain-wallet-card chain-a">
             <div class="chain-wallet-head">
-              <h4>Chain A</h4>
+              <h4>Bank A</h4>
               <span class="chain-tag">Global</span>
             </div>
             <div class="asset-list">
@@ -152,7 +152,7 @@
 
           <article class="chain-wallet-card chain-b">
             <div class="chain-wallet-head">
-              <h4>Chain B</h4>
+              <h4>Bank B</h4>
               <span class="chain-tag">Global</span>
             </div>
             <div class="asset-list">
@@ -171,7 +171,7 @@
         <div class="wallet-split">
           <article class="chain-wallet-card chain-a">
             <div class="chain-wallet-head">
-              <h4 id="sourceCardTitle">Chain A</h4>
+              <h4 id="sourceCardTitle">Bank A</h4>
               <span class="chain-tag">Collateral</span>
             </div>
             <div class="asset-list">
@@ -183,7 +183,7 @@
 
           <article class="chain-wallet-card chain-b">
             <div class="chain-wallet-head">
-              <h4 id="destinationCardTitle">Chain B</h4>
+              <h4 id="destinationCardTitle">Bank B</h4>
               <span class="chain-tag">Lending</span>
             </div>
             <div class="asset-list">
@@ -216,7 +216,7 @@
       <section class="panel bridge-panel wide bridge-queue-main">
         <div class="panel-head">
           <div class="title-inline">
-            <h3>Bridge Queue &amp; Status</h3>
+            <h3>Checkpoint Queue &amp; Status</h3>
             <button id="bridgePanelInfo" class="info-pill" type="button" data-tooltip="" aria-label="Bridge status info">i</button>
           </div>
         </div>
@@ -228,12 +228,12 @@
           </article>
           <article id="bridgeStepHeaderLock" class="bridge-step">
             <span class="bridge-step-index">2</span>
-            <h4>Header Relayed</h4>
+            <h4>Checkpoint Certified</h4>
             <p id="bridgeStepHeaderLockText">-</p>
           </article>
           <article id="bridgeStepMint" class="bridge-step">
             <span class="bridge-step-index">3</span>
-            <h4>Proof Verified</h4>
+            <h4>Proof Consumed</h4>
             <p id="bridgeStepMintText">-</p>
           </article>
           <article id="bridgeStepBurn" class="bridge-step">
@@ -243,7 +243,7 @@
           </article>
           <article id="bridgeStepHeaderBurn" class="bridge-step">
             <span class="bridge-step-index">5</span>
-            <h4>Header Relayed</h4>
+            <h4>Checkpoint Certified</h4>
             <p id="bridgeStepHeaderBurnText">-</p>
           </article>
           <article id="bridgeStepUnlock" class="bridge-step">
@@ -254,10 +254,10 @@
         </div>
         <div class="bridge-facts">
           <div class="bridge-fact"><span>Pending Lock</span><strong id="pendingLockMessage">-</strong></div>
-          <div class="bridge-fact"><span>Lock Proof</span><strong id="pendingLockProof">-</strong></div>
+          <div class="bridge-fact"><span>Lock Checkpoint</span><strong id="pendingLockProof">-</strong></div>
           <div class="bridge-fact"><span>Lock State</span><strong id="pendingLockState">-</strong></div>
           <div class="bridge-fact"><span>Pending Burn</span><strong id="pendingBurnMessage">-</strong></div>
-          <div class="bridge-fact"><span>Burn Proof</span><strong id="pendingBurnProof">-</strong></div>
+          <div class="bridge-fact"><span>Burn Checkpoint</span><strong id="pendingBurnProof">-</strong></div>
           <div class="bridge-fact"><span>Burn State</span><strong id="pendingBurnState">-</strong></div>
         </div>
       </section>
@@ -424,7 +424,7 @@
             <h4 class="collapse-title">Infrastructure</h4>
             <div class="arch-grid">
               <article class="arch-card">
-                <h4 id="infraSourceTitle">Chain A</h4>
+                <h4 id="infraSourceTitle">Bank A</h4>
                 <p id="chainAHeader" class="panel-note">-</p>
                 <dl class="kv-list">
                   <div><dt>Vault</dt><dd id="a-vault">-</dd></div>
@@ -435,7 +435,7 @@
               </article>
 
               <article class="arch-card">
-                <h4 id="infraDestinationTitle">Chain B</h4>
+                <h4 id="infraDestinationTitle">Bank B</h4>
                 <p id="chainBHeader" class="panel-note">-</p>
                 <dl class="kv-list">
                   <div><dt>Router / Bus</dt><dd id="b-gateway">-</dd></div>
@@ -452,7 +452,7 @@
                   <div><dt>Owner</dt><dd id="owner-address">-</dd></div>
                   <div><dt>User</dt><dd id="user-address">-</dd></div>
                   <div><dt>Relayers</dt><dd id="relayer-addresses">-</dd></div>
-                  <div><dt>Proof Mode</dt><dd id="proof-mode">-</dd></div>
+                  <div><dt>Verification</dt><dd id="proof-mode">-</dd></div>
                 </dl>
               </article>
             </div>

@@ -2,13 +2,11 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {BankCheckpointClient} from "../contracts/checkpoint/BankCheckpointClient.sol";
 import {BridgeRouter} from "../contracts/bridge/BridgeRouter.sol";
 import {MessageBus} from "../contracts/bridge/MessageBus.sol";
 import {MessageInbox} from "../contracts/bridge/MessageInbox.sol";
 import {MessageLib} from "../contracts/bridge/MessageLib.sol";
-import {LightClient, DevHeaderUpdateVerifier} from "../contracts/lightclient/LightClient.sol";
-import {ExecutionHeaderStore} from "../contracts/lightclient/ExecutionHeaderStore.sol";
-import {ReceiptProofVerifier} from "../contracts/lightclient/ReceiptProofVerifier.sol";
 import {RouteRegistry} from "../contracts/risk/RouteRegistry.sol";
 import {RiskManager} from "../contracts/risk/RiskManager.sol";
 import {FeeVault} from "../contracts/fees/FeeVault.sol";
@@ -26,22 +24,21 @@ contract BridgeRouterTest is Test {
     uint8 internal constant ACTION_BURN_TO_UNLOCK = 2;
     uint256 internal constant CHAIN_A = 100;
     uint256 internal constant CHAIN_B = 200;
-
-    bytes32 internal constant DEV_HEADER_DOMAIN = keccak256("DEV_LIGHT_CLIENT_HEADER_UPDATE_V1");
-    bytes32 internal constant DEV_RECEIPT_DOMAIN = keccak256("DEV_RECEIPT_INCLUSION_PROOF_V1");
+    uint256 internal constant VALIDATOR_SET_1 = 1;
+    uint256 internal constant VALIDATOR_SET_2 = 2;
 
     address internal user = address(0x1111);
     address internal relayer = address(0x2222);
     address internal anyRelayer = address(0x3333);
 
+    uint256[] internal validatorKeysA;
+    uint256[] internal validatorKeysB;
+    uint256[] internal rotatedValidatorKeysA;
+
     MessageBus internal busA;
     MessageBus internal busB;
-    LightClient internal lightClientA;
-    LightClient internal lightClientB;
-    ExecutionHeaderStore internal headerStoreA;
-    ExecutionHeaderStore internal headerStoreB;
-    ReceiptProofVerifier internal proofVerifierA;
-    ReceiptProofVerifier internal proofVerifierB;
+    BankCheckpointClient internal checkpointA;
+    BankCheckpointClient internal checkpointB;
     MessageInbox internal inboxA;
     MessageInbox internal inboxB;
     RouteRegistry internal routesA;
@@ -65,17 +62,28 @@ contract BridgeRouterTest is Test {
     bytes32 internal burnRoute;
 
     function setUp() public {
+        validatorKeysA.push(101);
+        validatorKeysA.push(102);
+        validatorKeysA.push(103);
+        validatorKeysB.push(201);
+        validatorKeysB.push(202);
+        validatorKeysB.push(203);
+        rotatedValidatorKeysA.push(301);
+        rotatedValidatorKeysA.push(302);
+        rotatedValidatorKeysA.push(303);
+
         busA = new MessageBus(CHAIN_A);
         busB = new MessageBus(CHAIN_B);
 
-        (lightClientA, headerStoreA, proofVerifierA, inboxA, routesA, riskA, feesA, routerA) =
-            _deployRouterStack(CHAIN_A, busA);
-        (lightClientB, headerStoreB, proofVerifierB, inboxB, routesB, riskB, feesB, routerB) =
-            _deployRouterStack(CHAIN_B, busB);
+        (checkpointA, inboxA, routesA, riskA, feesA, routerA) = _deployRouterStack(CHAIN_A, busA);
+        (checkpointB, inboxB, routesB, riskB, feesB, routerB) = _deployRouterStack(CHAIN_B, busB);
 
-        collateralA = new StableToken("Chain A Collateral", "aCOL");
-        stableB = new StableToken("Chain B Stable", "sB");
-        wrappedA = new WrappedCollateral("Wrapped A Collateral", "wA", address(routerB));
+        _installValidatorSet(checkpointB, CHAIN_A, VALIDATOR_SET_1, validatorKeysA, true);
+        _installValidatorSet(checkpointA, CHAIN_B, VALIDATOR_SET_1, validatorKeysB, true);
+
+        collateralA = new StableToken("Bank A Collateral", "aCOL");
+        stableB = new StableToken("Bank B Stable", "sB");
+        wrappedA = new WrappedCollateral("Wrapped Bank A Collateral", "wA", address(routerB));
         vaultA = new CollateralVault(address(collateralA), address(routerA));
 
         oracleB = new MockPriceOracle();
@@ -86,29 +94,67 @@ contract BridgeRouterTest is Test {
         poolB.setSwapRouter(address(swapRouterB));
         stableB.mint(address(poolB), 1_000 ether);
 
-        lockRoute = keccak256("A_TO_B_LOCK_TO_MINT");
-        burnRoute = keccak256("B_TO_A_BURN_TO_UNLOCK");
+        lockRoute = keccak256("BANK_A_TO_BANK_B_LOCK_TO_MINT");
+        burnRoute = keccak256("BANK_B_TO_BANK_A_BURN_TO_UNLOCK");
 
         vaultA.configureDefaultRoute(address(busA), lockRoute, CHAIN_B);
-        _setRoute(routesB, lockRoute, ACTION_LOCK_TO_MINT, CHAIN_A, CHAIN_B, address(busA), address(vaultA), address(collateralA), address(wrappedA), 500 ether, 1_000 ether, 1 days, 0);
-        _setRoute(routesA, burnRoute, ACTION_BURN_TO_UNLOCK, CHAIN_B, CHAIN_A, address(busB), address(routerB), address(wrappedA), address(vaultA), 500 ether, 1_000 ether, 1 days, 0);
-        _setRoute(routesB, burnRoute, ACTION_BURN_TO_UNLOCK, CHAIN_B, CHAIN_A, address(busB), address(routerB), address(wrappedA), address(vaultA), 500 ether, 1_000 ether, 1 days, 0);
+        _setRoute(
+            routesB,
+            lockRoute,
+            ACTION_LOCK_TO_MINT,
+            CHAIN_A,
+            CHAIN_B,
+            address(busA),
+            address(vaultA),
+            address(collateralA),
+            address(wrappedA),
+            500 ether,
+            1_000 ether,
+            1 days,
+            0
+        );
+        _setRoute(
+            routesA,
+            burnRoute,
+            ACTION_BURN_TO_UNLOCK,
+            CHAIN_B,
+            CHAIN_A,
+            address(busB),
+            address(routerB),
+            address(wrappedA),
+            address(vaultA),
+            500 ether,
+            1_000 ether,
+            1 days,
+            0
+        );
+        _setRoute(
+            routesB,
+            burnRoute,
+            ACTION_BURN_TO_UNLOCK,
+            CHAIN_B,
+            CHAIN_A,
+            address(busB),
+            address(routerB),
+            address(wrappedA),
+            address(vaultA),
+            500 ether,
+            1_000 ether,
+            1 days,
+            0
+        );
 
         collateralA.mint(user, 1_000 ether);
         vm.prank(user);
         collateralA.approve(address(vaultA), type(uint256).max);
     }
 
-    function testLockMintSucceedsOnlyAfterFinalizedHeaderAndProof() public {
+    function testValidCheckpointWithTwoThirdsSignaturesSucceeds() public {
         MessageLib.Message memory message = _lockOnA(100 ether);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 7, keccak256("A_BLOCK_1"), keccak256("A_RECEIPTS_1"));
+        (bytes32 checkpointHash, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), _rightLeaf("A_ROOT_1"));
 
-        vm.expectRevert(bytes("INVALID_RECEIPT_PROOF"));
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-
-        _finalizeOnB(CHAIN_A, 10, proof.blockHash, proof.receiptsRoot);
+        assertTrue(checkpointB.isCheckpointVerified(CHAIN_A, checkpointHash));
 
         vm.prank(relayer);
         routerB.relayMessage(message, proof);
@@ -117,7 +163,218 @@ contract BridgeRouterTest is Test {
         assertTrue(inboxB.consumed(message.messageId()));
     }
 
-    function testBurnUnlockSucceedsOnlyAfterFinalizedHeaderAndProof() public {
+    function testInsufficientSignaturesFail() public {
+        MessageLib.Message memory message = _lockOnA(20 ether);
+        BankCheckpointClient.Checkpoint memory checkpoint =
+            _checkpoint(CHAIN_A, VALIDATOR_SET_1, 1, bytes32(0), message.leafHash());
+        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
+
+        vm.expectRevert(bytes("INSUFFICIENT_QUORUM"));
+        vm.prank(relayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 1));
+    }
+
+    function testWrongValidatorSetIdFails() public {
+        MessageLib.Message memory message = _lockOnA(20 ether);
+        _installValidatorSet(checkpointB, CHAIN_A, VALIDATOR_SET_2, rotatedValidatorKeysA, true);
+
+        BankCheckpointClient.Checkpoint memory checkpoint =
+            _checkpoint(CHAIN_A, VALIDATOR_SET_2, 1, bytes32(0), message.leafHash());
+        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
+
+        vm.expectRevert(bytes("SIGNER_NOT_VALIDATOR"));
+        vm.prank(relayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
+    }
+
+    function testValidatorSetRotationRejectsStaleSet() public {
+        _installValidatorSet(checkpointB, CHAIN_A, VALIDATOR_SET_2, rotatedValidatorKeysA, true);
+        checkpointB.setValidatorSetActive(CHAIN_A, VALIDATOR_SET_1, false);
+
+        MessageLib.Message memory message = _lockOnA(20 ether);
+        BankCheckpointClient.Checkpoint memory checkpoint =
+            _checkpoint(CHAIN_A, VALIDATOR_SET_1, 1, bytes32(0), message.leafHash());
+        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
+
+        vm.expectRevert(bytes("VALIDATOR_SET_INACTIVE"));
+        vm.prank(relayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
+
+        checkpoint.validatorSetId = VALIDATOR_SET_2;
+        checkpointHash = checkpointB.hashCheckpoint(checkpoint);
+        vm.prank(relayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(rotatedValidatorKeysA, checkpointHash, 2));
+    }
+
+    function testWrongParentCheckpointFails() public {
+        MessageLib.Message memory first = _lockOnA(10 ether);
+        (bytes32 parentHash,) =
+            _finalizeMessageOnB(first, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+
+        MessageLib.Message memory second = _lockOnA(11 ether);
+        BankCheckpointClient.Checkpoint memory checkpoint =
+            _checkpoint(CHAIN_A, VALIDATOR_SET_1, 2, keccak256("wrong-parent"), second.leafHash());
+        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
+        assertTrue(parentHash != checkpoint.parentCheckpointHash);
+
+        vm.expectRevert(bytes("WRONG_PARENT_CHECKPOINT"));
+        vm.prank(relayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
+    }
+
+    function testWrongSequenceFails() public {
+        MessageLib.Message memory message = _lockOnA(10 ether);
+        BankCheckpointClient.Checkpoint memory checkpoint =
+            _checkpoint(CHAIN_A, VALIDATOR_SET_1, 2, bytes32(0), message.leafHash());
+        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
+
+        vm.expectRevert(bytes("WRONG_SEQUENCE"));
+        vm.prank(relayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
+    }
+
+    function testConflictingCheckpointFreezesSourceAndBlocksProcessing() public {
+        MessageLib.Message memory message = _lockOnA(25 ether);
+        (bytes32 acceptedHash, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+
+        BankCheckpointClient.Checkpoint memory conflict =
+            _checkpoint(CHAIN_A, VALIDATOR_SET_1, 1, bytes32(0), keccak256("conflicting-root"));
+        bytes32 conflictHash = checkpointB.hashCheckpoint(conflict);
+
+        vm.prank(anyRelayer);
+        checkpointB.submitCheckpoint(conflict, _signatures(validatorKeysA, conflictHash, 2));
+
+        assertTrue(checkpointB.sourceFrozen(CHAIN_A));
+        assertTrue(acceptedHash != conflictHash);
+
+        vm.expectRevert(bytes("INVALID_MESSAGE_PROOF"));
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+    }
+
+    function testValidMessageInclusionProofSucceeds() public {
+        MessageLib.Message memory message = _lockOnA(30 ether);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), _rightLeaf("A_ROOT_2"));
+
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+
+        assertEq(wrappedA.balanceOf(user), 30 ether);
+    }
+
+    function testInvalidMerkleProofFails() public {
+        MessageLib.Message memory message = _lockOnA(30 ether);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), _rightLeaf("A_ROOT_3"));
+        proof.siblings[0] = keccak256("not-the-sibling");
+
+        vm.expectRevert(bytes("INVALID_MESSAGE_PROOF"));
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+    }
+
+    function testReplayMessageFails() public {
+        MessageLib.Message memory message = _lockOnA(25 ether);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+
+        vm.expectRevert(bytes("MESSAGE_ALREADY_CONSUMED"));
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+    }
+
+    function testWrongRouteFails() public {
+        MessageLib.Message memory message = _lockOnA(30 ether);
+        message.routeId = keccak256("WRONG_ROUTE");
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+
+        vm.expectRevert(bytes("ROUTE_DISABLED"));
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+    }
+
+    function testWrongSourceEmitterFails() public {
+        MessageLib.Message memory message = _lockOnA(30 ether);
+        message.sourceEmitter = address(0xBEEF);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+
+        vm.expectRevert(bytes("SOURCE_EMITTER_MISMATCH"));
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+    }
+
+    function testWrongSourceSenderFails() public {
+        MessageLib.Message memory message = _lockOnA(30 ether);
+        message.sourceSender = address(0xBEEF);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+
+        vm.expectRevert(bytes("SOURCE_SENDER_MISMATCH"));
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+    }
+
+    function testPausedRouteFails() public {
+        MessageLib.Message memory message = _lockOnA(30 ether);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+        riskB.setRoutePaused(lockRoute, true);
+
+        vm.expectRevert(bytes("ROUTE_PAUSED"));
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+    }
+
+    function testFrozenRouteBlocksProcessing() public {
+        MessageLib.Message memory message = _lockOnA(30 ether);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+        riskB.setRouteFrozen(lockRoute, true);
+
+        vm.expectRevert(bytes("ROUTE_FROZEN"));
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+    }
+
+    function testHighValueRequiresApproval() public {
+        _setRoute(
+            routesB,
+            lockRoute,
+            ACTION_LOCK_TO_MINT,
+            CHAIN_A,
+            CHAIN_B,
+            address(busA),
+            address(vaultA),
+            address(collateralA),
+            address(wrappedA),
+            500 ether,
+            1_000 ether,
+            1 days,
+            50 ether
+        );
+        MessageLib.Message memory message = _lockOnA(60 ether);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+
+        vm.expectRevert(bytes("SECONDARY_APPROVAL_REQUIRED"));
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+
+        riskB.approveHighValue(lockRoute, message.messageId());
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+
+        assertEq(wrappedA.balanceOf(user), 60 ether);
+    }
+
+    function testReverseBurnReleaseUnlockSucceeds() public {
         _mintFromA(120 ether);
 
         vm.startPrank(user);
@@ -131,16 +388,10 @@ contract BridgeRouterTest is Test {
         vm.stopPrank();
 
         MessageLib.Message memory burnMessage = _burnMessage(120 ether, busB.nonces(address(routerB)));
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(burnMessage, address(busB), 3, keccak256("B_BLOCK_1"), keccak256("B_RECEIPTS_1"));
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnA(burnMessage, 1, VALIDATOR_SET_1, validatorKeysB, 2, bytes32(0), _rightLeaf("B_ROOT_1"));
 
-        vm.expectRevert(bytes("INVALID_RECEIPT_PROOF"));
-        vm.prank(relayer);
-        routerA.relayMessage(burnMessage, proof);
-
-        _finalizeOnA(CHAIN_B, 20, proof.blockHash, proof.receiptsRoot);
-
-        vm.prank(relayer);
+        vm.prank(anyRelayer);
         routerA.relayMessage(burnMessage, proof);
 
         assertEq(vaultA.lockedBalance(user), 0);
@@ -148,131 +399,25 @@ contract BridgeRouterTest is Test {
         assertTrue(inboxA.consumed(burnMessage.messageId()));
     }
 
-    function testReplayAttackFails() public {
-        MessageLib.Message memory message = _lockOnA(25 ether);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 1, keccak256("A_BLOCK_REPLAY"), keccak256("A_RECEIPTS_REPLAY"));
-        _finalizeOnB(CHAIN_A, 11, proof.blockHash, proof.receiptsRoot);
-
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-
-        vm.expectRevert(bytes("MESSAGE_ALREADY_CONSUMED"));
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-    }
-
-    function testInvalidProofFails() public {
-        MessageLib.Message memory message = _lockOnA(30 ether);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 1, keccak256("A_BLOCK_BAD_PROOF"), keccak256("A_RECEIPTS_BAD_PROOF"));
-        _finalizeOnB(CHAIN_A, 12, proof.blockHash, proof.receiptsRoot);
-
-        proof.proofRoot = keccak256("invalid proof");
-        vm.expectRevert(bytes("INVALID_RECEIPT_PROOF"));
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-    }
-
-    function testWrongRouteFails() public {
-        MessageLib.Message memory message = _lockOnA(30 ether);
-        message.routeId = keccak256("WRONG_ROUTE");
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 1, keccak256("A_BLOCK_WRONG_ROUTE"), keccak256("A_RECEIPTS_WRONG_ROUTE"));
-        _finalizeOnB(CHAIN_A, 13, proof.blockHash, proof.receiptsRoot);
-
-        vm.expectRevert(bytes("ROUTE_DISABLED"));
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-    }
-
-    function testWrongSourceEmitterFails() public {
-        MessageLib.Message memory message = _lockOnA(30 ether);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(0xBEEF), 1, keccak256("A_BLOCK_BAD_EMITTER"), keccak256("A_RECEIPTS_BAD_EMITTER"));
-        _finalizeOnB(CHAIN_A, 14, proof.blockHash, proof.receiptsRoot);
-
-        vm.expectRevert(bytes("SOURCE_EMITTER_MISMATCH"));
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-    }
-
-    function testWrongSourceSenderFails() public {
-        MessageLib.Message memory message = _lockOnA(30 ether);
-        message.sourceSender = address(0xBEEF);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 1, keccak256("A_BLOCK_BAD_SENDER"), keccak256("A_RECEIPTS_BAD_SENDER"));
-        _finalizeOnB(CHAIN_A, 19, proof.blockHash, proof.receiptsRoot);
-
-        vm.expectRevert(bytes("SOURCE_SENDER_MISMATCH"));
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-    }
-
-    function testPausedRouteFails() public {
-        MessageLib.Message memory message = _lockOnA(30 ether);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 1, keccak256("A_BLOCK_PAUSED"), keccak256("A_RECEIPTS_PAUSED"));
-        _finalizeOnB(CHAIN_A, 15, proof.blockHash, proof.receiptsRoot);
-
-        riskB.setRoutePaused(lockRoute, true);
-
-        vm.expectRevert(bytes("ROUTE_PAUSED"));
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-    }
-
-    function testRateLimitExceededFails() public {
-        _setRoute(routesB, lockRoute, ACTION_LOCK_TO_MINT, CHAIN_A, CHAIN_B, address(busA), address(vaultA), address(collateralA), address(wrappedA), 500 ether, 50 ether, 1 days, 0);
-        MessageLib.Message memory message = _lockOnA(60 ether);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 1, keccak256("A_BLOCK_RATE"), keccak256("A_RECEIPTS_RATE"));
-        _finalizeOnB(CHAIN_A, 16, proof.blockHash, proof.receiptsRoot);
-
-        vm.expectRevert(bytes("RATE_LIMIT_EXCEEDED"));
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-    }
-
-    function testHighValueRequiresSecondaryApproval() public {
-        _setRoute(routesB, lockRoute, ACTION_LOCK_TO_MINT, CHAIN_A, CHAIN_B, address(busA), address(vaultA), address(collateralA), address(wrappedA), 500 ether, 1_000 ether, 1 days, 50 ether);
-        MessageLib.Message memory message = _lockOnA(60 ether);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 1, keccak256("A_BLOCK_HIGH"), keccak256("A_RECEIPTS_HIGH"));
-        _finalizeOnB(CHAIN_A, 17, proof.blockHash, proof.receiptsRoot);
-
-        vm.expectRevert(bytes("SECONDARY_APPROVAL_REQUIRED"));
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-
-        riskB.approveHighValue(lockRoute, message.messageId());
-
-        vm.prank(relayer);
-        routerB.relayMessage(message, proof);
-
-        assertEq(wrappedA.balanceOf(user), 60 ether);
-    }
-
-    function testAnyRelayerCanSubmitHeadersAndProofs() public {
+    function testAnyRelayerMaySubmitValidCheckpointAndProof() public {
         MessageLib.Message memory message = _lockOnA(45 ether);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 1, keccak256("A_BLOCK_ANY"), keccak256("A_RECEIPTS_ANY"));
+        bytes32 leaf = message.leafHash();
+        bytes32 rightLeaf = _rightLeaf("ANY_RELAYER_ROOT");
+        bytes32 root = _parent(leaf, rightLeaf);
+        BankCheckpointClient.Checkpoint memory checkpoint =
+            _checkpoint(CHAIN_A, VALIDATOR_SET_1, 1, bytes32(0), root);
+        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
 
-        vm.startPrank(anyRelayer);
-        _submitHeader(lightClientB, CHAIN_A, 18, proof.blockHash);
-        headerStoreB.submitExecutionHeader(
-            ExecutionHeaderStore.ExecutionHeader({
-                sourceChainId: CHAIN_A,
-                blockNumber: 18,
-                blockHash: proof.blockHash,
-                parentHash: bytes32(0),
-                receiptsRoot: proof.receiptsRoot,
-                timestamp: block.timestamp,
-                finalizedCheckpoint: proof.blockHash
-            })
-        );
+        vm.prank(anyRelayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = rightLeaf;
+        BankCheckpointClient.MessageProof memory proof =
+            BankCheckpointClient.MessageProof({checkpointHash: checkpointHash, leafIndex: 0, siblings: siblings});
+
+        vm.prank(anyRelayer);
         routerB.relayMessage(message, proof);
-        vm.stopPrank();
 
         assertEq(wrappedA.balanceOf(user), 45 ether);
     }
@@ -280,9 +425,7 @@ contract BridgeRouterTest is Test {
     function _deployRouterStack(uint256 localChainId, MessageBus bus)
         internal
         returns (
-            LightClient lightClient,
-            ExecutionHeaderStore headerStore,
-            ReceiptProofVerifier proofVerifier,
+            BankCheckpointClient checkpoint,
             MessageInbox inbox,
             RouteRegistry routes,
             RiskManager risk,
@@ -290,10 +433,7 @@ contract BridgeRouterTest is Test {
             BridgeRouter router
         )
     {
-        DevHeaderUpdateVerifier headerVerifier = new DevHeaderUpdateVerifier();
-        lightClient = new LightClient(address(headerVerifier));
-        headerStore = new ExecutionHeaderStore(address(lightClient));
-        proofVerifier = new ReceiptProofVerifier(address(headerStore));
+        checkpoint = new BankCheckpointClient();
         inbox = new MessageInbox();
         routes = new RouteRegistry();
         risk = new RiskManager(address(routes));
@@ -301,7 +441,7 @@ contract BridgeRouterTest is Test {
         router = new BridgeRouter(
             localChainId,
             address(bus),
-            address(proofVerifier),
+            address(checkpoint),
             address(inbox),
             address(routes),
             address(risk),
@@ -356,9 +496,8 @@ contract BridgeRouterTest is Test {
 
     function _mintFromA(uint256 amount) internal returns (MessageLib.Message memory message) {
         message = _lockOnA(amount);
-        ReceiptProofVerifier.ReceiptProof memory proof =
-            _proofFor(message, address(busA), 1, keccak256(abi.encode("A_BLOCK_MINT", amount)), keccak256(abi.encode("A_RECEIPTS_MINT", amount)));
-        _finalizeOnB(CHAIN_A, 30 + (amount / 1 ether), proof.blockHash, proof.receiptsRoot);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
         vm.prank(relayer);
         routerB.relayMessage(message, proof);
     }
@@ -369,6 +508,7 @@ contract BridgeRouterTest is Test {
             action: ACTION_LOCK_TO_MINT,
             sourceChainId: CHAIN_A,
             destinationChainId: CHAIN_B,
+            sourceEmitter: address(busA),
             sourceSender: address(vaultA),
             recipient: user,
             asset: address(collateralA),
@@ -384,6 +524,7 @@ contract BridgeRouterTest is Test {
             action: ACTION_BURN_TO_UNLOCK,
             sourceChainId: CHAIN_B,
             destinationChainId: CHAIN_A,
+            sourceEmitter: address(busB),
             sourceSender: address(routerB),
             recipient: user,
             asset: address(wrappedA),
@@ -393,82 +534,110 @@ contract BridgeRouterTest is Test {
         });
     }
 
-    function _proofFor(
+    function _finalizeMessageOnB(
         MessageLib.Message memory message,
-        address emitter,
-        uint256 logIndex,
-        bytes32 blockHash,
-        bytes32 receiptsRoot
-    ) internal pure returns (ReceiptProofVerifier.ReceiptProof memory proof) {
-        bytes32 eventHash = message.eventHash();
-        proof = ReceiptProofVerifier.ReceiptProof({
-            sourceChainId: message.sourceChainId,
-            blockHash: blockHash,
-            receiptsRoot: receiptsRoot,
-            emitter: emitter,
-            logIndex: logIndex,
-            proofRoot: keccak256(
-                abi.encode(DEV_RECEIPT_DOMAIN, message.sourceChainId, blockHash, receiptsRoot, emitter, logIndex, eventHash)
-            )
-        });
-    }
-
-    function _finalizeOnA(uint256 sourceChainId, uint256 blockNumber, bytes32 blockHash, bytes32 receiptsRoot)
-        internal
-    {
-        _submitHeader(lightClientA, sourceChainId, blockNumber, blockHash);
-        headerStoreA.submitExecutionHeader(
-            ExecutionHeaderStore.ExecutionHeader({
-                sourceChainId: sourceChainId,
-                blockNumber: blockNumber,
-                blockHash: blockHash,
-                parentHash: bytes32(0),
-                receiptsRoot: receiptsRoot,
-                timestamp: block.timestamp,
-                finalizedCheckpoint: blockHash
-            })
+        uint256 sequence,
+        uint256 validatorSetId,
+        uint256[] storage signerKeys,
+        uint256 signerCount,
+        bytes32 parentCheckpointHash,
+        bytes32 rightLeaf
+    ) internal returns (bytes32 checkpointHash, BankCheckpointClient.MessageProof memory proof) {
+        return _finalizeMessage(
+            checkpointB, CHAIN_A, message, sequence, validatorSetId, signerKeys, signerCount, parentCheckpointHash, rightLeaf
         );
     }
 
-    function _finalizeOnB(uint256 sourceChainId, uint256 blockNumber, bytes32 blockHash, bytes32 receiptsRoot)
-        internal
-    {
-        _submitHeader(lightClientB, sourceChainId, blockNumber, blockHash);
-        headerStoreB.submitExecutionHeader(
-            ExecutionHeaderStore.ExecutionHeader({
-                sourceChainId: sourceChainId,
-                blockNumber: blockNumber,
-                blockHash: blockHash,
-                parentHash: bytes32(0),
-                receiptsRoot: receiptsRoot,
-                timestamp: block.timestamp,
-                finalizedCheckpoint: blockHash
-            })
+    function _finalizeMessageOnA(
+        MessageLib.Message memory message,
+        uint256 sequence,
+        uint256 validatorSetId,
+        uint256[] storage signerKeys,
+        uint256 signerCount,
+        bytes32 parentCheckpointHash,
+        bytes32 rightLeaf
+    ) internal returns (bytes32 checkpointHash, BankCheckpointClient.MessageProof memory proof) {
+        return _finalizeMessage(
+            checkpointA, CHAIN_B, message, sequence, validatorSetId, signerKeys, signerCount, parentCheckpointHash, rightLeaf
         );
     }
 
-    function _submitHeader(LightClient client, uint256 sourceChainId, uint256 blockNumber, bytes32 blockHash) internal {
-        LightClient.HeaderUpdate memory update = LightClient.HeaderUpdate({
+    function _finalizeMessage(
+        BankCheckpointClient checkpointClient,
+        uint256 sourceChainId,
+        MessageLib.Message memory message,
+        uint256 sequence,
+        uint256 validatorSetId,
+        uint256[] storage signerKeys,
+        uint256 signerCount,
+        bytes32 parentCheckpointHash,
+        bytes32 rightLeaf
+    ) internal returns (bytes32 checkpointHash, BankCheckpointClient.MessageProof memory proof) {
+        bytes32 leaf = message.leafHash();
+        bytes32 root = rightLeaf == bytes32(0) ? leaf : _parent(leaf, rightLeaf);
+        BankCheckpointClient.Checkpoint memory checkpoint =
+            _checkpoint(sourceChainId, validatorSetId, sequence, parentCheckpointHash, root);
+        checkpointHash = checkpointClient.hashCheckpoint(checkpoint);
+
+        vm.prank(relayer);
+        checkpointClient.submitCheckpoint(checkpoint, _signatures(signerKeys, checkpointHash, signerCount));
+
+        bytes32[] memory siblings = new bytes32[](rightLeaf == bytes32(0) ? 0 : 1);
+        if (rightLeaf != bytes32(0)) {
+            siblings[0] = rightLeaf;
+        }
+        proof = BankCheckpointClient.MessageProof({checkpointHash: checkpointHash, leafIndex: 0, siblings: siblings});
+    }
+
+    function _checkpoint(
+        uint256 sourceChainId,
+        uint256 validatorSetId,
+        uint256 sequence,
+        bytes32 parentCheckpointHash,
+        bytes32 messageRoot
+    ) internal view returns (BankCheckpointClient.Checkpoint memory) {
+        return BankCheckpointClient.Checkpoint({
             sourceChainId: sourceChainId,
-            blockNumber: blockNumber,
-            blockHash: blockHash,
-            parentHash: bytes32(0),
-            stateRoot: keccak256(abi.encode("state", sourceChainId, blockNumber, blockHash)),
-            timestamp: block.timestamp
+            validatorSetId: validatorSetId,
+            sequence: sequence,
+            parentCheckpointHash: parentCheckpointHash,
+            messageRoot: messageRoot,
+            timestamp: block.timestamp + sequence
         });
-        bytes memory proof = abi.encode(
-            keccak256(
-                abi.encode(
-                    DEV_HEADER_DOMAIN,
-                    update.sourceChainId,
-                    update.blockNumber,
-                    update.blockHash,
-                    update.parentHash,
-                    update.stateRoot,
-                    update.timestamp
-                )
-            )
-        );
-        client.submitFinalizedHeader(update, proof);
+    }
+
+    function _installValidatorSet(
+        BankCheckpointClient checkpointClient,
+        uint256 sourceChainId,
+        uint256 validatorSetId,
+        uint256[] storage validatorKeys,
+        bool active
+    ) internal {
+        address[] memory validators = new address[](validatorKeys.length);
+        uint256[] memory powers = new uint256[](validatorKeys.length);
+        for (uint256 i = 0; i < validatorKeys.length; i++) {
+            validators[i] = vm.addr(validatorKeys[i]);
+            powers[i] = 1;
+        }
+        checkpointClient.setValidatorSet(sourceChainId, validatorSetId, validators, powers, active);
+    }
+
+    function _signatures(uint256[] storage signerKeys, bytes32 digest, uint256 count)
+        internal
+        returns (bytes[] memory signatures)
+    {
+        signatures = new bytes[](count);
+        for (uint256 i = 0; i < count; i++) {
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKeys[i], digest);
+            signatures[i] = abi.encodePacked(r, s, v);
+        }
+    }
+
+    function _parent(bytes32 left, bytes32 right) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(left, right));
+    }
+
+    function _rightLeaf(string memory salt) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked("right-leaf", salt));
     }
 }

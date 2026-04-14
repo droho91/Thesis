@@ -7,7 +7,7 @@ import {MessageLib} from "./bridge/MessageLib.sol";
 
 /// @title CollateralVault
 /// @notice Holds native collateral on the source chain and emits canonical lock messages.
-/// @dev BridgeRouter unlocks only after finalized-header and receipt-proof verification.
+/// @dev BridgeRouter unlocks only after signed checkpoint and Merkle inclusion verification.
 contract CollateralVault {
     IERC20 public immutable collateralToken;
     address public immutable bridge;

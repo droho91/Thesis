@@ -5,7 +5,7 @@ import {MessageBus} from "./MessageBus.sol";
 import {MessageInbox} from "./MessageInbox.sol";
 import {MessageLib} from "./MessageLib.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {ReceiptProofVerifier} from "../lightclient/ReceiptProofVerifier.sol";
+import {BankCheckpointClient} from "../checkpoint/BankCheckpointClient.sol";
 import {RouteRegistry} from "../risk/RouteRegistry.sol";
 import {RiskManager} from "../risk/RiskManager.sol";
 import {FeeVault} from "../fees/FeeVault.sol";
@@ -13,19 +13,24 @@ import {WrappedCollateral} from "../WrappedCollateral.sol";
 import {CollateralVault} from "../CollateralVault.sol";
 
 /// @title BridgeRouter
-/// @notice Executes bridge actions only after finalized-header and receipt-proof verification.
+/// @notice Executes bridge actions only after signed checkpoint and message inclusion verification.
 contract BridgeRouter is ReentrancyGuard {
     using MessageLib for MessageLib.Message;
 
     uint256 public immutable localChainId;
     MessageBus public immutable messageBus;
-    ReceiptProofVerifier public immutable receiptProofVerifier;
+    BankCheckpointClient public immutable checkpointClient;
     MessageInbox public immutable inbox;
     RouteRegistry public immutable routeRegistry;
     RiskManager public immutable riskManager;
     FeeVault public immutable feeVault;
 
-    event ProofVerified(bytes32 indexed messageId, bytes32 indexed routeId, address indexed relayer);
+    event InclusionProofVerified(
+        bytes32 indexed messageId,
+        bytes32 indexed routeId,
+        bytes32 indexed checkpointHash,
+        address relayer
+    );
     event Routed(
         bytes32 indexed messageId,
         bytes32 indexed routeId,
@@ -45,7 +50,7 @@ contract BridgeRouter is ReentrancyGuard {
     constructor(
         uint256 _localChainId,
         address _messageBus,
-        address _receiptProofVerifier,
+        address _checkpointClient,
         address _inbox,
         address _routeRegistry,
         address _riskManager,
@@ -53,7 +58,7 @@ contract BridgeRouter is ReentrancyGuard {
     ) {
         require(_localChainId != 0, "CHAIN_ID_ZERO");
         require(_messageBus != address(0), "MESSAGE_BUS_ZERO");
-        require(_receiptProofVerifier != address(0), "PROOF_VERIFIER_ZERO");
+        require(_checkpointClient != address(0), "CHECKPOINT_CLIENT_ZERO");
         require(_inbox != address(0), "INBOX_ZERO");
         require(_routeRegistry != address(0), "ROUTE_REGISTRY_ZERO");
         require(_riskManager != address(0), "RISK_MANAGER_ZERO");
@@ -61,7 +66,7 @@ contract BridgeRouter is ReentrancyGuard {
 
         localChainId = _localChainId;
         messageBus = MessageBus(_messageBus);
-        receiptProofVerifier = ReceiptProofVerifier(_receiptProofVerifier);
+        checkpointClient = BankCheckpointClient(_checkpointClient);
         inbox = MessageInbox(_inbox);
         routeRegistry = RouteRegistry(_routeRegistry);
         riskManager = RiskManager(_riskManager);
@@ -97,29 +102,37 @@ contract BridgeRouter is ReentrancyGuard {
         emit ReleaseRequested(messageId, routeId, msg.sender, recipient, amount);
     }
 
-    function relayMessage(MessageLib.Message calldata message, ReceiptProofVerifier.ReceiptProof calldata proof)
+    function relayMessage(MessageLib.Message calldata message, BankCheckpointClient.MessageProof calldata proof)
         external
         payable
         nonReentrant
         returns (bytes32 messageId)
     {
         require(message.destinationChainId == localChainId, "WRONG_DESTINATION_CHAIN");
-        require(message.sourceChainId == proof.sourceChainId, "PROOF_CHAIN_MISMATCH");
 
         RouteRegistry.RouteConfig memory route = routeRegistry.getRoute(message.routeId);
         require(route.enabled, "ROUTE_DISABLED");
         require(route.action == message.action, "ROUTE_ACTION_MISMATCH");
         require(route.sourceChainId == message.sourceChainId, "ROUTE_SOURCE_MISMATCH");
         require(route.destinationChainId == message.destinationChainId, "ROUTE_DESTINATION_MISMATCH");
-        require(route.sourceEmitter == proof.emitter, "SOURCE_EMITTER_MISMATCH");
+        require(route.sourceEmitter == message.sourceEmitter, "SOURCE_EMITTER_MISMATCH");
         require(route.sourceSender == message.sourceSender, "SOURCE_SENDER_MISMATCH");
         require(route.sourceAsset == message.asset, "SOURCE_ASSET_MISMATCH");
         require(message.amount > 0, "AMOUNT_ZERO");
         require(message.recipient != address(0), "RECIPIENT_ZERO");
 
         messageId = MessageLib.messageId(message);
-        bytes32 expectedEventHash = MessageLib.eventHash(message);
-        require(receiptProofVerifier.verifyReceiptProof(proof, expectedEventHash), "INVALID_RECEIPT_PROOF");
+        bytes32 leaf = MessageLib.leafHash(message);
+        require(
+            checkpointClient.verifyMessageInclusion(
+                message.sourceChainId,
+                proof.checkpointHash,
+                leaf,
+                proof.leafIndex,
+                proof.siblings
+            ),
+            "INVALID_MESSAGE_PROOF"
+        );
 
         inbox.consume(messageId);
         uint256 fee = riskManager.validateAndConsume(message.routeId, messageId, message.amount);
@@ -132,7 +145,7 @@ contract BridgeRouter is ReentrancyGuard {
             require(refundOk, "FEE_REFUND_FAILED");
         }
 
-        emit ProofVerified(messageId, message.routeId, msg.sender);
+        emit InclusionProofVerified(messageId, message.routeId, proof.checkpointHash, msg.sender);
 
         if (message.action == MessageLib.ACTION_LOCK_TO_MINT) {
             WrappedCollateral(route.target).mintFromLockEvent(message.recipient, message.amount, messageId);
