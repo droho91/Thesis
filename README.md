@@ -1,60 +1,57 @@
-# Bank-Chain Cross-Chain Lending Prototype
+# Bank-Chain Interop Checkpoint Prototype
 
-This repo models interoperability between two local permissioned EVM bank chains:
+This repository is a local simulation of an inter-chain linkage mechanism for two permissioned EVM bank chains. The lending contracts are the workload; the thesis contribution is the linkage layer.
 
-- Bank A runs its own chain and validator set.
-- Bank B runs its own chain and validator set.
-- Relayers are permissionless transporters.
-- Destination-chain correctness comes from signed finalized checkpoints plus Merkle message inclusion proofs.
-- Risk controls are secondary safety layers, not the bridge trust anchor.
+Bank A and Bank B each run a local chain, their own source-side validator epoch registry, a canonical message bus, and a checkpoint registry. Remote correctness is established by source-chain checkpoint commitments, bank-validator quorum signatures, parent-linked checkpoint progression, Merkle message inclusion proofs, strict replay protection, and freeze/recovery handling.
 
-No public RPC, paid prover, cloud service, mainnet deployment, or subscription API is required.
+No public RPC, paid prover, cloud service, mainnet deployment, subscription API, or external paid infrastructure is required.
 
-## Canonical Flow
+## Canonical Linkage Flow
 
-### Lock on Bank A, Mint and Borrow on Bank B
+1. A bank application emits a normalized cross-chain message through `MessageBus`.
+2. `MessageBus` assigns a nonce and message sequence, stores the message id and leaf, and updates a deterministic message history root.
+3. `BankCheckpointRegistry` commits a contiguous message range on the source chain.
+4. The source checkpoint binds:
+   - `sourceChainId`
+   - source checkpoint registry address
+   - source message bus address
+   - `validatorSetId`
+   - validator-set hash
+   - monotonic checkpoint sequence
+   - parent checkpoint hash
+   - message root
+   - message sequence range
+   - message accumulator
+   - source block number/hash reference
+   - timestamp
+5. Bank-chain validators certify the exact checkpoint hash with `>= 2/3` voting power.
+6. Any relayer submits the signed checkpoint to the remote `BankCheckpointClient`.
+7. The client verifies validator-set binding, quorum, source commitment shape, parent linkage, sequence, message range, and source progression.
+8. Any relayer submits the message and Merkle proof to `BridgeRouter`.
+9. The router verifies checkpoint inclusion before route policy, fee, risk, mint, unlock, or lending logic runs.
+10. `MessageInbox` consumes the message id exactly once.
 
-1. User locks Bank A collateral in `CollateralVault`.
-2. `MessageBus` appends a normalized message leaf to the Bank A source message tree.
-3. `BankCheckpointRegistry` commits a canonical Bank A checkpoint over one or more message leaves.
-4. Bank A validators certify that checkpoint object with `>= 2/3` voting power.
-5. Any relayer submits the signed checkpoint to Bank B `BankCheckpointClient`.
-6. Any relayer submits the message and Merkle inclusion proof to Bank B `BridgeRouter`.
-7. Bank B verifies checkpoint finality, parent linkage, inclusion, replay state, route policy, and risk policy.
-8. Bank B mints `WrappedCollateral`.
-9. User deposits wrapped collateral and borrows `StableToken` from `LendingPool`.
+## Contracts
 
-### Burn on Bank B, Unlock on Bank A
-
-1. User repays or closes debt on Bank B.
-2. User withdraws wrapped collateral and calls `BridgeRouter.requestBurn`.
-3. Bank B burns wrapped collateral and dispatches a release message through `MessageBus`.
-4. Bank B checkpoint registry commits the release message into a canonical checkpoint.
-5. Bank B validators certify the checkpoint.
-6. Any relayer submits the checkpoint and inclusion proof to Bank A.
-7. Bank A verifies the proof path and unlocks original collateral from `CollateralVault`.
-
-## Core Contracts
-
-- `contracts/checkpoint/BankCheckpointRegistry.sol`: source-chain checkpoint producer. It commits contiguous `MessageBus` ranges into canonical Merkle roots and emits checkpoint objects for bank validators to sign.
-- `contracts/checkpoint/BankCheckpointClient.sol`: stores source-chain validator sets, verifies `>= 2/3` voting power signatures, stores verified checkpoints, verifies Merkle inclusion, detects conflicting checkpoints, and freezes a source chain.
-- `contracts/bridge/MessageBus.sol`: canonical source outbox. It normalizes messages, assigns nonces/sequences, stores message leaves, and maintains an append-only accumulator used by source checkpoints.
-- `contracts/bridge/BridgeRouter.sol`: destination executor. It accepts only messages proven against verified checkpoints, then applies replay protection and secondary route/risk policy before minting or unlocking.
-- `contracts/bridge/MessageInbox.sol`: one-time message consumption and replay protection.
-- `contracts/risk/RouteRegistry.sol`: route configuration, emitter/sender/asset/target binding, caps, fees, rate windows, and high-value thresholds.
-- `contracts/risk/RiskManager.sol`: pause, freeze, rate limit, cooldown, and high-value approval checks after proof verification.
-- `contracts/fees/FeeVault.sol`: source-side prepaid route fee escrow and destination-side pre-funded relayer reward escrow.
-- `contracts/CollateralVault.sol`, `contracts/WrappedCollateral.sol`, `contracts/LendingPool.sol`: lending business flow.
+- `contracts/checkpoint/BankValidatorSetRegistry.sol`: source-chain bank validator epoch registry. It records validator lists, equal or weighted voting power, active `validatorSetId`, and validator-set hash.
+- `contracts/checkpoint/BankCheckpointRegistry.sol`: source-chain canonical checkpoint producer. It commits message ranges, source progression references, validator epoch binding, and checkpoint hashes on-chain.
+- `contracts/checkpoint/BankCheckpointClient.sol`: destination remote view. It verifies `>= 2/3` signatures against the correct validator set, enforces parent-linked progression, stores verified checkpoints, verifies Merkle inclusion, detects conflicting checkpoints, freezes sources, and supports governance unfreeze.
+- `contracts/bridge/MessageBus.sol`: canonical source outbox. It normalizes messages, assigns nonces/sequences, stores leaves, and maintains the deterministic message history commitment used by checkpoints.
+- `contracts/bridge/BridgeRouter.sol`: destination executor. It verifies source freeze state and message inclusion before route/risk policy and before mint/unlock actions.
+- `contracts/bridge/MessageInbox.sol`: replay protection for verified cross-chain messages.
+- `contracts/risk/RouteRegistry.sol` and `contracts/risk/RiskManager.sol`: secondary safety controls. They never replace checkpoint or proof correctness.
+- `contracts/CollateralVault.sol`, `contracts/WrappedCollateral.sol`, and `contracts/LendingPool.sol`: lending demonstration workload.
 
 ## Local Scripts
 
 - `npm run node:chainA`: starts Bank A local EVM.
 - `npm run node:chainB`: starts Bank B local EVM.
-- `npm run deploy:multichain`: deploys both bank stacks, installs local validator sets, configures routes, and writes `demo/multichain-addresses.json`.
-- `npm run worker:checkpoint`: commits source registry checkpoints when new messages exist, gathers local bank-validator signatures for those checkpoint objects, and relays them.
-- `npm run worker:message`: builds real Merkle inclusion proofs over checkpoint message ranges and lets destination contracts decide validity.
-- `npm run worker:risk`: observes route policy and can pause/freeze when explicitly configured.
-- `npm run worker:hub`: runs checkpoint relayer, message relayer, and risk watcher together.
+- `npm run deploy:multichain`: deploys both bank stacks, source validator-set registries, checkpoint registries, remote clients, routes, and demo contracts.
+- `npm run seed:multichain`: seeds local demo balances.
+- `npm run worker:checkpoint`: asks each source registry to commit pending message ranges, gathers local bank-validator signatures over the canonical checkpoint artifact, and submits it to the remote client.
+- `npm run worker:message`: builds real Merkle proofs from source `MessageBus` leaves within certified checkpoint ranges and submits messages to the destination router.
+- `npm run worker:risk`: observes secondary route/risk policy.
+- `npm run worker:hub`: runs checkpoint, message, and risk workers together.
 
 The validator simulation uses local dev-node accounts by default. Set `VALIDATOR_INDICES` and `LOCAL_VALIDATOR_MNEMONIC` to change the local consortium accounts.
 
@@ -66,31 +63,18 @@ Run:
 TMPDIR=/tmp XDG_CACHE_HOME=/tmp/.cache npm run test:solidity
 ```
 
-The bridge tests cover:
+The linkage tests cover canonical source checkpoint commitment, `>= 2/3` quorum, insufficient quorum, wrong validator set id, validator rotation, stale validator sets, wrong parent linkage, wrong sequence, duplicate checkpoint behavior, conflicting checkpoint freeze, valid and invalid Merkle proofs, replay rejection, wrong route, wrong source emitter, wrong source sender, multi-message checkpoints, route policy ordering, high-value approval, reverse burn/unlock, fee flow, and arbitrary relayer submission.
 
-- valid `>= 2/3` checkpoint quorum
-- insufficient signatures
-- wrong validator set ID
-- validator-set rotation and stale-set failure
-- wrong parent and wrong sequence
-- conflicting checkpoint freeze
-- multiple messages in one checkpoint
-- valid and invalid Merkle proofs
-- replay prevention
-- wrong route, source emitter, and source sender
-- paused and frozen routes
-- high-value approval
-- reverse burn/release to unlock
-- prepaid source fee and destination relayer reward payout
-- arbitrary relayer addresses submitting valid data
+## Documentation
+
+Read `docs/INTERCHAIN_LINKAGE_MODEL.md` for the thesis architecture and the local-simulation boundaries.
 
 ## Local Simulation Boundaries
 
-This is intentionally zero-cost and local:
-
 - Validators are local dev accounts, not independent bank infrastructure.
-- The source checkpoint producer is an on-chain local registry driven by an authorized local script, not a production bank-chain consensus engine.
-- The worker may commit whatever message range is currently pending, so checkpoint size depends on local polling cadence.
+- Source checkpoint production is an on-chain local registry driven by a local worker, not a production consensus engine.
+- Validator certification is simulated with local ECDSA signatures over the canonical checkpoint hash.
+- Source block references are local EVM block number/hash anchors, not full light-client header verification.
 - Governance recovery is represented by authorized unfreeze and route policy functions.
 
-The canonical on-chain path is still checkpoint and Merkle proof based. There is no validator-attestation bridge path, no header/receipt dev verifier path, and no fake proof success path.
+The canonical path has no legacy header verifier, receipt shortcut, fake proof path, or bridge-signer-only attestation path.

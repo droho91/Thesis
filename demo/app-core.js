@@ -32,12 +32,12 @@ const ABI = {
   ],
   checkpointRegistry: [
     "function checkpointSequence() view returns (uint256)",
-    "function checkpointsBySequence(uint256 sequence) view returns (uint256 sourceChainId,uint256 validatorSetId,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash,uint256 timestamp,bytes32 checkpointHash)",
+    "function checkpointsBySequence(uint256 sequence) view returns (uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,uint256 validatorSetId,bytes32 validatorSetHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash,bytes32 checkpointHash)",
   ],
   checkpointClient: [
     "function checkpointHashBySequence(uint256 sourceChainId, uint256 sequence) view returns (bytes32)",
     "function latestCheckpointSequence(uint256 sourceChainId) view returns (uint256)",
-    "function verifiedCheckpoint(uint256 sourceChainId, bytes32 checkpointHash) view returns (uint256 validatorSetId,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash,uint256 timestamp,bytes32 checkpointHash,bool exists)",
+    "function verifiedCheckpoint(uint256 sourceChainId, bytes32 checkpointHash) view returns (uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,uint256 validatorSetId,bytes32 validatorSetHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash,bytes32 checkpointHash,bool exists)",
     "function sourceFrozen(uint256 sourceChainId) view returns (bool)",
   ],
   inbox: [
@@ -607,11 +607,11 @@ function renderStaticConfig() {
   setText("infraDestinationTitle", chainB.name || "Bank B");
 
   setText("a-vault", chainA.collateralVault || "-");
-  setText("a-gateway", `router ${chainA.bridgeRouter || "-"} | bus ${chainA.messageBus || "-"}`);
+  setText("a-gateway", `router ${chainA.bridgeRouter || "-"} | bus ${chainA.messageBus || "-"} | validators ${chainA.validatorSetRegistry || "-"}`);
   setText("a-token", chainA.localCollateralToken || "-");
   setText("a-router", chainA.swapRouter || "-");
 
-  setText("b-gateway", `router ${chainB.bridgeRouter || "-"} | bus ${chainB.messageBus || "-"}`);
+  setText("b-gateway", `router ${chainB.bridgeRouter || "-"} | bus ${chainB.messageBus || "-"} | validators ${chainB.validatorSetRegistry || "-"}`);
   setText("b-wrapped", chainB.wrappedRemoteToken || "-");
   setText("b-stable", chainB.stableToken || "-");
   setText("b-pool", chainB.lendingPool || "-");
@@ -718,7 +718,7 @@ function renderMarketLabels() {
   setTooltip("releaseFlowInfo", `After debt is cleared or reduced, withdraw ${symbols.wrapped} back to wallet and burn it on ${destination.name} to unlock ${symbols.collateral} on ${source.name}.`);
   setTooltip("closeWithCollateralInfo", `Sell ${symbols.wrapped} collateral to repay debt on ${destination.name}. This reduces the amount of wrapped collateral you can later burn to unlock ${symbols.collateral} on ${source.name}. Use Repay All if you want to preserve as much collateral as possible.`);
   setText("sellCollateralWarning", `Selling ${symbols.wrapped} to repay debt reduces how much ${symbols.collateral} you can later unlock on ${source.name}.`);
-  setTooltip("bridgePanelInfo", "Bank-chain queue: dispatch, message-root commitment, validator-certified checkpoint, inclusion proof, route policy, and consumption.");
+  setTooltip("bridgePanelInfo", "Source message, canonical checkpoint, bank-validator quorum, Merkle inclusion, replay protection, route policy, and consumption.");
   setTooltip("termLtvInfo", "LTV = Loan-To-Value. How much debt is allowed compared to collateral value.");
   setTooltip("termHfInfo", "HF = Health Factor. Above 1.00 is safer; below 1.00 means liquidatable.");
   setTooltip("termPenaltyInfo", "Penalty is extra debt added when a loan is overdue.");
@@ -727,7 +727,7 @@ function renderMarketLabels() {
   setText("termHfText", "Safety score of your position.");
   setText("termPenaltyText", "Extra debt added when overdue.");
   setText("termCloseFactorText", "Max debt chunk liquidated per normal liquidation.");
-  setTooltip("ownerBridgeInfo", "Tracks checkpoint-backed messages, route policy, validator certification, proof readiness, and consumed message state for the active market.");
+  setTooltip("ownerBridgeInfo", "Tracks source checkpoint commitment, validator epoch, certified remote view, proof readiness, freeze state, and consumed message state.");
   setTooltip("riskPanelInfo", `Set market risk parameters and prices for the lending side on ${destination.name}.`);
   setTooltip("advancedRiskInfo", "Update one market parameter at a time without reapplying the full baseline.");
   setTooltip("advancedInterestSettingsInfo", "Tune liquidation threshold and the kinked APR model for the lending pool on the destination chain.");
@@ -832,7 +832,18 @@ async function findVerifiedCheckpointForMessage(destination, sourceChainId, mess
   return { checkpointHash: ethers.ZeroHash, checkpoint: null };
 }
 
-async function findPendingBusMessage(events, destination, providerSource, sourceChainId, routeId) {
+async function findSourceCheckpointForMessage(source, messageSequence) {
+  const latestSourceCheckpoint = await source.checkpointRegistry.checkpointSequence();
+  for (let sequence = 1n; sequence <= latestSourceCheckpoint; sequence++) {
+    const checkpoint = await source.checkpointRegistry.checkpointsBySequence(sequence);
+    if (messageSequence >= checkpoint.firstMessageSequence && messageSequence <= checkpoint.lastMessageSequence) {
+      return checkpoint;
+    }
+  }
+  return null;
+}
+
+async function findPendingBusMessage(events, source, destination, sourceChainId, routeId) {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
     const user = ev.args.recipient;
@@ -843,7 +854,8 @@ async function findPendingBusMessage(events, destination, providerSource, source
     if (await destination.inbox.consumed(messageId)) continue;
 
     const messageSequence = BigInt(ev.args.messageSequence);
-    const [checkpointInfo, sourceFrozen, routePaused, routeFrozen, route] = await Promise.all([
+    const [sourceCheckpoint, checkpointInfo, sourceFrozen, routePaused, routeFrozen, route] = await Promise.all([
+      findSourceCheckpointForMessage(source, messageSequence),
       findVerifiedCheckpointForMessage(destination, sourceChainId, messageSequence),
       destination.checkpointClient.sourceFrozen(sourceChainId),
       destination.riskManager.routePaused(routeId),
@@ -851,13 +863,14 @@ async function findPendingBusMessage(events, destination, providerSource, source
       destination.routeRegistry.getRoute(routeId),
     ]);
     const { checkpointHash, checkpoint } = checkpointInfo;
+    const sourceCheckpointCommitted = sourceCheckpoint !== null;
     const checkpointCertified = checkpointHash !== ethers.ZeroHash;
 
     const highValueRequired = route.highValueThreshold > 0n && amount >= route.highValueThreshold;
     const highValueApproved = highValueRequired
       ? await destination.riskManager.secondaryApproved(routeId, messageId)
       : true;
-    const proofStepCount = 2n + (checkpointCertified ? 2n : 0n);
+    const proofStepCount = 1n + (sourceCheckpointCommitted ? 1n : 0n) + (checkpointCertified ? 2n : 0n);
 
     return {
       txHash: ev.transactionHash,
@@ -871,7 +884,11 @@ async function findPendingBusMessage(events, destination, providerSource, source
       checkpointHash,
       checkpointSequence: checkpoint?.sequence ?? 0n,
       checkpointMessageCount: checkpoint?.messageCount ?? 0n,
-      sourceCheckpointCommitted: checkpointCertified,
+      sourceCheckpointCommitted,
+      sourceCheckpointSequence: sourceCheckpoint?.sequence ?? 0n,
+      validatorSetId: checkpoint?.validatorSetId ?? sourceCheckpoint?.validatorSetId ?? 0n,
+      sourceBlockNumber: checkpoint?.sourceBlockNumber ?? sourceCheckpoint?.sourceBlockNumber ?? 0n,
+      messageRoot: checkpoint?.messageRoot ?? sourceCheckpoint?.messageRoot ?? ethers.ZeroHash,
       checkpointCertified,
       sourceFrozen,
       routePaused,
@@ -924,7 +941,7 @@ function updateBridgeStatus(state) {
   setBridgeStep(
     "bridgeStepHeaderLock",
     "bridgeStepHeaderLockText",
-    lockCheckpointCertified ? "done" : hasLock ? "active" : "idle",
+    lockCheckpointCertified ? "done" : state.pendingLockEvent?.sourceCheckpointCommitted ? "active" : hasLock ? "active" : "idle",
     state.pendingLockEvent ? proofStatusText(state.pendingLockEvent) : mintExecuted ? "Message consumed" : "Waiting source checkpoint"
   );
   setBridgeStep(
@@ -942,7 +959,7 @@ function updateBridgeStatus(state) {
   setBridgeStep(
     "bridgeStepHeaderBurn",
     "bridgeStepHeaderBurnText",
-    burnCheckpointCertified ? "done" : hasBurn ? "active" : "idle",
+    burnCheckpointCertified ? "done" : state.pendingBurnEvent?.sourceCheckpointCommitted ? "active" : hasBurn ? "active" : "idle",
     state.pendingBurnEvent ? proofStatusText(state.pendingBurnEvent) : unlockExecuted ? "Message consumed" : "Waiting source checkpoint"
   );
   setBridgeStep(
@@ -967,9 +984,13 @@ function proofReady(event) {
 
 function proofStatusText(event) {
   if (!event) return "-";
-  return event.checkpointCertified
-    ? `Checkpoint ${event.checkpointSequence} certified; Merkle proof ready`
-    : "Message appended; waiting source checkpoint and validator quorum";
+  if (event.checkpointCertified) {
+    return `Checkpoint ${event.checkpointSequence} certified by set ${event.validatorSetId}; Merkle proof ready`;
+  }
+  if (event.sourceCheckpointCommitted) {
+    return `Source checkpoint ${event.sourceCheckpointSequence} at block ${event.sourceBlockNumber}; waiting validator quorum`;
+  }
+  return "Message appended; waiting canonical source checkpoint";
 }
 
 function bridgeExecutionState(event) {
@@ -979,7 +1000,8 @@ function bridgeExecutionState(event) {
   if (event.routeFrozen) return "Route frozen";
   if (event.routePaused) return "Route paused";
   if (event.highValueRequired && !event.highValueApproved) return "High-value approval required";
-  if (!event.checkpointCertified) return "Waiting source checkpoint and validator-certified root";
+  if (!event.sourceCheckpointCommitted) return "Waiting source checkpoint";
+  if (!event.checkpointCertified) return "Waiting validator-certified source commitment";
   return "Inclusion proof verified next";
 }
 
@@ -1190,15 +1212,17 @@ function nextActionInfo(state) {
       if (!state.pendingLockEvent.checkpointCertified) {
         return {
           buttonId: null,
-          text: `Waiting for ${source.name} validator checkpoint for ${market.id}.`,
-          hint: `Message ${short(state.pendingLockEvent.messageId)} is dispatched and must be committed into a signed checkpoint on ${destination.name}.`,
+          text: state.pendingLockEvent.sourceCheckpointCommitted
+            ? `Waiting for ${source.name} validator quorum for ${market.id}.`
+            : `Waiting for ${source.name} source checkpoint for ${market.id}.`,
+          hint: `Message ${short(state.pendingLockEvent.messageId)} must be committed on ${source.name}, certified by its validator set, and accepted on ${destination.name}.`,
         };
       }
       if (state.pendingLockEvent.sourceFrozen || state.pendingLockEvent.routePaused || state.pendingLockEvent.routeFrozen) {
         return {
           buttonId: null,
-          text: `Route policy blocks the lock message (${bridgeExecutionState(state.pendingLockEvent)}).`,
-          hint: "Risk controls are secondary safety layers and can be cleared by the configured admin.",
+          text: `Linkage safety blocks the lock message (${bridgeExecutionState(state.pendingLockEvent)}).`,
+          hint: "Source freeze is a checkpoint-client state. Route policy remains a secondary control.",
         };
       }
       if (state.pendingLockEvent.highValueRequired && !state.pendingLockEvent.highValueApproved) {
@@ -1325,15 +1349,17 @@ function nextActionInfo(state) {
       if (!state.pendingBurnEvent.checkpointCertified) {
         return {
           buttonId: null,
-          text: `Waiting for ${destination.name} validator checkpoint for release.`,
-          hint: `Message ${short(state.pendingBurnEvent.messageId)} must be committed into a signed checkpoint on ${source.name}.`,
+          text: state.pendingBurnEvent.sourceCheckpointCommitted
+            ? `Waiting for ${destination.name} validator quorum for release.`
+            : `Waiting for ${destination.name} source checkpoint for release.`,
+          hint: `Message ${short(state.pendingBurnEvent.messageId)} must be committed on ${destination.name}, certified by its validator set, and accepted on ${source.name}.`,
         };
       }
       if (state.pendingBurnEvent.sourceFrozen || state.pendingBurnEvent.routePaused || state.pendingBurnEvent.routeFrozen) {
         return {
           buttonId: null,
-          text: `Route policy blocks the burn message (${bridgeExecutionState(state.pendingBurnEvent)}).`,
-          hint: "Risk controls are secondary safety layers and can be cleared by the configured admin.",
+          text: `Linkage safety blocks the burn message (${bridgeExecutionState(state.pendingBurnEvent)}).`,
+          hint: "Source freeze is a checkpoint-client state. Route policy remains a secondary control.",
         };
       }
       if (state.pendingBurnEvent.highValueRequired && !state.pendingBurnEvent.highValueApproved) {
@@ -1798,15 +1824,15 @@ async function refreshState() {
 
     const pendingLockEvent = await findPendingBusMessage(
       lockEvents,
+      sourceRead,
       destinationRead,
-      providerSource,
       source.chainId,
       market.lockRouteId
     );
     const pendingBurnEvent = await findPendingBusMessage(
       burnRequestEvents,
+      destinationRead,
       sourceRead,
-      providerDestination,
       destination.chainId,
       market.burnRouteId
     );

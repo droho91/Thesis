@@ -26,15 +26,21 @@ function signerForSourceOwner(signers, chainKey) {
 function checkpointFromRegistryTuple(tuple) {
   return {
     sourceChainId: tuple.sourceChainId,
+    sourceCheckpointRegistry: tuple.sourceCheckpointRegistry,
+    sourceMessageBus: tuple.sourceMessageBus,
     validatorSetId: tuple.validatorSetId,
+    validatorSetHash: tuple.validatorSetHash,
     sequence: tuple.sequence,
     parentCheckpointHash: tuple.parentCheckpointHash,
     messageRoot: tuple.messageRoot,
     firstMessageSequence: tuple.firstMessageSequence,
     lastMessageSequence: tuple.lastMessageSequence,
     messageCount: tuple.messageCount,
-    sourceCommitmentHash: tuple.sourceCommitmentHash,
+    messageAccumulator: tuple.messageAccumulator,
+    sourceBlockNumber: tuple.sourceBlockNumber,
+    sourceBlockHash: tuple.sourceBlockHash,
     timestamp: tuple.timestamp,
+    sourceCommitmentHash: tuple.sourceCommitmentHash,
   };
 }
 
@@ -87,7 +93,7 @@ async function submitCheckpointFromSourceRegistry(cfg, leg, signers, sourceSeque
   } catch (err) {
     const msg = err?.shortMessage || err?.message || String(err);
     if (!msg.includes("CHECKPOINT_EXISTS")) {
-      console.log(`[checkpoint] ${leg.kind} skipped ${prettyHash(ev.args.messageId)}: ${msg}`);
+      console.log(`[checkpoint] ${leg.kind} skipped seq=${sequence}: ${msg}`);
     }
     return 0;
   }

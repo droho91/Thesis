@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>User Portal | Cross-Chain Lending</title>
+    <title>Linkage Flow | Bank-Chain Interop</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -32,12 +32,12 @@
   <body class="portal-user" data-portal="user">
     <header class="topbar">
       <div class="brand-stack">
-        <a class="brand-link" href="./index.html" aria-label="Cross-Chain Lending home">
-          <img class="brand-logo" src="./assets/logo.png?v=5" alt="Cross-Chain Lending logo" />
+        <a class="brand-link" href="./index.html" aria-label="Bank-chain linkage home">
+          <img class="brand-logo" src="./assets/logo.png?v=5" alt="Bank-chain linkage logo" />
         </a>
         <div>
-          <p class="eyebrow">Borrower Portal</p>
-          <h1>Cross-Chain Lending App</h1>
+          <p class="eyebrow">Inter-Chain Linkage Flow</p>
+          <h1>Bank-Chain Checkpoint Path</h1>
         </div>
       </div>
       <div class="topbar-actions">
@@ -45,7 +45,7 @@
           <button class="theme-toggle-option" type="button" data-theme-option="dark" aria-label="Dark mode" title="Dark mode">☾</button>
           <button class="theme-toggle-option" type="button" data-theme-option="light" aria-label="Light mode" title="Light mode">☀</button>
         </div>
-        <a class="btn link-btn" href="./owner.html">Owner Portal</a>
+        <a class="btn link-btn" href="./owner.html">Operator Console</a>
         <button id="connectBtn" class="btn primary">Connect Wallet</button>
         <button id="refreshBtn" class="btn">Refresh</button>
       </div>
@@ -216,24 +216,24 @@
       <section class="panel bridge-panel wide bridge-queue-main">
         <div class="panel-head">
           <div class="title-inline">
-            <h3>Checkpoint Queue &amp; Status</h3>
-            <button id="bridgePanelInfo" class="info-pill" type="button" data-tooltip="" aria-label="Bridge status info">i</button>
+            <h3>Inter-Chain Linkage Trace</h3>
+            <button id="bridgePanelInfo" class="info-pill" type="button" data-tooltip="" aria-label="Linkage status info">i</button>
           </div>
         </div>
         <div class="bridge-timeline">
           <article id="bridgeStepLock" class="bridge-step">
             <span class="bridge-step-index">1</span>
-            <h4>Lock Event</h4>
+            <h4>Source Message</h4>
             <p id="bridgeStepLockText">-</p>
           </article>
           <article id="bridgeStepHeaderLock" class="bridge-step">
             <span class="bridge-step-index">2</span>
-            <h4>Checkpoint Certified</h4>
+            <h4>Source Checkpoint</h4>
             <p id="bridgeStepHeaderLockText">-</p>
           </article>
           <article id="bridgeStepMint" class="bridge-step">
             <span class="bridge-step-index">3</span>
-            <h4>Proof Consumed</h4>
+            <h4>Quorum &amp; Proof</h4>
             <p id="bridgeStepMintText">-</p>
           </article>
           <article id="bridgeStepBurn" class="bridge-step">
@@ -243,22 +243,22 @@
           </article>
           <article id="bridgeStepHeaderBurn" class="bridge-step">
             <span class="bridge-step-index">5</span>
-            <h4>Checkpoint Certified</h4>
+            <h4>Return Checkpoint</h4>
             <p id="bridgeStepHeaderBurnText">-</p>
           </article>
           <article id="bridgeStepUnlock" class="bridge-step">
             <span class="bridge-step-index">6</span>
-            <h4>Message Consumed</h4>
+            <h4>Replay-Protected Unlock</h4>
             <p id="bridgeStepUnlockText">-</p>
           </article>
         </div>
         <div class="bridge-facts">
-          <div class="bridge-fact"><span>Pending Lock</span><strong id="pendingLockMessage">-</strong></div>
-          <div class="bridge-fact"><span>Lock Checkpoint</span><strong id="pendingLockProof">-</strong></div>
-          <div class="bridge-fact"><span>Lock State</span><strong id="pendingLockState">-</strong></div>
-          <div class="bridge-fact"><span>Pending Burn</span><strong id="pendingBurnMessage">-</strong></div>
-          <div class="bridge-fact"><span>Burn Checkpoint</span><strong id="pendingBurnProof">-</strong></div>
-          <div class="bridge-fact"><span>Burn State</span><strong id="pendingBurnState">-</strong></div>
+          <div class="bridge-fact"><span>Lock Message</span><strong id="pendingLockMessage">-</strong></div>
+          <div class="bridge-fact"><span>Lock Commitment</span><strong id="pendingLockProof">-</strong></div>
+          <div class="bridge-fact"><span>Lock Safety</span><strong id="pendingLockState">-</strong></div>
+          <div class="bridge-fact"><span>Burn Message</span><strong id="pendingBurnMessage">-</strong></div>
+          <div class="bridge-fact"><span>Burn Commitment</span><strong id="pendingBurnProof">-</strong></div>
+          <div class="bridge-fact"><span>Burn Safety</span><strong id="pendingBurnState">-</strong></div>
         </div>
       </section>
 

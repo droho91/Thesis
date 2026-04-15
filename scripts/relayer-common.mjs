@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { ethers } from "ethers";
 
 export const POLL_MS = Number(process.env.WORKER_POLL_MS || 2500);
-export const CHECKPOINT_TYPEHASH = ethers.id("BankChain.FinalizedCheckpoint.v2");
+export const CHECKPOINT_TYPEHASH = ethers.id("BankChain.FinalizedCheckpoint.v3");
 export const MESSAGE_LEAF_TYPEHASH = ethers.id("CrossChainLending.MessageLeaf.v1");
 export const LOCAL_VALIDATOR_MNEMONIC =
   process.env.LOCAL_VALIDATOR_MNEMONIC || "test test test test test test test test test test test junk";
@@ -16,9 +16,9 @@ export const ABI = {
     "function computeLeafHash((bytes32 routeId,uint8 action,uint256 sourceChainId,uint256 destinationChainId,address sourceEmitter,address sourceSender,address owner,address recipient,address asset,uint256 amount,uint256 nonce,uint256 prepaidFee,bytes32 payloadHash) message) view returns (bytes32)",
   ],
   checkpointRegistry: [
-    "event SourceCheckpointCommitted(uint256 indexed sequence,uint256 indexed validatorSetId,bytes32 indexed checkpointHash,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash)",
-    "function commitCheckpoint(uint256 uptoMessageSequence) returns ((uint256 sourceChainId,uint256 validatorSetId,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash,uint256 timestamp,bytes32 checkpointHash))",
-    "function checkpointsBySequence(uint256 sequence) view returns (uint256 sourceChainId,uint256 validatorSetId,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash,uint256 timestamp,bytes32 checkpointHash)",
+    "event SourceCheckpointCommitted(uint256 indexed sequence,uint256 indexed validatorSetId,bytes32 indexed checkpointHash,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,bytes32 validatorSetHash,bytes32 sourceCommitmentHash)",
+    "function commitCheckpoint(uint256 uptoMessageSequence) returns ((uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,uint256 validatorSetId,bytes32 validatorSetHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash,bytes32 checkpointHash))",
+    "function checkpointsBySequence(uint256 sequence) view returns (uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,uint256 validatorSetId,bytes32 validatorSetHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash,bytes32 checkpointHash)",
     "function checkpointSequence() view returns (uint256)",
     "function lastCommittedMessageSequence() view returns (uint256)",
   ],
@@ -27,9 +27,9 @@ export const ABI = {
     "function latestCheckpointHash(uint256 sourceChainId) view returns (bytes32)",
     "function checkpointHashBySequence(uint256 sourceChainId, uint256 sequence) view returns (bytes32)",
     "function sourceFrozen(uint256 sourceChainId) view returns (bool)",
-    "function verifiedCheckpoint(uint256 sourceChainId, bytes32 checkpointHash) view returns (uint256 validatorSetId,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash,uint256 timestamp,bytes32 checkpointHash,bool exists)",
-    "function hashCheckpoint((uint256 sourceChainId,uint256 validatorSetId,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash,uint256 timestamp) checkpoint) view returns (bytes32)",
-    "function submitCheckpoint((uint256 sourceChainId,uint256 validatorSetId,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash,uint256 timestamp) checkpoint, bytes[] signatures) returns (bytes32)",
+    "function verifiedCheckpoint(uint256 sourceChainId, bytes32 checkpointHash) view returns (uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,uint256 validatorSetId,bytes32 validatorSetHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash,bytes32 checkpointHash,bool exists)",
+    "function hashCheckpoint((uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,uint256 validatorSetId,bytes32 validatorSetHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash) checkpoint) view returns (bytes32)",
+    "function submitCheckpoint((uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,uint256 validatorSetId,bytes32 validatorSetHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash) checkpoint, bytes[] signatures) returns (bytes32)",
   ],
   inbox: [
     "function consumed(bytes32 messageId) view returns (bool)",
@@ -138,7 +138,10 @@ export function checkpointHash(checkpoint) {
       [
         "bytes32",
         "uint256",
+        "address",
+        "address",
         "uint256",
+        "bytes32",
         "uint256",
         "bytes32",
         "bytes32",
@@ -147,19 +150,28 @@ export function checkpointHash(checkpoint) {
         "uint256",
         "bytes32",
         "uint256",
+        "bytes32",
+        "uint256",
+        "bytes32",
       ],
       [
         CHECKPOINT_TYPEHASH,
         BigInt(checkpoint.sourceChainId),
+        checkpoint.sourceCheckpointRegistry,
+        checkpoint.sourceMessageBus,
         BigInt(checkpoint.validatorSetId),
+        checkpoint.validatorSetHash,
         BigInt(checkpoint.sequence),
         checkpoint.parentCheckpointHash,
         checkpoint.messageRoot,
         BigInt(checkpoint.firstMessageSequence),
         BigInt(checkpoint.lastMessageSequence),
         BigInt(checkpoint.messageCount),
-        checkpoint.sourceCommitmentHash,
+        checkpoint.messageAccumulator,
+        BigInt(checkpoint.sourceBlockNumber),
+        checkpoint.sourceBlockHash,
         BigInt(checkpoint.timestamp),
+        checkpoint.sourceCommitmentHash,
       ]
     )
   );

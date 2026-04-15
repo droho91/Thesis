@@ -17,7 +17,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Bank-chain lending prototype with signed checkpoints and Merkle message proofs.",
+  "description": "Local bank-chain interop prototype with canonical checkpoints, validator epochs, and Merkle message proofs.",
   "devDependencies": {
     "@types/chai": "^4.3.20",
     "@types/chai-as-promised": "^8.0.2",

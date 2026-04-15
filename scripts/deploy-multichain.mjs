@@ -94,9 +94,20 @@ async function configureVault(vaultArtifact, signer, vaultAddress, messageBus, r
   await tx.wait();
 }
 
-async function deployRouterInfra({ owner, chainId, artifacts }) {
+async function deployRouterInfra({ owner, chainId, artifacts, validatorAddresses }) {
   const messageBus = await deploy(artifacts.messageBus, owner, [chainId]);
-  const checkpointRegistry = await deploy(artifacts.checkpointRegistry, owner, [chainId, await messageBus.getAddress(), VALIDATOR_SET_ID]);
+  const validatorPowers = validatorAddresses.map(() => 1n);
+  const validatorSetRegistry = await deploy(artifacts.validatorSetRegistry, owner, [
+    chainId,
+    VALIDATOR_SET_ID,
+    validatorAddresses,
+    validatorPowers,
+  ]);
+  const checkpointRegistry = await deploy(artifacts.checkpointRegistry, owner, [
+    chainId,
+    await messageBus.getAddress(),
+    await validatorSetRegistry.getAddress(),
+  ]);
   const checkpointClient = await deploy(artifacts.checkpointClient, owner, []);
   const messageInbox = await deploy(artifacts.messageInbox, owner, []);
   const routeRegistry = await deploy(artifacts.routeRegistry, owner, []);
@@ -118,6 +129,7 @@ async function deployRouterInfra({ owner, chainId, artifacts }) {
 
   return {
     messageBus: await messageBus.getAddress(),
+    validatorSetRegistry: await validatorSetRegistry.getAddress(),
     checkpointRegistry: await checkpointRegistry.getAddress(),
     checkpointClient: await checkpointClient.getAddress(),
     messageInbox: await messageInbox.getAddress(),
@@ -128,12 +140,12 @@ async function deployRouterInfra({ owner, chainId, artifacts }) {
   };
 }
 
-async function deployChainStack({ key, remoteKey, owner, chainId, artifacts }) {
+async function deployChainStack({ key, remoteKey, owner, chainId, artifacts, validatorAddresses }) {
   const collateralSymbol = key === "A" ? "aCOL" : "bCOL";
   const stableSymbol = key === "A" ? "sA" : "sB";
   const wrappedSymbol = key === "A" ? "wB" : "wA";
 
-  const infra = await deployRouterInfra({ owner, chainId, artifacts });
+  const infra = await deployRouterInfra({ owner, chainId, artifacts, validatorAddresses });
 
   const localCollateralToken = await deploy(artifacts.stableToken, owner, [`${chainLabel(key)} Collateral`, collateralSymbol]);
   const stableToken = await deploy(artifacts.stableToken, owner, [`${chainLabel(key)} Stable`, stableSymbol]);
@@ -213,6 +225,7 @@ async function loadArtifacts() {
     priceOracle: await loadArtifact("MockPriceOracle.sol", "MockPriceOracle"),
     swapRouter: await loadArtifact("MockSwapRouter.sol", "MockSwapRouter"),
     messageBus: await loadArtifact("bridge/MessageBus.sol", "MessageBus"),
+    validatorSetRegistry: await loadArtifact("checkpoint/BankValidatorSetRegistry.sol", "BankValidatorSetRegistry"),
     checkpointRegistry: await loadArtifact("checkpoint/BankCheckpointRegistry.sol", "BankCheckpointRegistry"),
     checkpointClient: await loadArtifact("checkpoint/BankCheckpointClient.sol", "BankCheckpointClient"),
     messageInbox: await loadArtifact("bridge/MessageInbox.sol", "MessageInbox"),
@@ -270,6 +283,7 @@ async function main() {
     owner: ownerA,
     chainId: chainAId,
     artifacts,
+    validatorAddresses: validatorsA,
   });
 
   const chainBStack = await deployChainStack({
@@ -278,6 +292,7 @@ async function main() {
     owner: ownerB,
     chainId: chainBId,
     artifacts,
+    validatorAddresses: validatorsB,
   });
 
   await installRemoteValidatorSet({
@@ -457,17 +472,18 @@ async function main() {
   const userAddress = await userA.getAddress();
 
   const output = {
-    architecture: "bank-checkpoint-router",
+    architecture: "bank-chain-canonical-checkpoint-linkage",
     roles: {
       owner: ownerAddress,
       user: userAddress,
       relayers: [await relayerA.getAddress(), await relayerB.getAddress()],
-      note: "Relayers are permissionless transport. Signed bank checkpoints and Merkle inclusion proofs are the trust boundary.",
+      note: "Relayers are permissionless transport. Canonical source checkpoints, bank-validator quorum, and Merkle inclusion proofs are the trust boundary.",
     },
     validatorSimulation: {
       validatorSetId: VALIDATOR_SET_ID.toString(),
       validatorIndices: VALIDATOR_INDICES,
       note: "Local-only consortium simulation. Validators are local dev-node accounts.",
+      registryModel: "Each bank chain deploys a source-side BankValidatorSetRegistry. Destination clients keep the matching remote validator-set hash and voting power view.",
     },
     checkpointDefaults: {
       routeTransferCapWei: DEFAULT_ROUTE_TRANSFER_CAP_WEI.toString(),
@@ -475,7 +491,7 @@ async function main() {
       routeWindowSeconds: DEFAULT_ROUTE_WINDOW_SECONDS,
       highValueThresholdWei: DEFAULT_HIGH_VALUE_THRESHOLD_WEI.toString(),
       relayerRewardBps: RELAYER_REWARD_BPS,
-      verifierMode: "signed-checkpoints-and-merkle-inclusion",
+      verifierMode: "canonical-source-checkpoints-bank-validator-quorum-merkle-inclusion",
     },
     chains: {
       A: {

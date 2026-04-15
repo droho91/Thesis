@@ -4,12 +4,16 @@
 
 `test/BridgeRouter.t.sol` proves the canonical bank-chain verification path:
 
+- source checkpoints are committed on `BankCheckpointRegistry` before relay.
+- source commitment hashes bind registry address, message bus, validator epoch, message range, accumulator, source block reference, and timestamp.
 - `>= 2/3` validator voting power accepts a checkpoint.
 - insufficient signatures fail.
 - signatures bound to the wrong validator set fail.
+- source-side validator epoch rotation and destination remote-view rotation are exercised.
 - rotated-out validator sets fail.
 - wrong checkpoint parent fails.
 - wrong checkpoint sequence fails.
+- duplicate checkpoints fail without freezing.
 - conflicting checkpoints at the same source sequence freeze the source client.
 - frozen source clients block message processing.
 - source registry checkpoints can contain multiple messages.
@@ -26,6 +30,7 @@ The same test file covers message delivery:
 - wrong source emitter fails.
 - wrong source sender fails.
 - any relayer address may submit valid checkpoints and message proofs.
+- invalid proofs fail before route pause/freeze policy is consulted.
 
 ## Secondary Risk Controls
 

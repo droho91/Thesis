@@ -3,40 +3,50 @@ pragma solidity ^0.8.28;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {MessageBus} from "../bridge/MessageBus.sol";
+import {BankValidatorSetRegistry} from "./BankValidatorSetRegistry.sol";
 
 /// @title BankCheckpointRegistry
-/// @notice Source-chain checkpoint producer for a permissioned bank EVM chain.
-/// @dev This contract turns source MessageBus progression into canonical checkpoint objects.
-///      Validators sign checkpoints emitted here; relayers only transport them.
+/// @notice Source-chain canonical checkpoint producer for a permissioned bank EVM chain.
+/// @dev Checkpoints are committed on the source chain before validators certify them. Relayers
+///      can transport the emitted artifact, but they do not define the message root or source
+///      progression reference.
 contract BankCheckpointRegistry is AccessControl {
     bytes32 public constant CHECKPOINT_PRODUCER_ROLE = keccak256("CHECKPOINT_PRODUCER_ROLE");
-    bytes32 public constant VALIDATOR_SET_ADMIN_ROLE = keccak256("VALIDATOR_SET_ADMIN_ROLE");
-    bytes32 public constant CHECKPOINT_TYPEHASH = keccak256("BankChain.FinalizedCheckpoint.v2");
-    bytes32 public constant SOURCE_COMMITMENT_TYPEHASH = keccak256("BankChain.SourceCheckpointCommitment.v1");
+    bytes32 public constant CHECKPOINT_TYPEHASH = keccak256("BankChain.FinalizedCheckpoint.v3");
+    bytes32 public constant SOURCE_COMMITMENT_TYPEHASH = keccak256("BankChain.SourceCheckpointCommitment.v2");
 
     struct SourceCheckpoint {
         uint256 sourceChainId;
+        address sourceCheckpointRegistry;
+        address sourceMessageBus;
         uint256 validatorSetId;
+        bytes32 validatorSetHash;
         uint256 sequence;
         bytes32 parentCheckpointHash;
         bytes32 messageRoot;
         uint256 firstMessageSequence;
         uint256 lastMessageSequence;
         uint256 messageCount;
-        bytes32 sourceCommitmentHash;
+        bytes32 messageAccumulator;
+        uint256 sourceBlockNumber;
+        bytes32 sourceBlockHash;
         uint256 timestamp;
+        bytes32 sourceCommitmentHash;
         bytes32 checkpointHash;
     }
 
     uint256 public immutable sourceChainId;
     MessageBus public immutable messageBus;
+    BankValidatorSetRegistry public immutable validatorSetRegistry;
 
-    uint256 public activeValidatorSetId;
     uint256 public checkpointSequence;
     uint256 public lastCommittedMessageSequence;
+    uint256 public latestSourceBlockNumber;
     bytes32 public latestCheckpointHash;
 
     mapping(uint256 => SourceCheckpoint) public checkpointsBySequence;
+    mapping(uint256 => bytes32) public messageRootBySequence;
+    mapping(uint256 => uint256) public sourceBlockNumberBySequence;
     mapping(bytes32 => bool) public canonicalCheckpointHash;
 
     event SourceCheckpointCommitted(
@@ -48,31 +58,26 @@ contract BankCheckpointRegistry is AccessControl {
         uint256 firstMessageSequence,
         uint256 lastMessageSequence,
         uint256 messageCount,
+        bytes32 messageAccumulator,
+        uint256 sourceBlockNumber,
+        bytes32 sourceBlockHash,
+        bytes32 validatorSetHash,
         bytes32 sourceCommitmentHash
     );
-    event ActiveValidatorSetRotated(uint256 indexed oldValidatorSetId, uint256 indexed newValidatorSetId);
 
-    constructor(uint256 _sourceChainId, address _messageBus, uint256 _initialValidatorSetId) {
+    constructor(uint256 _sourceChainId, address _messageBus, address _validatorSetRegistry) {
         require(_sourceChainId != 0, "CHAIN_ID_ZERO");
         require(_messageBus != address(0), "MESSAGE_BUS_ZERO");
-        require(_initialValidatorSetId != 0, "VALIDATOR_SET_ZERO");
+        require(_validatorSetRegistry != address(0), "VALIDATOR_REGISTRY_ZERO");
         require(MessageBus(_messageBus).localChainId() == _sourceChainId, "BUS_CHAIN_MISMATCH");
+        require(BankValidatorSetRegistry(_validatorSetRegistry).sourceChainId() == _sourceChainId, "VALIDATOR_CHAIN_MISMATCH");
 
         sourceChainId = _sourceChainId;
         messageBus = MessageBus(_messageBus);
-        activeValidatorSetId = _initialValidatorSetId;
+        validatorSetRegistry = BankValidatorSetRegistry(_validatorSetRegistry);
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(CHECKPOINT_PRODUCER_ROLE, msg.sender);
-        _grantRole(VALIDATOR_SET_ADMIN_ROLE, msg.sender);
-    }
-
-    function rotateValidatorSet(uint256 newValidatorSetId) external onlyRole(VALIDATOR_SET_ADMIN_ROLE) {
-        require(newValidatorSetId != 0, "VALIDATOR_SET_ZERO");
-        require(newValidatorSetId > activeValidatorSetId, "VALIDATOR_SET_NOT_FORWARD");
-        uint256 oldValidatorSetId = activeValidatorSetId;
-        activeValidatorSetId = newValidatorSetId;
-        emit ActiveValidatorSetRotated(oldValidatorSetId, newValidatorSetId);
     }
 
     function commitCheckpoint(uint256 uptoMessageSequence)
@@ -92,99 +97,115 @@ contract BankCheckpointRegistry is AccessControl {
             leaves[i] = leaf;
         }
 
+        (
+            uint256 validatorSetId,
+            uint256 totalVotingPower,
+            bytes32 validatorSetHash,
+
+        ) = validatorSetRegistry.activeValidatorSet();
+        require(validatorSetId != 0, "VALIDATOR_SET_ZERO");
+        require(totalVotingPower > 0, "VALIDATOR_SET_EMPTY");
+        require(validatorSetHash != bytes32(0), "VALIDATOR_SET_HASH_ZERO");
+
         bytes32 messageRoot = merkleRoot(leaves);
         uint256 nextSequence = checkpointSequence + 1;
         bytes32 parentCheckpointHash = latestCheckpointHash;
+        bytes32 messageAccumulator = messageBus.messageAccumulatorAt(uptoMessageSequence);
+        uint256 sourceBlockNumber = block.number;
+        bytes32 sourceBlockHash = sourceBlockNumber > 0 ? blockhash(sourceBlockNumber - 1) : bytes32(0);
         uint256 timestamp = block.timestamp;
-        bytes32 sourceCommitmentHash = keccak256(
-            abi.encode(
-                SOURCE_COMMITMENT_TYPEHASH,
-                sourceChainId,
-                address(this),
-                address(messageBus),
-                nextSequence,
-                parentCheckpointHash,
-                messageRoot,
-                firstMessageSequence,
-                uptoMessageSequence,
-                messageCount,
-                messageBus.messageAccumulatorAt(uptoMessageSequence),
-                block.number,
-                timestamp
-            )
-        );
-
-        bytes32 checkpointHash = hashCheckpoint(
-            sourceChainId,
-            activeValidatorSetId,
-            nextSequence,
-            parentCheckpointHash,
-            messageRoot,
-            firstMessageSequence,
-            uptoMessageSequence,
-            messageCount,
-            sourceCommitmentHash,
-            timestamp
-        );
 
         checkpoint = SourceCheckpoint({
             sourceChainId: sourceChainId,
-            validatorSetId: activeValidatorSetId,
+            sourceCheckpointRegistry: address(this),
+            sourceMessageBus: address(messageBus),
+            validatorSetId: validatorSetId,
+            validatorSetHash: validatorSetHash,
             sequence: nextSequence,
             parentCheckpointHash: parentCheckpointHash,
             messageRoot: messageRoot,
             firstMessageSequence: firstMessageSequence,
             lastMessageSequence: uptoMessageSequence,
             messageCount: messageCount,
-            sourceCommitmentHash: sourceCommitmentHash,
+            messageAccumulator: messageAccumulator,
+            sourceBlockNumber: sourceBlockNumber,
+            sourceBlockHash: sourceBlockHash,
             timestamp: timestamp,
-            checkpointHash: checkpointHash
+            sourceCommitmentHash: bytes32(0),
+            checkpointHash: bytes32(0)
         });
+        checkpoint.sourceCommitmentHash = hashSourceCommitment(checkpoint);
+        checkpoint.checkpointHash = hashCheckpoint(checkpoint);
 
         checkpointSequence = nextSequence;
         lastCommittedMessageSequence = uptoMessageSequence;
-        latestCheckpointHash = checkpointHash;
+        latestSourceBlockNumber = sourceBlockNumber;
+        latestCheckpointHash = checkpoint.checkpointHash;
         checkpointsBySequence[nextSequence] = checkpoint;
-        canonicalCheckpointHash[checkpointHash] = true;
+        messageRootBySequence[nextSequence] = messageRoot;
+        sourceBlockNumberBySequence[nextSequence] = sourceBlockNumber;
+        canonicalCheckpointHash[checkpoint.checkpointHash] = true;
 
         emit SourceCheckpointCommitted(
             nextSequence,
-            activeValidatorSetId,
-            checkpointHash,
+            validatorSetId,
+            checkpoint.checkpointHash,
             parentCheckpointHash,
             messageRoot,
             firstMessageSequence,
             uptoMessageSequence,
             messageCount,
-            sourceCommitmentHash
+            messageAccumulator,
+            sourceBlockNumber,
+            sourceBlockHash,
+            validatorSetHash,
+            checkpoint.sourceCommitmentHash
         );
     }
 
-    function hashCheckpoint(
-        uint256 _sourceChainId,
-        uint256 validatorSetId,
-        uint256 sequence,
-        bytes32 parentCheckpointHash,
-        bytes32 messageRoot,
-        uint256 firstMessageSequence,
-        uint256 lastMessageSequence,
-        uint256 messageCount,
-        bytes32 sourceCommitmentHash,
-        uint256 timestamp
-    ) public pure returns (bytes32) {
+    function hashSourceCommitment(SourceCheckpoint memory checkpoint) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                SOURCE_COMMITMENT_TYPEHASH,
+                checkpoint.sourceChainId,
+                checkpoint.sourceCheckpointRegistry,
+                checkpoint.sourceMessageBus,
+                checkpoint.validatorSetId,
+                checkpoint.validatorSetHash,
+                checkpoint.sequence,
+                checkpoint.parentCheckpointHash,
+                checkpoint.messageRoot,
+                checkpoint.firstMessageSequence,
+                checkpoint.lastMessageSequence,
+                checkpoint.messageCount,
+                checkpoint.messageAccumulator,
+                checkpoint.sourceBlockNumber,
+                checkpoint.sourceBlockHash,
+                checkpoint.timestamp
+            )
+        );
+    }
+
+    function hashCheckpoint(SourceCheckpoint memory checkpoint) public pure returns (bytes32) {
         return keccak256(
             abi.encode(
                 CHECKPOINT_TYPEHASH,
-                _sourceChainId,
-                validatorSetId,
-                sequence,
-                parentCheckpointHash,
-                messageRoot,
-                firstMessageSequence,
-                lastMessageSequence,
-                messageCount,
-                sourceCommitmentHash,
-                timestamp
+                checkpoint.sourceChainId,
+                checkpoint.sourceCheckpointRegistry,
+                checkpoint.sourceMessageBus,
+                checkpoint.validatorSetId,
+                checkpoint.validatorSetHash,
+                checkpoint.sequence,
+                checkpoint.parentCheckpointHash,
+                checkpoint.messageRoot,
+                checkpoint.firstMessageSequence,
+                checkpoint.lastMessageSequence,
+                checkpoint.messageCount,
+                checkpoint.messageAccumulator,
+                checkpoint.sourceBlockNumber,
+                checkpoint.sourceBlockHash,
+                checkpoint.timestamp,
+                checkpoint.sourceCommitmentHash
             )
         );
     }

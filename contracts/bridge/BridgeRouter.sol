@@ -134,6 +134,20 @@ contract BridgeRouter is ReentrancyGuard {
     {
         require(message.destinationChainId == localChainId, "WRONG_DESTINATION_CHAIN");
 
+        messageId = MessageLib.messageId(message);
+        bytes32 leaf = MessageLib.leafHash(message);
+        require(!checkpointClient.sourceFrozen(message.sourceChainId), "SOURCE_FROZEN");
+        require(
+            checkpointClient.verifyMessageInclusion(
+                message.sourceChainId,
+                proof.checkpointHash,
+                leaf,
+                proof.leafIndex,
+                proof.siblings
+            ),
+            "INVALID_MESSAGE_PROOF"
+        );
+
         RouteRegistry.RouteConfig memory route = routeRegistry.getRoute(message.routeId);
         require(route.enabled, "ROUTE_DISABLED");
         require(route.action == message.action, "ROUTE_ACTION_MISMATCH");
@@ -145,19 +159,6 @@ contract BridgeRouter is ReentrancyGuard {
         require(message.owner != address(0), "OWNER_ZERO");
         require(message.amount > 0, "AMOUNT_ZERO");
         require(message.recipient != address(0), "RECIPIENT_ZERO");
-
-        messageId = MessageLib.messageId(message);
-        bytes32 leaf = MessageLib.leafHash(message);
-        require(
-            checkpointClient.verifyMessageInclusion(
-                message.sourceChainId,
-                proof.checkpointHash,
-                leaf,
-                proof.leafIndex,
-                proof.siblings
-            ),
-            "INVALID_MESSAGE_PROOF"
-        );
 
         require(!inbox.consumed(messageId), "MESSAGE_ALREADY_CONSUMED");
         uint256 fee = riskManager.validateAndConsume(message.routeId, messageId, message.amount);

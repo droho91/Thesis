@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Owner Portal | Cross-Chain Lending</title>
+    <title>Operator Console | Bank-Chain Interop</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -32,12 +32,12 @@
   <body class="portal-owner" data-portal="owner">
     <header class="topbar">
       <div class="brand-stack">
-        <a class="brand-link" href="./index.html" aria-label="Cross-Chain Lending home">
-          <img class="brand-logo" src="./assets/logo.png?v=5" alt="Cross-Chain Lending logo" />
+        <a class="brand-link" href="./index.html" aria-label="Bank-chain linkage home">
+          <img class="brand-logo" src="./assets/logo.png?v=5" alt="Bank-chain linkage logo" />
         </a>
         <div>
-          <p class="eyebrow">Owner / Risk Admin Portal</p>
-          <h1>Cross-Chain Lending Control</h1>
+          <p class="eyebrow">Bank-Chain Operator Console</p>
+          <h1>Checkpoint Linkage Control</h1>
         </div>
       </div>
       <div class="topbar-actions">
@@ -45,7 +45,7 @@
           <button class="theme-toggle-option" type="button" data-theme-option="dark" aria-label="Dark mode" title="Dark mode">☾</button>
           <button class="theme-toggle-option" type="button" data-theme-option="light" aria-label="Light mode" title="Light mode">☀</button>
         </div>
-        <a class="btn link-btn" href="./user.html">User Portal</a>
+        <a class="btn link-btn" href="./user.html">Linkage Flow</a>
         <button id="connectBtn" class="btn primary">Connect Wallet</button>
         <button id="refreshBtn" class="btn">Refresh</button>
       </div>
@@ -236,7 +236,7 @@
           <div class="advanced-tabs" data-tab-group="owner-advanced">
             <button class="advanced-tab active" type="button" data-tab-target="metrics">Metrics</button>
             <button class="advanced-tab" type="button" data-tab-target="status">Status</button>
-            <button class="advanced-tab" type="button" data-tab-target="bridge">Checkpoints</button>
+            <button class="advanced-tab" type="button" data-tab-target="bridge">Linkage</button>
             <button class="advanced-tab" type="button" data-tab-target="infra">Infra</button>
           </div>
 
@@ -267,17 +267,17 @@
           </div>
 
           <div class="collapse-body advanced-section advanced-bridge" data-tab-panel="bridge">
-            <h4 class="collapse-title">Checkpoint Queue</h4>
+            <h4 class="collapse-title">Canonical Linkage State</h4>
             <div class="inline-help" style="margin-bottom: 10px;">
-              <button id="ownerBridgeInfo" class="info-pill" type="button" data-tooltip="" aria-label="Bridge queue info">i</button>
+              <button id="ownerBridgeInfo" class="info-pill" type="button" data-tooltip="" aria-label="Linkage state info">i</button>
             </div>
             <div class="metrics-grid compact-grid">
-              <article class="metric-card"><h4>Pending Lock</h4><p id="pendingLockMessage">-</p></article>
-              <article class="metric-card"><h4>Lock Checkpoint</h4><p id="pendingLockProof">-</p></article>
-              <article class="metric-card"><h4>Lock State</h4><p id="pendingLockState">-</p></article>
-              <article class="metric-card"><h4>Pending Burn</h4><p id="pendingBurnMessage">-</p></article>
-              <article class="metric-card"><h4>Burn Checkpoint</h4><p id="pendingBurnProof">-</p></article>
-              <article class="metric-card"><h4>Burn State</h4><p id="pendingBurnState">-</p></article>
+              <article class="metric-card"><h4>Lock Message</h4><p id="pendingLockMessage">-</p></article>
+              <article class="metric-card"><h4>Lock Commitment</h4><p id="pendingLockProof">-</p></article>
+              <article class="metric-card"><h4>Lock Safety</h4><p id="pendingLockState">-</p></article>
+              <article class="metric-card"><h4>Burn Message</h4><p id="pendingBurnMessage">-</p></article>
+              <article class="metric-card"><h4>Burn Commitment</h4><p id="pendingBurnProof">-</p></article>
+              <article class="metric-card"><h4>Burn Safety</h4><p id="pendingBurnState">-</p></article>
             </div>
           </div>
 

@@ -13,6 +13,7 @@ contract MessageBus {
     uint256 public messageSequence;
     mapping(uint256 => bytes32) public messageLeafAt;
     mapping(uint256 => bytes32) public messageIdAt;
+    mapping(uint256 => bytes32) public messageHistoryRootAt;
     mapping(uint256 => bytes32) public messageAccumulatorAt;
     mapping(bytes32 => bool) public dispatched;
 
@@ -42,6 +43,11 @@ contract MessageBus {
         bytes32 indexed leaf,
         bytes32 previousAccumulator,
         bytes32 accumulator
+    );
+    event CanonicalMessageCommitted(
+        uint256 indexed messageSequence,
+        bytes32 indexed messageId,
+        bytes32 indexed historyRoot
     );
 
     constructor(uint256 _localChainId) {
@@ -96,6 +102,7 @@ contract MessageBus {
         messageIdAt[messageSequence] = messageId;
         bytes32 accumulator = keccak256(abi.encodePacked(previousAccumulator, messageSequence, leaf));
         messageAccumulatorAt[messageSequence] = accumulator;
+        messageHistoryRootAt[messageSequence] = accumulator;
         dispatched[messageId] = true;
 
         emit BridgeMessageDispatched(
@@ -118,6 +125,7 @@ contract MessageBus {
             accumulator
         );
         emit MessageTreeAppended(messageSequence, messageId, leaf, previousAccumulator, accumulator);
+        emit CanonicalMessageCommitted(messageSequence, messageId, accumulator);
     }
 
     function computeMessageId(MessageLib.Message calldata message) external pure returns (bytes32) {
