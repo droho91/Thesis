@@ -17,10 +17,12 @@ library MessageLib {
         uint256 destinationChainId;
         address sourceEmitter;
         address sourceSender;
+        address owner;
         address recipient;
         address asset;
         uint256 amount;
         uint256 nonce;
+        uint256 prepaidFee;
         bytes32 payloadHash;
     }
 
@@ -34,10 +36,12 @@ library MessageLib {
                 message.destinationChainId,
                 message.sourceEmitter,
                 message.sourceSender,
+                message.owner,
                 message.recipient,
                 message.asset,
                 message.amount,
                 message.nonce,
+                message.prepaidFee,
                 message.payloadHash
             )
         );

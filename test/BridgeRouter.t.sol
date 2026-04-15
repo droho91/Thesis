@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {BankCheckpointClient} from "../contracts/checkpoint/BankCheckpointClient.sol";
+import {BankCheckpointRegistry} from "../contracts/checkpoint/BankCheckpointRegistry.sol";
 import {BridgeRouter} from "../contracts/bridge/BridgeRouter.sol";
 import {MessageBus} from "../contracts/bridge/MessageBus.sol";
 import {MessageInbox} from "../contracts/bridge/MessageInbox.sol";
@@ -37,6 +38,8 @@ contract BridgeRouterTest is Test {
 
     MessageBus internal busA;
     MessageBus internal busB;
+    BankCheckpointRegistry internal registryA;
+    BankCheckpointRegistry internal registryB;
     BankCheckpointClient internal checkpointA;
     BankCheckpointClient internal checkpointB;
     MessageInbox internal inboxA;
@@ -74,6 +77,8 @@ contract BridgeRouterTest is Test {
 
         busA = new MessageBus(CHAIN_A);
         busB = new MessageBus(CHAIN_B);
+        registryA = new BankCheckpointRegistry(CHAIN_A, address(busA), VALIDATOR_SET_1);
+        registryB = new BankCheckpointRegistry(CHAIN_B, address(busB), VALIDATOR_SET_1);
 
         (checkpointA, inboxA, routesA, riskA, feesA, routerA) = _deployRouterStack(CHAIN_A, busA);
         (checkpointB, inboxB, routesB, riskB, feesB, routerB) = _deployRouterStack(CHAIN_B, busB);
@@ -85,6 +90,8 @@ contract BridgeRouterTest is Test {
         stableB = new StableToken("Bank B Stable", "sB");
         wrappedA = new WrappedCollateral("Wrapped Bank A Collateral", "wA", address(routerB));
         vaultA = new CollateralVault(address(collateralA), address(routerA));
+        vaultA.configureFeeModules(address(riskA), address(feesA));
+        feesA.grantCollector(address(vaultA));
 
         oracleB = new MockPriceOracle();
         oracleB.setPrice(address(wrappedA), 1e8);
@@ -98,6 +105,21 @@ contract BridgeRouterTest is Test {
         burnRoute = keccak256("BANK_B_TO_BANK_A_BURN_TO_UNLOCK");
 
         vaultA.configureDefaultRoute(address(busA), lockRoute, CHAIN_B);
+        _setRoute(
+            routesA,
+            lockRoute,
+            ACTION_LOCK_TO_MINT,
+            CHAIN_A,
+            CHAIN_B,
+            address(busA),
+            address(vaultA),
+            address(collateralA),
+            address(wrappedA),
+            500 ether,
+            1_000 ether,
+            1 days,
+            0
+        );
         _setRoute(
             routesB,
             lockRoute,
@@ -161,6 +183,30 @@ contract BridgeRouterTest is Test {
 
         assertEq(wrappedA.balanceOf(user), 100 ether);
         assertTrue(inboxB.consumed(message.messageId()));
+    }
+
+    function testMultipleMessagesCanExistInCheckpoint() public {
+        MessageLib.Message memory first = _lockOnA(15 ether);
+        MessageLib.Message memory second = _lockOnA(17 ether);
+
+        BankCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint = registryA.commitCheckpoint(busA.messageSequence());
+        BankCheckpointClient.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
+        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
+
+        vm.prank(anyRelayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
+
+        bytes32[] memory siblings = new bytes32[](1);
+        siblings[0] = first.leafHash();
+        BankCheckpointClient.MessageProof memory proof =
+            BankCheckpointClient.MessageProof({checkpointHash: checkpointHash, leafIndex: 1, siblings: siblings});
+
+        vm.prank(anyRelayer);
+        routerB.relayMessage(second, proof);
+
+        assertEq(wrappedA.balanceOf(user), 17 ether);
+        assertTrue(inboxB.consumed(second.messageId()));
+        assertFalse(inboxB.consumed(first.messageId()));
     }
 
     function testInsufficientSignaturesFail() public {
@@ -399,6 +445,61 @@ contract BridgeRouterTest is Test {
         assertTrue(inboxA.consumed(burnMessage.messageId()));
     }
 
+    function testFeeHandlingPaysRelayerFromRouteVault() public {
+        uint256 relayFee = 0.02 ether;
+        _setRouteWithFee(
+            routesA,
+            lockRoute,
+            ACTION_LOCK_TO_MINT,
+            CHAIN_A,
+            CHAIN_B,
+            address(busA),
+            address(vaultA),
+            address(collateralA),
+            address(wrappedA),
+            500 ether,
+            1_000 ether,
+            1 days,
+            0,
+            relayFee,
+            0
+        );
+        _setRouteWithFee(
+            routesB,
+            lockRoute,
+            ACTION_LOCK_TO_MINT,
+            CHAIN_A,
+            CHAIN_B,
+            address(busA),
+            address(vaultA),
+            address(collateralA),
+            address(wrappedA),
+            500 ether,
+            1_000 ether,
+            1 days,
+            0,
+            relayFee,
+            0
+        );
+        feesB.setRelayerRewardBps(10_000);
+        feesB.fundRoute{value: relayFee}(lockRoute);
+        vm.deal(user, 1 ether);
+
+        vm.prank(user);
+        vaultA.lock{value: relayFee}(40 ether);
+        MessageLib.Message memory message = _lockMessage(40 ether, busA.nonces(address(vaultA)), relayFee);
+        (, BankCheckpointClient.MessageProof memory proof) =
+            _finalizeMessageOnB(message, 1, VALIDATOR_SET_1, validatorKeysA, 2, bytes32(0), bytes32(0));
+
+        uint256 beforeBalance = relayer.balance;
+        vm.prank(relayer);
+        routerB.relayMessage(message, proof);
+
+        assertEq(feesA.routeBalance(lockRoute), relayFee);
+        assertEq(relayer.balance, beforeBalance + relayFee);
+        assertEq(feesB.routeBalance(lockRoute), 0);
+    }
+
     function testAnyRelayerMaySubmitValidCheckpointAndProof() public {
         MessageLib.Message memory message = _lockOnA(45 ether);
         bytes32 leaf = message.leafHash();
@@ -467,6 +568,42 @@ contract BridgeRouterTest is Test {
         uint256 rateLimitWindow,
         uint256 highValueThreshold
     ) internal {
+        _setRouteWithFee(
+            registry,
+            routeId,
+            action,
+            sourceChainId,
+            destinationChainId,
+            sourceEmitter,
+            sourceSender,
+            sourceAsset,
+            target,
+            transferCap,
+            rateLimitAmount,
+            rateLimitWindow,
+            highValueThreshold,
+            0,
+            0
+        );
+    }
+
+    function _setRouteWithFee(
+        RouteRegistry registry,
+        bytes32 routeId,
+        uint8 action,
+        uint256 sourceChainId,
+        uint256 destinationChainId,
+        address sourceEmitter,
+        address sourceSender,
+        address sourceAsset,
+        address target,
+        uint256 transferCap,
+        uint256 rateLimitAmount,
+        uint256 rateLimitWindow,
+        uint256 highValueThreshold,
+        uint256 flatFee,
+        uint16 feeBps
+    ) internal {
         registry.setRoute(
             routeId,
             RouteRegistry.RouteConfig({
@@ -478,8 +615,8 @@ contract BridgeRouterTest is Test {
                 sourceSender: sourceSender,
                 sourceAsset: sourceAsset,
                 target: target,
-                flatFee: 0,
-                feeBps: 0,
+                flatFee: flatFee,
+                feeBps: feeBps,
                 transferCap: transferCap,
                 rateLimitAmount: rateLimitAmount,
                 rateLimitWindow: rateLimitWindow,
@@ -491,7 +628,7 @@ contract BridgeRouterTest is Test {
     function _lockOnA(uint256 amount) internal returns (MessageLib.Message memory message) {
         vm.prank(user);
         vaultA.lock(amount);
-        return _lockMessage(amount, busA.nonces(address(vaultA)));
+        return _lockMessage(amount, busA.nonces(address(vaultA)), 0);
     }
 
     function _mintFromA(uint256 amount) internal returns (MessageLib.Message memory message) {
@@ -502,7 +639,11 @@ contract BridgeRouterTest is Test {
         routerB.relayMessage(message, proof);
     }
 
-    function _lockMessage(uint256 amount, uint256 nonce) internal view returns (MessageLib.Message memory) {
+    function _lockMessage(uint256 amount, uint256 nonce, uint256 prepaidFee)
+        internal
+        view
+        returns (MessageLib.Message memory)
+    {
         return MessageLib.Message({
             routeId: lockRoute,
             action: ACTION_LOCK_TO_MINT,
@@ -510,10 +651,12 @@ contract BridgeRouterTest is Test {
             destinationChainId: CHAIN_B,
             sourceEmitter: address(busA),
             sourceSender: address(vaultA),
+            owner: user,
             recipient: user,
             asset: address(collateralA),
             amount: amount,
             nonce: nonce,
+            prepaidFee: prepaidFee,
             payloadHash: bytes32(0)
         });
     }
@@ -526,10 +669,12 @@ contract BridgeRouterTest is Test {
             destinationChainId: CHAIN_A,
             sourceEmitter: address(busB),
             sourceSender: address(routerB),
+            owner: user,
             recipient: user,
             asset: address(wrappedA),
             amount: amount,
             nonce: nonce,
+            prepaidFee: 0,
             payloadHash: bytes32(0)
         });
     }
@@ -602,7 +747,30 @@ contract BridgeRouterTest is Test {
             sequence: sequence,
             parentCheckpointHash: parentCheckpointHash,
             messageRoot: messageRoot,
+            firstMessageSequence: sequence,
+            lastMessageSequence: sequence,
+            messageCount: 1,
+            sourceCommitmentHash: keccak256(abi.encode("TEST_SOURCE_COMMITMENT", sourceChainId, sequence, messageRoot)),
             timestamp: block.timestamp + sequence
+        });
+    }
+
+    function _clientCheckpoint(BankCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint)
+        internal
+        pure
+        returns (BankCheckpointClient.Checkpoint memory)
+    {
+        return BankCheckpointClient.Checkpoint({
+            sourceChainId: sourceCheckpoint.sourceChainId,
+            validatorSetId: sourceCheckpoint.validatorSetId,
+            sequence: sourceCheckpoint.sequence,
+            parentCheckpointHash: sourceCheckpoint.parentCheckpointHash,
+            messageRoot: sourceCheckpoint.messageRoot,
+            firstMessageSequence: sourceCheckpoint.firstMessageSequence,
+            lastMessageSequence: sourceCheckpoint.lastMessageSequence,
+            messageCount: sourceCheckpoint.messageCount,
+            sourceCommitmentHash: sourceCheckpoint.sourceCommitmentHash,
+            timestamp: sourceCheckpoint.timestamp
         });
     }
 

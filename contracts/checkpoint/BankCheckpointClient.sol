@@ -11,7 +11,7 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 ///      Merkle inclusion against verified checkpoint message roots.
 contract BankCheckpointClient is AccessControl {
     bytes32 public constant CHECKPOINT_ADMIN_ROLE = keccak256("CHECKPOINT_ADMIN_ROLE");
-    bytes32 public constant CHECKPOINT_TYPEHASH = keccak256("BankChain.FinalizedCheckpoint.v1");
+    bytes32 public constant CHECKPOINT_TYPEHASH = keccak256("BankChain.FinalizedCheckpoint.v2");
 
     struct Checkpoint {
         uint256 sourceChainId;
@@ -19,6 +19,10 @@ contract BankCheckpointClient is AccessControl {
         uint256 sequence;
         bytes32 parentCheckpointHash;
         bytes32 messageRoot;
+        uint256 firstMessageSequence;
+        uint256 lastMessageSequence;
+        uint256 messageCount;
+        bytes32 sourceCommitmentHash;
         uint256 timestamp;
     }
 
@@ -27,6 +31,10 @@ contract BankCheckpointClient is AccessControl {
         uint256 sequence;
         bytes32 parentCheckpointHash;
         bytes32 messageRoot;
+        uint256 firstMessageSequence;
+        uint256 lastMessageSequence;
+        uint256 messageCount;
+        bytes32 sourceCommitmentHash;
         uint256 timestamp;
         bytes32 checkpointHash;
         bool exists;
@@ -40,6 +48,7 @@ contract BankCheckpointClient is AccessControl {
 
     struct ValidatorSetInfo {
         uint256 totalVotingPower;
+        bytes32 validatorSetHash;
         bool active;
         address[] validators;
     }
@@ -48,6 +57,7 @@ contract BankCheckpointClient is AccessControl {
     mapping(uint256 => mapping(uint256 => mapping(address => uint256))) public validatorVotingPower;
     mapping(uint256 => mapping(bytes32 => VerifiedCheckpoint)) private verifiedCheckpoints;
     mapping(uint256 => mapping(uint256 => bytes32)) public checkpointHashBySequence;
+    mapping(uint256 => uint256) public activeValidatorSetId;
     mapping(uint256 => uint256) public latestCheckpointSequence;
     mapping(uint256 => bytes32) public latestCheckpointHash;
     mapping(uint256 => bool) public sourceFrozen;
@@ -56,6 +66,7 @@ contract BankCheckpointClient is AccessControl {
         uint256 indexed sourceChainId,
         uint256 indexed validatorSetId,
         uint256 totalVotingPower,
+        bytes32 validatorSetHash,
         bool active
     );
     event CheckpointAccepted(
@@ -64,6 +75,9 @@ contract BankCheckpointClient is AccessControl {
         bytes32 indexed checkpointHash,
         uint256 validatorSetId,
         bytes32 messageRoot,
+        uint256 firstMessageSequence,
+        uint256 lastMessageSequence,
+        bytes32 sourceCommitmentHash,
         address relayer
     );
     event SourceFrozen(
@@ -92,6 +106,18 @@ contract BankCheckpointClient is AccessControl {
         require(validators.length == votingPowers.length, "VALIDATOR_LENGTH_MISMATCH");
         require(validators.length > 0, "VALIDATORS_EMPTY");
 
+        uint256 previousActiveSetId = activeValidatorSetId[sourceChainId];
+        if (active && previousActiveSetId != 0 && previousActiveSetId != validatorSetId) {
+            validatorSets[sourceChainId][previousActiveSetId].active = false;
+            emit ValidatorSetUpdated(
+                sourceChainId,
+                previousActiveSetId,
+                validatorSets[sourceChainId][previousActiveSetId].totalVotingPower,
+                validatorSets[sourceChainId][previousActiveSetId].validatorSetHash,
+                false
+            );
+        }
+
         ValidatorSetInfo storage set = validatorSets[sourceChainId][validatorSetId];
         for (uint256 i = 0; i < set.validators.length; i++) {
             validatorVotingPower[sourceChainId][validatorSetId][set.validators[i]] = 0;
@@ -112,8 +138,10 @@ contract BankCheckpointClient is AccessControl {
         }
 
         set.totalVotingPower = totalPower;
+        set.validatorSetHash = keccak256(abi.encode(sourceChainId, validatorSetId, validators, votingPowers));
         set.active = active;
-        emit ValidatorSetUpdated(sourceChainId, validatorSetId, totalPower, active);
+        if (active) activeValidatorSetId[sourceChainId] = validatorSetId;
+        emit ValidatorSetUpdated(sourceChainId, validatorSetId, totalPower, set.validatorSetHash, active);
     }
 
     function setValidatorSetActive(uint256 sourceChainId, uint256 validatorSetId, bool active)
@@ -122,8 +150,24 @@ contract BankCheckpointClient is AccessControl {
     {
         ValidatorSetInfo storage set = validatorSets[sourceChainId][validatorSetId];
         require(set.totalVotingPower > 0, "VALIDATOR_SET_UNKNOWN");
+        if (active) {
+            uint256 previousActiveSetId = activeValidatorSetId[sourceChainId];
+            if (previousActiveSetId != 0 && previousActiveSetId != validatorSetId) {
+                validatorSets[sourceChainId][previousActiveSetId].active = false;
+                emit ValidatorSetUpdated(
+                    sourceChainId,
+                    previousActiveSetId,
+                    validatorSets[sourceChainId][previousActiveSetId].totalVotingPower,
+                    validatorSets[sourceChainId][previousActiveSetId].validatorSetHash,
+                    false
+                );
+            }
+            activeValidatorSetId[sourceChainId] = validatorSetId;
+        } else if (activeValidatorSetId[sourceChainId] == validatorSetId) {
+            activeValidatorSetId[sourceChainId] = 0;
+        }
         set.active = active;
-        emit ValidatorSetUpdated(sourceChainId, validatorSetId, set.totalVotingPower, active);
+        emit ValidatorSetUpdated(sourceChainId, validatorSetId, set.totalVotingPower, set.validatorSetHash, active);
     }
 
     function submitCheckpoint(Checkpoint calldata checkpoint, bytes[] calldata signatures)
@@ -134,9 +178,18 @@ contract BankCheckpointClient is AccessControl {
         require(checkpoint.validatorSetId != 0, "VALIDATOR_SET_ZERO");
         require(checkpoint.sequence != 0, "SEQUENCE_ZERO");
         require(checkpoint.messageRoot != bytes32(0), "MESSAGE_ROOT_ZERO");
+        require(checkpoint.sourceCommitmentHash != bytes32(0), "SOURCE_COMMITMENT_ZERO");
+        require(checkpoint.messageCount > 0, "MESSAGE_COUNT_ZERO");
+        require(checkpoint.firstMessageSequence != 0, "FIRST_MESSAGE_ZERO");
+        require(checkpoint.lastMessageSequence >= checkpoint.firstMessageSequence, "BAD_MESSAGE_RANGE");
+        require(
+            checkpoint.lastMessageSequence - checkpoint.firstMessageSequence + 1 == checkpoint.messageCount,
+            "MESSAGE_COUNT_MISMATCH"
+        );
 
         ValidatorSetInfo storage set = validatorSets[checkpoint.sourceChainId][checkpoint.validatorSetId];
         require(set.active, "VALIDATOR_SET_INACTIVE");
+        require(activeValidatorSetId[checkpoint.sourceChainId] == checkpoint.validatorSetId, "VALIDATOR_SET_NOT_CURRENT");
 
         checkpointHash = hashCheckpoint(checkpoint);
         _requireQuorum(checkpoint.sourceChainId, checkpoint.validatorSetId, set.totalVotingPower, checkpointHash, signatures);
@@ -164,6 +217,10 @@ contract BankCheckpointClient is AccessControl {
             sequence: checkpoint.sequence,
             parentCheckpointHash: checkpoint.parentCheckpointHash,
             messageRoot: checkpoint.messageRoot,
+            firstMessageSequence: checkpoint.firstMessageSequence,
+            lastMessageSequence: checkpoint.lastMessageSequence,
+            messageCount: checkpoint.messageCount,
+            sourceCommitmentHash: checkpoint.sourceCommitmentHash,
             timestamp: checkpoint.timestamp,
             checkpointHash: checkpointHash,
             exists: true
@@ -178,6 +235,9 @@ contract BankCheckpointClient is AccessControl {
             checkpointHash,
             checkpoint.validatorSetId,
             checkpoint.messageRoot,
+            checkpoint.firstMessageSequence,
+            checkpoint.lastMessageSequence,
+            checkpoint.sourceCommitmentHash,
             msg.sender
         );
     }
@@ -197,6 +257,10 @@ contract BankCheckpointClient is AccessControl {
                 checkpoint.sequence,
                 checkpoint.parentCheckpointHash,
                 checkpoint.messageRoot,
+                checkpoint.firstMessageSequence,
+                checkpoint.lastMessageSequence,
+                checkpoint.messageCount,
+                checkpoint.sourceCommitmentHash,
                 checkpoint.timestamp
             )
         );
@@ -232,10 +296,10 @@ contract BankCheckpointClient is AccessControl {
     function validatorSet(uint256 sourceChainId, uint256 validatorSetId)
         external
         view
-        returns (uint256 totalVotingPower, bool active, address[] memory validators)
+        returns (uint256 totalVotingPower, bytes32 validatorSetHash, bool active, address[] memory validators)
     {
         ValidatorSetInfo storage set = validatorSets[sourceChainId][validatorSetId];
-        return (set.totalVotingPower, set.active, set.validators);
+        return (set.totalVotingPower, set.validatorSetHash, set.active, set.validators);
     }
 
     function merkleRoot(bytes32 leaf, uint256 leafIndex, bytes32[] memory siblings) public pure returns (bytes32 root) {

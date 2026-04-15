@@ -96,6 +96,7 @@ async function configureVault(vaultArtifact, signer, vaultAddress, messageBus, r
 
 async function deployRouterInfra({ owner, chainId, artifacts }) {
   const messageBus = await deploy(artifacts.messageBus, owner, [chainId]);
+  const checkpointRegistry = await deploy(artifacts.checkpointRegistry, owner, [chainId, await messageBus.getAddress(), VALIDATOR_SET_ID]);
   const checkpointClient = await deploy(artifacts.checkpointClient, owner, []);
   const messageInbox = await deploy(artifacts.messageInbox, owner, []);
   const routeRegistry = await deploy(artifacts.routeRegistry, owner, []);
@@ -117,6 +118,7 @@ async function deployRouterInfra({ owner, chainId, artifacts }) {
 
   return {
     messageBus: await messageBus.getAddress(),
+    checkpointRegistry: await checkpointRegistry.getAddress(),
     checkpointClient: await checkpointClient.getAddress(),
     messageInbox: await messageInbox.getAddress(),
     routeRegistry: await routeRegistry.getAddress(),
@@ -145,6 +147,9 @@ async function deployChainStack({ key, remoteKey, owner, chainId, artifacts }) {
     await localCollateralToken.getAddress(),
     infra.bridgeRouter,
   ]);
+  await (await collateralVault.configureFeeModules(infra.riskManager, infra.feeVault)).wait();
+  const feeVault = new ethers.Contract(infra.feeVault, artifacts.feeVault.abi, owner);
+  await (await feeVault.grantCollector(await collateralVault.getAddress())).wait();
 
   await (await priceOracle.setPrice(await wrappedRemoteToken.getAddress(), DEFAULT_PRICE_E8)).wait();
   await (await priceOracle.setPrice(await stableToken.getAddress(), DEFAULT_PRICE_E8)).wait();
@@ -208,6 +213,7 @@ async function loadArtifacts() {
     priceOracle: await loadArtifact("MockPriceOracle.sol", "MockPriceOracle"),
     swapRouter: await loadArtifact("MockSwapRouter.sol", "MockSwapRouter"),
     messageBus: await loadArtifact("bridge/MessageBus.sol", "MessageBus"),
+    checkpointRegistry: await loadArtifact("checkpoint/BankCheckpointRegistry.sol", "BankCheckpointRegistry"),
     checkpointClient: await loadArtifact("checkpoint/BankCheckpointClient.sol", "BankCheckpointClient"),
     messageInbox: await loadArtifact("bridge/MessageInbox.sol", "MessageInbox"),
     bridgeRouter: await loadArtifact("bridge/BridgeRouter.sol", "BridgeRouter"),
@@ -327,6 +333,20 @@ async function main() {
 
   const routeConfigs = [
     {
+      registry: chainAStack.routeRegistry,
+      signer: ownerA,
+      routeId: lockAToBRouteId,
+      config: {
+        action: ACTION_LOCK_TO_MINT,
+        sourceChainId: chainAId,
+        destinationChainId: chainBId,
+        sourceEmitter: chainAStack.messageBus,
+        sourceSender: chainAStack.collateralVault,
+        sourceAsset: chainAStack.localCollateralToken,
+        target: chainBStack.wrappedRemoteToken,
+      },
+    },
+    {
       registry: chainBStack.routeRegistry,
       signer: ownerB,
       routeId: lockAToBRouteId,
@@ -338,6 +358,20 @@ async function main() {
         sourceSender: chainAStack.collateralVault,
         sourceAsset: chainAStack.localCollateralToken,
         target: chainBStack.wrappedRemoteToken,
+      },
+    },
+    {
+      registry: chainBStack.routeRegistry,
+      signer: ownerB,
+      routeId: lockBToARouteId,
+      config: {
+        action: ACTION_LOCK_TO_MINT,
+        sourceChainId: chainBId,
+        destinationChainId: chainAId,
+        sourceEmitter: chainBStack.messageBus,
+        sourceSender: chainBStack.collateralVault,
+        sourceAsset: chainBStack.localCollateralToken,
+        target: chainAStack.wrappedRemoteToken,
       },
     },
     {
@@ -475,10 +509,12 @@ async function main() {
         sourceCollateralToken: chainAStack.localCollateralToken,
         sourceVault: chainAStack.collateralVault,
         sourceMessageBus: chainAStack.messageBus,
+        sourceCheckpointRegistry: chainAStack.checkpointRegistry,
         sourceBridgeRouter: chainAStack.bridgeRouter,
         sourceCheckpointClient: chainAStack.checkpointClient,
         sourceRiskManager: chainAStack.riskManager,
         destinationMessageBus: chainBStack.messageBus,
+        destinationCheckpointRegistry: chainBStack.checkpointRegistry,
         destinationBridgeRouter: chainBStack.bridgeRouter,
         destinationCheckpointClient: chainBStack.checkpointClient,
         destinationRiskManager: chainBStack.riskManager,
@@ -501,10 +537,12 @@ async function main() {
         sourceCollateralToken: chainBStack.localCollateralToken,
         sourceVault: chainBStack.collateralVault,
         sourceMessageBus: chainBStack.messageBus,
+        sourceCheckpointRegistry: chainBStack.checkpointRegistry,
         sourceBridgeRouter: chainBStack.bridgeRouter,
         sourceCheckpointClient: chainBStack.checkpointClient,
         sourceRiskManager: chainBStack.riskManager,
         destinationMessageBus: chainAStack.messageBus,
+        destinationCheckpointRegistry: chainAStack.checkpointRegistry,
         destinationBridgeRouter: chainAStack.bridgeRouter,
         destinationCheckpointClient: chainAStack.checkpointClient,
         destinationRiskManager: chainAStack.riskManager,

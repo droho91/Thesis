@@ -12,12 +12,14 @@
 - wrong checkpoint sequence fails.
 - conflicting checkpoints at the same source sequence freeze the source client.
 - frozen source clients block message processing.
+- source registry checkpoints can contain multiple messages.
 
 ## Message Inclusion and Routing
 
 The same test file covers message delivery:
 
 - deterministic message leaves are proven with Merkle siblings.
+- Merkle proofs are built against committed checkpoint message ranges, not single-message defaults.
 - invalid Merkle siblings fail.
 - consumed messages cannot replay.
 - wrong route IDs fail.
@@ -32,7 +34,8 @@ Risk controls execute only after checkpoint and inclusion proof verification:
 - paused routes fail.
 - frozen routes fail.
 - high-value transfers require secondary approval.
-- route caps, rate windows, and fees remain route-level policy.
+- route caps and rate windows remain route-level policy.
+- prepaid source fees and destination route-funded relayer rewards are coherent.
 
 ## Lending Flow
 
@@ -40,5 +43,6 @@ The business path remains end to end:
 
 - Bank A lock -> Bank B wrapped mint -> Bank B lending deposit/borrow.
 - Bank B repay/withdraw/burn -> Bank A unlock.
+- Unlock rights are bound back to the original source locker through the wrapped asset holder path.
 
 Legacy header, receipt, and validator-attestation bridge tests were removed because they are not part of the final architecture.

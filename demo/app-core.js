@@ -12,7 +12,7 @@ const ABI = {
     "function mint(address to, uint256 amount)",
   ],
   vault: [
-    "function lock(uint256 amount)",
+    "function lock(uint256 amount) payable",
     "function lockedBalance(address user) view returns (uint256)",
     "event Locked(address indexed user, uint256 amount)",
     "event UnlockedFromBurn(address indexed user, uint256 amount, bytes32 indexed burnEventId)",
@@ -24,14 +24,20 @@ const ABI = {
     "event BridgeMintedFromLock(address indexed to, uint256 amount, bytes32 indexed lockEventId)",
   ],
   messageBus: [
-    "event BridgeMessageDispatched(bytes32 indexed messageId, bytes32 indexed routeId, uint8 indexed action, uint256 messageSequence, uint256 sourceChainId, uint256 destinationChainId, address sourceEmitter, address sourceSender, address recipient, address asset, uint256 amount, uint256 nonce, bytes32 payloadHash, bytes32 leaf)",
+    "event BridgeMessageDispatched(bytes32 indexed messageId, bytes32 indexed routeId, uint8 indexed action, uint256 messageSequence, uint256 sourceChainId, uint256 destinationChainId, address sourceEmitter, address sourceSender, address owner, address recipient, address asset, uint256 amount, uint256 nonce, uint256 prepaidFee, bytes32 payloadHash, bytes32 leaf, bytes32 accumulator)",
   ],
   bridgeRouter: [
-    "function requestBurn(bytes32 routeId, uint256 amount, address recipient) returns (bytes32 messageId)",
-    "event ReleaseRequested(bytes32 indexed messageId, bytes32 indexed routeId, address indexed user, address recipient, uint256 amount)",
+    "function requestBurn(bytes32 routeId, uint256 amount, address recipient) payable returns (bytes32 messageId)",
+    "event ReleaseRequested(bytes32 indexed messageId, bytes32 indexed routeId, address indexed user, address unlockOwner, uint256 amount)",
+  ],
+  checkpointRegistry: [
+    "function checkpointSequence() view returns (uint256)",
+    "function checkpointsBySequence(uint256 sequence) view returns (uint256 sourceChainId,uint256 validatorSetId,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash,uint256 timestamp,bytes32 checkpointHash)",
   ],
   checkpointClient: [
     "function checkpointHashBySequence(uint256 sourceChainId, uint256 sequence) view returns (bytes32)",
+    "function latestCheckpointSequence(uint256 sourceChainId) view returns (uint256)",
+    "function verifiedCheckpoint(uint256 sourceChainId, bytes32 checkpointHash) view returns (uint256 validatorSetId,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 sourceCommitmentHash,uint256 timestamp,bytes32 checkpointHash,bool exists)",
     "function sourceFrozen(uint256 sourceChainId) view returns (bool)",
   ],
   inbox: [
@@ -41,6 +47,7 @@ const ABI = {
     "function routePaused(bytes32 routeId) view returns (bool)",
     "function routeFrozen(bytes32 routeId) view returns (bool)",
     "function secondaryApproved(bytes32 routeId, bytes32 messageId) view returns (bool)",
+    "function quoteFee(bytes32 routeId, uint256 amount) view returns (uint256)",
   ],
   routeRegistry: [
     "function getRoute(bytes32 routeId) view returns (bool enabled,uint8 action,uint256 sourceChainId,uint256 destinationChainId,address sourceEmitter,address sourceSender,address sourceAsset,address target,uint256 flatFee,uint16 feeBps,uint256 transferCap,uint256 rateLimitAmount,uint256 rateLimitWindow,uint256 highValueThreshold)",
@@ -214,6 +221,14 @@ function ceilDiv(a, b) {
 
 function minBigInt(a, b) {
   return a < b ? a : b;
+}
+
+async function quoteRouteFee(contracts, routeId, amount) {
+  try {
+    return await contracts.riskManager.quoteFee(routeId, amount);
+  } catch {
+    return 0n;
+  }
 }
 
 function setText(id, value) {
@@ -750,6 +765,7 @@ function sourceContracts(signerOrProvider) {
     collateral: new ethers.Contract(source.localCollateralToken, ABI.erc20, signerOrProvider),
     vault: new ethers.Contract(source.collateralVault, ABI.vault, signerOrProvider),
     messageBus: new ethers.Contract(source.messageBus, ABI.messageBus, signerOrProvider),
+    checkpointRegistry: new ethers.Contract(source.checkpointRegistry, ABI.checkpointRegistry, signerOrProvider),
     bridgeRouter: new ethers.Contract(source.bridgeRouter, ABI.bridgeRouter, signerOrProvider),
     checkpointClient: new ethers.Contract(source.checkpointClient, ABI.checkpointClient, signerOrProvider),
     inbox: new ethers.Contract(source.messageInbox, ABI.inbox, signerOrProvider),
@@ -788,6 +804,7 @@ function destinationContracts(signerOrProvider) {
     router: new ethers.Contract(destination.swapRouter, ABI.router, signerOrProvider),
     pool: new ethers.Contract(destination.lendingPool, ABI.pool, signerOrProvider),
     messageBus: new ethers.Contract(destination.messageBus, ABI.messageBus, signerOrProvider),
+    checkpointRegistry: new ethers.Contract(destination.checkpointRegistry, ABI.checkpointRegistry, signerOrProvider),
     bridgeRouter: new ethers.Contract(destination.bridgeRouter, ABI.bridgeRouter, signerOrProvider),
     checkpointClient: new ethers.Contract(destination.checkpointClient, ABI.checkpointClient, signerOrProvider),
     inbox: new ethers.Contract(destination.messageInbox, ABI.inbox, signerOrProvider),
@@ -802,6 +819,19 @@ function getEventLogIndex(ev) {
   return 0n;
 }
 
+async function findVerifiedCheckpointForMessage(destination, sourceChainId, messageSequence) {
+  const latestCheckpointSequence = await destination.checkpointClient.latestCheckpointSequence(sourceChainId);
+  for (let sequence = 1n; sequence <= latestCheckpointSequence; sequence++) {
+    const checkpointHash = await destination.checkpointClient.checkpointHashBySequence(sourceChainId, sequence);
+    if (checkpointHash === ethers.ZeroHash) continue;
+    const checkpoint = await destination.checkpointClient.verifiedCheckpoint(sourceChainId, checkpointHash);
+    if (messageSequence >= checkpoint.firstMessageSequence && messageSequence <= checkpoint.lastMessageSequence) {
+      return { checkpointHash, checkpoint };
+    }
+  }
+  return { checkpointHash: ethers.ZeroHash, checkpoint: null };
+}
+
 async function findPendingBusMessage(events, destination, providerSource, sourceChainId, routeId) {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
@@ -813,29 +843,35 @@ async function findPendingBusMessage(events, destination, providerSource, source
     if (await destination.inbox.consumed(messageId)) continue;
 
     const messageSequence = BigInt(ev.args.messageSequence);
-    const [checkpointHash, sourceFrozen, routePaused, routeFrozen, route] = await Promise.all([
-      destination.checkpointClient.checkpointHashBySequence(sourceChainId, messageSequence),
+    const [checkpointInfo, sourceFrozen, routePaused, routeFrozen, route] = await Promise.all([
+      findVerifiedCheckpointForMessage(destination, sourceChainId, messageSequence),
       destination.checkpointClient.sourceFrozen(sourceChainId),
       destination.riskManager.routePaused(routeId),
       destination.riskManager.routeFrozen(routeId),
       destination.routeRegistry.getRoute(routeId),
     ]);
+    const { checkpointHash, checkpoint } = checkpointInfo;
     const checkpointCertified = checkpointHash !== ethers.ZeroHash;
 
     const highValueRequired = route.highValueThreshold > 0n && amount >= route.highValueThreshold;
     const highValueApproved = highValueRequired
       ? await destination.riskManager.secondaryApproved(routeId, messageId)
       : true;
-    const proofStepCount = (checkpointCertified ? 1n : 0n) + (checkpointCertified ? 1n : 0n);
+    const proofStepCount = 2n + (checkpointCertified ? 2n : 0n);
 
     return {
       txHash: ev.transactionHash,
       logIndex: getEventLogIndex(ev),
       messageSequence,
+      leaf: ev.args.leaf,
+      accumulator: ev.args.accumulator,
       user,
       amount,
       messageId,
       checkpointHash,
+      checkpointSequence: checkpoint?.sequence ?? 0n,
+      checkpointMessageCount: checkpoint?.messageCount ?? 0n,
+      sourceCheckpointCommitted: checkpointCertified,
       checkpointCertified,
       sourceFrozen,
       routePaused,
@@ -889,13 +925,13 @@ function updateBridgeStatus(state) {
     "bridgeStepHeaderLock",
     "bridgeStepHeaderLockText",
     lockCheckpointCertified ? "done" : hasLock ? "active" : "idle",
-    state.pendingLockEvent ? proofStatusText(state.pendingLockEvent) : mintExecuted ? "Checkpoint accepted" : "Waiting certified checkpoint"
+    state.pendingLockEvent ? proofStatusText(state.pendingLockEvent) : mintExecuted ? "Message consumed" : "Waiting source checkpoint"
   );
   setBridgeStep(
     "bridgeStepMint",
     "bridgeStepMintText",
     mintExecuted ? "done" : lockCheckpointCertified ? "active" : "idle",
-    mintExecuted ? `Minted (${state.mintEvents})` : lockReady ? "Message relayer can mint now" : lockCheckpointCertified ? lockState : "Waiting checkpoint proof"
+    mintExecuted ? `Minted (${state.mintEvents})` : lockReady ? "Inclusion proof can mint now" : lockCheckpointCertified ? lockState : "Waiting validator certificate"
   );
   setBridgeStep(
     "bridgeStepBurn",
@@ -907,13 +943,13 @@ function updateBridgeStatus(state) {
     "bridgeStepHeaderBurn",
     "bridgeStepHeaderBurnText",
     burnCheckpointCertified ? "done" : hasBurn ? "active" : "idle",
-    state.pendingBurnEvent ? proofStatusText(state.pendingBurnEvent) : unlockExecuted ? "Checkpoint accepted" : "Waiting certified checkpoint"
+    state.pendingBurnEvent ? proofStatusText(state.pendingBurnEvent) : unlockExecuted ? "Message consumed" : "Waiting source checkpoint"
   );
   setBridgeStep(
     "bridgeStepUnlock",
     "bridgeStepUnlockText",
     unlockExecuted ? "done" : burnCheckpointCertified ? "active" : "idle",
-    unlockExecuted ? `Unlocked (${state.unlockEvents})` : burnReady ? "Message relayer can unlock now" : burnCheckpointCertified ? burnState : "Waiting checkpoint proof"
+    unlockExecuted ? `Unlocked (${state.unlockEvents})` : burnReady ? "Inclusion proof can unlock now" : burnCheckpointCertified ? burnState : "Waiting validator certificate"
   );
 }
 
@@ -931,7 +967,9 @@ function proofReady(event) {
 
 function proofStatusText(event) {
   if (!event) return "-";
-  return event.checkpointCertified ? "Checkpoint certified, proof ready" : "Waiting validator checkpoint";
+  return event.checkpointCertified
+    ? `Checkpoint ${event.checkpointSequence} certified; Merkle proof ready`
+    : "Message appended; waiting source checkpoint and validator quorum";
 }
 
 function bridgeExecutionState(event) {
@@ -941,8 +979,8 @@ function bridgeExecutionState(event) {
   if (event.routeFrozen) return "Route frozen";
   if (event.routePaused) return "Route paused";
   if (event.highValueRequired && !event.highValueApproved) return "High-value approval required";
-  if (!event.checkpointCertified) return "Waiting validator-certified checkpoint";
-  return "Inclusion proof ready";
+  if (!event.checkpointCertified) return "Waiting source checkpoint and validator-certified root";
+  return "Inclusion proof verified next";
 }
 
 function formatBridgeTime(value) {
@@ -2440,7 +2478,8 @@ function bindUserActions() {
 
       await validateLock(amount, source);
       await approveIfNeeded(source.collateral, getUserAddress(), sourceChain.collateralVault, amount);
-      await runTx(`User lock ${fmtToken(amount)} ${symbols.collateral}`, () => source.vault.lock(amount));
+      const fee = await quoteRouteFee(source, getMarketConfig().lockRouteId, amount);
+      await runTx(`User lock ${fmtToken(amount)} ${symbols.collateral}`, () => source.vault.lock(amount, { value: fee }));
       clearInputs(["lockAmount"]);
     });
   });
@@ -2554,8 +2593,9 @@ function bindUserActions() {
         throw new Error("No wrapped collateral available in wallet.");
       }
 
+      const fee = await quoteRouteFee(destination, getMarketConfig().burnRouteId, amount);
       await runTx(`User request burn max ${fmtToken(amount)} ${getMarketConfig().symbols.wrapped}`, () =>
-        destination.bridgeRouter.requestBurn(getMarketConfig().burnRouteId, amount, getUserAddress())
+        destination.bridgeRouter.requestBurn(getMarketConfig().burnRouteId, amount, getUserAddress(), { value: fee })
       );
       clearInputs(["burnAmount"]);
     });
@@ -2647,8 +2687,9 @@ function bindUserActions() {
       const destination = destinationContracts(ctx.signer);
 
       await validateBurnRequest(amount, destination);
+      const fee = await quoteRouteFee(destination, getMarketConfig().burnRouteId, amount);
       await runTx(`User request burn ${fmtToken(amount)} ${symbols.wrapped}`, () =>
-        destination.bridgeRouter.requestBurn(getMarketConfig().burnRouteId, amount, getUserAddress())
+        destination.bridgeRouter.requestBurn(getMarketConfig().burnRouteId, amount, getUserAddress(), { value: fee })
       );
       clearInputs(["burnAmount"]);
     });

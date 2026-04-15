@@ -2,12 +2,10 @@ import { ethers } from "ethers";
 import {
   ABI,
   POLL_MS,
-  checkpointHash,
   getMarketEntries,
   loadConfig,
   prettyHash,
   providerFor,
-  queryMessages,
   routeLegsForMarket,
   signCheckpoint,
   signerFor,
@@ -21,10 +19,48 @@ function signerForDestination(signers, chainKey) {
   return chainKey === "A" ? signers.A : signers.B;
 }
 
-async function submitCheckpointForEvent(cfg, leg, signers, ev) {
+function signerForSourceOwner(signers, chainKey) {
+  return chainKey === "A" ? signers.ownerA : signers.ownerB;
+}
+
+function checkpointFromRegistryTuple(tuple) {
+  return {
+    sourceChainId: tuple.sourceChainId,
+    validatorSetId: tuple.validatorSetId,
+    sequence: tuple.sequence,
+    parentCheckpointHash: tuple.parentCheckpointHash,
+    messageRoot: tuple.messageRoot,
+    firstMessageSequence: tuple.firstMessageSequence,
+    lastMessageSequence: tuple.lastMessageSequence,
+    messageCount: tuple.messageCount,
+    sourceCommitmentHash: tuple.sourceCommitmentHash,
+    timestamp: tuple.timestamp,
+  };
+}
+
+async function produceSourceCheckpointIfNeeded(cfg, leg, signers) {
+  const sourceSigner = signerForSourceOwner(signers, leg.sourceChainKey);
+  const sourceBus = new ethers.Contract(leg.sourceMessageBus, ABI.messageBus, sourceSigner);
+  const registry = new ethers.Contract(leg.sourceCheckpointRegistry, ABI.checkpointRegistry, sourceSigner);
+  const latestMessageSequence = await sourceBus.messageSequence();
+  const lastCommitted = await registry.lastCommittedMessageSequence();
+
+  if (latestMessageSequence <= lastCommitted) return 0;
+
+  const tx = await registry.commitCheckpoint(latestMessageSequence);
+  await tx.wait();
+  console.log(
+    `[source] ${leg.sourceChainKey} committed checkpoint over messages ${lastCommitted + 1n}-${latestMessageSequence} tx=${prettyHash(tx.hash)}`
+  );
+  return 1;
+}
+
+async function submitCheckpointFromSourceRegistry(cfg, leg, signers, sourceSequence) {
   const sourceChain = cfg.chains[leg.sourceChainKey];
+  const sourceProvider = providerFor(cfg, leg.sourceChainKey);
   const destinationSigner = signerForDestination(signers, leg.destinationChainKey);
   const client = new ethers.Contract(leg.destinationCheckpointClient, ABI.checkpointClient, destinationSigner);
+  const registry = new ethers.Contract(leg.sourceCheckpointRegistry, ABI.checkpointRegistry, sourceProvider);
 
   if (await client.sourceFrozen(sourceChain.chainId)) {
     console.log(`[checkpoint] ${leg.kind} source ${leg.sourceChainKey} is frozen on ${leg.destinationChainKey}`);
@@ -32,23 +68,13 @@ async function submitCheckpointForEvent(cfg, leg, signers, ev) {
   }
 
   const latestSequence = await client.latestCheckpointSequence(sourceChain.chainId);
-  const sequence = BigInt(ev.args.messageSequence);
+  const sequence = BigInt(sourceSequence);
   if (sequence !== latestSequence + 1n) return 0;
   const existing = await client.checkpointHashBySequence(sourceChain.chainId, sequence);
   if (existing !== ethers.ZeroHash) return 0;
 
-  const parentCheckpointHash =
-    latestSequence === 0n ? ethers.ZeroHash : await client.latestCheckpointHash(sourceChain.chainId);
-  const timestamp = BigInt((await providerFor(cfg, leg.sourceChainKey).getBlock(ev.blockNumber)).timestamp);
-  const checkpoint = {
-    sourceChainId: BigInt(sourceChain.chainId),
-    validatorSetId: BigInt(cfg.validatorSimulation?.validatorSetId || 1),
-    sequence,
-    parentCheckpointHash,
-    messageRoot: ev.args.leaf,
-    timestamp,
-  };
-  const digest = checkpointHash(checkpoint);
+  const checkpoint = checkpointFromRegistryTuple(await registry.checkpointsBySequence(sequence));
+  const digest = await client.hashCheckpoint(checkpoint);
   const signatures = await signCheckpoint(cfg, leg.sourceChainKey, digest);
 
   try {
@@ -68,12 +94,14 @@ async function submitCheckpointForEvent(cfg, leg, signers, ev) {
 }
 
 async function processLeg(cfg, leg, signers) {
+  await produceSourceCheckpointIfNeeded(cfg, leg, signers);
   const sourceProvider = providerFor(cfg, leg.sourceChainKey);
-  const { events } = await queryMessages(sourceProvider, leg.sourceMessageBus, leg.routeId);
+  const registry = new ethers.Contract(leg.sourceCheckpointRegistry, ABI.checkpointRegistry, sourceProvider);
+  const latestSourceCheckpoint = await registry.checkpointSequence();
   let accepted = 0;
 
-  for (const ev of events) {
-    accepted += await submitCheckpointForEvent(cfg, leg, signers, ev);
+  for (let sequence = 1n; sequence <= latestSourceCheckpoint; sequence++) {
+    accepted += await submitCheckpointFromSourceRegistry(cfg, leg, signers, sequence);
   }
 
   return accepted;
@@ -84,12 +112,14 @@ async function main() {
   const signers = {
     A: await signerFor(cfg, "A", RELAYER_INDEX_A),
     B: await signerFor(cfg, "B", RELAYER_INDEX_B),
+    ownerA: await signerFor(cfg, "A", 0),
+    ownerB: await signerFor(cfg, "B", 0),
   };
 
   console.log("checkpoint-relayer started");
   console.log(`- relayer A ${await signers.A.getAddress()} | ${cfg.chains.A.rpc}`);
   console.log(`- relayer B ${await signers.B.getAddress()} | ${cfg.chains.B.rpc}`);
-  console.log("- relayers only submit validator-certified checkpoints; destination contracts verify quorum");
+  console.log("- source registries commit message ranges; relayers submit only validator-certified checkpoint objects");
 
   while (true) {
     try {

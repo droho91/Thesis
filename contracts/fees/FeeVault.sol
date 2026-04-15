@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
 /// @title FeeVault
-/// @notice Collects route fees and optionally pays relayer rewards.
+/// @notice Escrows prepaid route fees and pays relayers from route-funded balances.
 contract FeeVault is AccessControl {
     bytes32 public constant FEE_ADMIN_ROLE = keccak256("FEE_ADMIN_ROLE");
     bytes32 public constant COLLECTOR_ROLE = keccak256("COLLECTOR_ROLE");
@@ -15,11 +15,18 @@ contract FeeVault is AccessControl {
 
     event CollectorGranted(address indexed collector);
     event RelayerRewardBpsUpdated(uint256 oldBps, uint256 newBps);
-    event FeeCollected(
+    event RouteFunded(bytes32 indexed routeId, address indexed payer, uint256 amount);
+    event FeePrepaid(
+        bytes32 indexed routeId,
+        bytes32 indexed messageId,
+        address indexed payer,
+        uint256 amount
+    );
+    event RelayerRewardPaid(
         bytes32 indexed routeId,
         bytes32 indexed messageId,
         address indexed relayer,
-        uint256 amount,
+        uint256 quotedFee,
         uint256 reward
     );
     event FeesWithdrawn(bytes32 indexed routeId, address indexed to, uint256 amount);
@@ -32,7 +39,7 @@ contract FeeVault is AccessControl {
     }
 
     receive() external payable {
-        revert("USE_COLLECT_FEE");
+        revert("USE_ROUTE_FUNDING");
     }
 
     function grantCollector(address collector) external onlyRole(FEE_ADMIN_ROLE) {
@@ -48,25 +55,50 @@ contract FeeVault is AccessControl {
         emit RelayerRewardBpsUpdated(oldBps, newBps);
     }
 
-    function collectFee(bytes32 routeId, bytes32 messageId, address payable relayer)
+    function fundRoute(bytes32 routeId) external payable {
+        require(routeId != bytes32(0), "ROUTE_ZERO");
+        require(msg.value > 0, "AMOUNT_ZERO");
+        routeBalance[routeId] += msg.value;
+        emit RouteFunded(routeId, msg.sender, msg.value);
+    }
+
+    function collectPrepaidFee(bytes32 routeId, bytes32 messageId)
         external
         payable
+        onlyRole(COLLECTOR_ROLE)
+    {
+        require(routeId != bytes32(0), "ROUTE_ZERO");
+        require(messageId != bytes32(0), "MESSAGE_ZERO");
+        require(msg.value > 0, "AMOUNT_ZERO");
+
+        routeBalance[routeId] += msg.value;
+        emit FeePrepaid(routeId, messageId, msg.sender, msg.value);
+    }
+
+    function payRelayerReward(bytes32 routeId, bytes32 messageId, address payable relayer, uint256 quotedFee)
+        external
         onlyRole(COLLECTOR_ROLE)
         returns (uint256 reward)
     {
         require(routeId != bytes32(0), "ROUTE_ZERO");
         require(messageId != bytes32(0), "MESSAGE_ZERO");
+        require(relayer != address(0), "RELAYER_ZERO");
 
-        reward = (msg.value * relayerRewardBps) / BPS;
-        uint256 retained = msg.value - reward;
-        routeBalance[routeId] += retained;
+        reward = (quotedFee * relayerRewardBps) / BPS;
+        if (reward == 0) {
+            emit RelayerRewardPaid(routeId, messageId, relayer, quotedFee, 0);
+            return 0;
+        }
+
+        require(routeBalance[routeId] >= reward, "INSUFFICIENT_ROUTE_FEES");
+        routeBalance[routeId] -= reward;
 
         if (reward > 0) {
             (bool ok,) = relayer.call{value: reward}("");
             require(ok, "REWARD_TRANSFER_FAILED");
         }
 
-        emit FeeCollected(routeId, messageId, relayer, msg.value, reward);
+        emit RelayerRewardPaid(routeId, messageId, relayer, quotedFee, reward);
     }
 
     function withdraw(bytes32 routeId, address payable to, uint256 amount) external onlyRole(FEE_ADMIN_ROLE) {
