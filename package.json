@@ -9,6 +9,8 @@
     "node:chainB": "npx ganache --server.host 127.0.0.1 --server.port 9545 --chain.chainId 31338 --wallet.mnemonic \"test test test test test test test test test test test junk\"",
     "deploy:ibc-lite": "npm run compile && node scripts/deploy-ibc-lite.mjs",
     "seed:ibc-lite": "node scripts/seed-ibc-lite.mjs",
+    "demo:flow": "node scripts/demo-ibc-lite-flow.mjs",
+    "demo:ui": "node scripts/serve-demo-ui.mjs",
     "worker:source-commit": "node scripts/source-commit-worker.mjs",
     "worker:client-update": "node scripts/client-update-relayer.mjs",
     "worker:packet-proof": "node scripts/packet-proof-relayer.mjs",

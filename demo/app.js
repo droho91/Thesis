@@ -1,133 +1,192 @@
-const steps = [
-  {
-    title: "Escrow on Bank A",
-    text: "The source app locks canonical tokens before any remote state exists. This is application state, not trust state.",
-    artifact: "none yet",
-    relayer: "transport only",
-    replay: "not reached",
-    client: "Active",
-    trusted: "None",
-    execution: "Waiting",
-  },
-  {
-    title: "Write packet commitment",
-    text: "The packet leaf is appended to canonical source state. Later proofs must use this exact leaf.",
-    artifact: "packet leaf",
-    relayer: "cannot edit packet",
-    replay: "packet id formed",
-    client: "Active",
-    trusted: "None",
-    execution: "Waiting",
-  },
-  {
-    title: "Commit source checkpoint",
-    text: "The source checkpoint binds packet root, sequence range, validator epoch, parent hash, and source anchors.",
-    artifact: "source checkpoint",
-    relayer: "can request commit",
-    replay: "packet id unchanged",
-    client: "Active",
-    trusted: "None",
-    execution: "Waiting",
-  },
-  {
-    title: "Update remote client",
-    text: "Bank B accepts the checkpoint only with enough Bank A validator signatures over the exact hash.",
-    artifact: "client message",
-    relayer: "submits signatures",
-    replay: "not executed",
-    client: "Active",
-    trusted: "Checkpoint #1",
-    execution: "Waiting",
-  },
-  {
-    title: "Verify membership proof",
-    text: "The packet leaf is proven against the trusted packet root stored in the remote client.",
-    artifact: "Merkle proof",
-    relayer: "submits proof",
-    replay: "checked before app call",
-    client: "Active",
-    trusted: "Checkpoint #1",
-    execution: "Proof valid",
-  },
-  {
-    title: "Mint voucher once",
-    text: "The packet handler consumes the packet id, then the app mints the voucher. A replay fails before minting.",
-    artifact: "consumed packet",
-    relayer: "no special trust",
-    replay: "consumed",
-    client: "Active",
-    trusted: "Checkpoint #1",
-    execution: "Voucher minted",
-  },
-];
-
-let activeStep = 0;
-const nodes = [...document.querySelectorAll(".step")];
+const buttons = [...document.querySelectorAll("button")];
+const actionButtons = [...document.querySelectorAll("[data-action]")];
+const deploySeedButton = document.getElementById("deploySeed");
+const refreshButton = document.getElementById("refreshState");
+const deploymentStatus = document.getElementById("deploymentStatus");
 
 function setText(id, value) {
   const node = document.getElementById(id);
-  if (node) node.textContent = value;
+  if (node) node.textContent = value ?? "-";
 }
 
-function render() {
-  const step = steps[activeStep];
-  nodes.forEach((node, index) => {
-    node.classList.toggle("is-active", index === activeStep);
-    node.classList.toggle("is-done", index < activeStep);
-  });
-  setText("detailTitle", step.title);
-  setText("detailText", step.text);
-  setText("artifactValue", step.artifact);
-  setText("relayerValue", step.relayer);
-  setText("replayValue", step.replay);
-  setText("clientState", step.client);
-  setText("trustedState", step.trusted);
-  setText("executionState", step.execution);
+function compact(value) {
+  if (!value) return "-";
+  return value.length > 22 ? `${value.slice(0, 12)}...${value.slice(-8)}` : value;
 }
 
-nodes.forEach((node) => {
-  node.addEventListener("click", () => {
-    activeStep = Number(node.dataset.step);
-    render();
+function setBusy(busy) {
+  document.body.classList.toggle("is-busy", busy);
+  buttons.forEach((button) => {
+    button.disabled = busy;
   });
-});
+}
 
-document.getElementById("prevStep")?.addEventListener("click", () => {
-  activeStep = Math.max(0, activeStep - 1);
-  render();
-});
+function setOutput(value) {
+  setText("contractOutput", value || "No action output yet.");
+}
 
-document.getElementById("nextStep")?.addEventListener("click", () => {
-  activeStep = Math.min(steps.length - 1, activeStep + 1);
-  render();
-});
+async function requestJson(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "content-type": "application/json" },
+    ...options,
+  });
+  const payload = await response.json();
+  if (!response.ok || payload.ok === false) {
+    throw new Error([payload.error, payload.output].filter(Boolean).join("\n\n"));
+  }
+  return payload;
+}
 
-document.getElementById("freezeClient")?.addEventListener("click", () => {
-  setText("clientState", "Frozen");
-  setText("trustedState", "Conflicting checkpoint");
-  setText("executionState", "Blocked");
-  setText("detailTitle", "Conflict freeze");
-  setText(
-    "detailText",
-    "A different validator-certified checkpoint for the same source sequence stores misbehaviour evidence and blocks membership verification."
+function renderStatus(status) {
+  if (!status?.deployed) {
+    setText("deploymentStatus", "Not deployed");
+    deploymentStatus?.classList.remove("is-live");
+    deploymentStatus?.classList.add("is-offline");
+    setText("lastMessage", status?.message || "Start both local chains.");
+    renderRoadmap();
+    return;
+  }
+
+  setText("deploymentStatus", "Local stack active");
+  deploymentStatus?.classList.add("is-live");
+  deploymentStatus?.classList.remove("is-offline");
+  setText("bankABalance", `${status.balances.bankA} aBANK`);
+  setText("escrowBalance", `${status.balances.escrow} aBANK`);
+  setText("voucherBalance", `${status.balances.voucher} vA`);
+  setText("stableBalance", `${status.balances.stable} sBANK`);
+  setText("collateralBalance", `${status.balances.collateral} vA`);
+  setText("debtBalance", `${status.balances.debt} sBANK`);
+
+  setText("packetSequenceA", status.progress.packetSequenceA);
+  setText("checkpointSequenceA", status.progress.checkpointSequenceA);
+  setText("trustedAOnB", status.progress.trustedAOnB);
+  setText("packetSequenceB", status.progress.packetSequenceB);
+  setText("checkpointSequenceB", status.progress.checkpointSequenceB);
+  setText("trustedBOnA", status.progress.trustedBOnA);
+
+  const forward = status.trace?.forward || {};
+  const reverse = status.trace?.reverse || {};
+  setText("forwardPacketId", compact(forward.packetId));
+  setText("forwardRoot", compact(forward.packetRoot));
+  setText("reversePacketId", compact(reverse.packetId));
+  setText("reverseRoot", compact(reverse.packetRoot));
+  renderRoadmap(status);
+}
+
+function positive(value) {
+  return Number(value || "0") > 0;
+}
+
+function setRoute(id, state, text) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.classList.toggle("is-done", state === "done");
+  node.classList.toggle("is-active", state === "active");
+  setText(`${id}Text`, text);
+}
+
+function renderRoadmap(status) {
+  if (!status?.deployed) {
+    setRoute("routeEscrow", "active", "deploy first");
+    setRoute("routeCheckpoint", "", "waiting");
+    setRoute("routeClient", "", "waiting");
+    setRoute("routeVoucher", "", "waiting");
+    setRoute("routeLending", "", "waiting");
+    setRoute("routeUnlock", "", "waiting");
+    return;
+  }
+
+  const progress = status.progress || {};
+  const balances = status.balances || {};
+  const trace = status.trace || {};
+  const escrowed = positive(balances.escrow) || positive(progress.packetSequenceA);
+  const checkpointed = positive(progress.checkpointSequenceA);
+  const trusted = positive(progress.trustedAOnB);
+  const voucherReady = Boolean(trace.forward?.packetId) || positive(balances.voucher) || positive(balances.collateral);
+  const lendingActive = positive(balances.collateral) || positive(balances.debt);
+  const lendingTouched = Boolean(trace.lending?.lastAction);
+  const lendingComplete = Boolean(trace.lending?.completed);
+  const reverseWritten = positive(progress.packetSequenceB);
+  const unlocked = Boolean(trace.reverse?.packetId);
+
+  setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? "packet written" : "ready");
+  setRoute("routeCheckpoint", checkpointed ? "done" : escrowed ? "active" : "", checkpointed ? "source certified" : "waiting");
+  setRoute("routeClient", trusted ? "done" : checkpointed ? "active" : "", trusted ? "trusted remote" : "waiting");
+  setRoute("routeVoucher", voucherReady ? "done" : trusted ? "active" : "", voucherReady ? "minted" : "waiting");
+  setRoute(
+    "routeLending",
+    lendingComplete ? "done" : lendingActive || (voucherReady && !lendingTouched) ? "active" : lendingTouched ? "done" : "",
+    lendingComplete ? "closed" : lendingActive ? "position open" : voucherReady ? "ready" : "waiting"
   );
-  setText("artifactValue", "IBCMisbehaviour.Evidence");
-  setText("relayerValue", "can reveal conflict");
-  setText("replayValue", "execution disabled");
+  setRoute("routeUnlock", unlocked ? "done" : reverseWritten ? "active" : "", unlocked ? "unescrowed" : "waiting");
+}
+
+async function refreshStatus() {
+  const status = await requestJson("/api/status");
+  renderStatus(status);
+  return status;
+}
+
+async function runDeploySeed() {
+  setBusy(true);
+  setText("lastMessage", "Deploying contracts and seeding balances...");
+  setOutput("Running deploy and seed from the UI controller...");
+  try {
+    const payload = await requestJson("/api/deploy-seed", { method: "POST" });
+    renderStatus(payload.status);
+    setText("lastMessage", "Deployment and seed complete.");
+    setOutput(payload.output);
+  } catch (error) {
+    setText("lastMessage", "Deploy + Seed failed.");
+    setOutput(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runAction(action) {
+  setBusy(true);
+  setText("lastMessage", `Running ${action}...`);
+  setOutput(`Calling action: ${action}`);
+  try {
+    const payload = await requestJson("/api/action", {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    renderStatus(payload.status);
+    setText("lastMessage", payload.message);
+    setOutput(payload.message);
+  } catch (error) {
+    setText("lastMessage", `${action} failed.`);
+    setOutput(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+deploySeedButton?.addEventListener("click", runDeploySeed);
+refreshButton?.addEventListener("click", async () => {
+  setBusy(true);
+  try {
+    const status = await refreshStatus();
+    setText("lastMessage", status.deployed ? "State refreshed." : status.message);
+  } catch (error) {
+    setText("lastMessage", "Refresh failed.");
+    setOutput(error.message);
+  } finally {
+    setBusy(false);
+  }
 });
 
-document.getElementById("recoverClient")?.addEventListener("click", () => {
-  setText("clientState", "Active");
-  setText("trustedState", "Successor epoch");
-  setText("executionState", "Waiting");
-  setText("detailTitle", "Recovery");
-  setText(
-    "detailText",
-    "Recovery starts explicitly, then the client returns to active only after importing a certified successor validator epoch."
-  );
-  setText("artifactValue", "validator epoch #2");
-  setText("relayerValue", "transports epoch");
-  setText("replayValue", "packet ids still consumed once");
+actionButtons.forEach((button) => {
+  button.addEventListener("click", () => runAction(button.dataset.action));
 });
 
-render();
+refreshStatus().catch((error) => {
+  setText("deploymentStatus", "Controller offline");
+  deploymentStatus?.classList.remove("is-live");
+  deploymentStatus?.classList.add("is-offline");
+  setText("lastMessage", "Could not load local demo state.");
+  setOutput(error.message);
+  renderRoadmap();
+});

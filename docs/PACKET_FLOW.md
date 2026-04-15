@@ -15,16 +15,28 @@
 11. The handler consumes the packet id.
 12. `MinimalTransferApp` mints `VoucherToken` to the recipient.
 
+## Lending Use Case
+
+After the voucher exists, the user can enter the application workload:
+
+1. Deposit verified `VoucherToken` into `VoucherLendingPool`.
+2. Borrow the local stable token within the fixed collateral factor.
+3. Repay the stable token.
+4. Withdraw the voucher.
+
+This lending path depends on the inter-chain proof path. It intentionally omits oracle pricing, liquidation, swaps, and interest so the thesis remains centered on chain communication.
+
 ## Burn And Unescrow
 
-1. A user calls `MinimalTransferApp.burnAndRelease` on Bank B.
-2. `VoucherToken` burns the voucher.
-3. Bank B writes a reverse packet commitment.
-4. Bank B checkpoint progression creates a source-certified packet root.
-5. Bank A's remote client accepts the certified Bank B checkpoint.
-6. Bank A's packet handler verifies the reverse packet membership proof.
-7. The packet id is consumed.
-8. `EscrowVault` unescrows the canonical asset.
+1. A user withdraws the voucher from the minimal lending pool if it was deposited.
+2. A user calls `MinimalTransferApp.burnAndRelease` on Bank B.
+3. `VoucherToken` burns the voucher.
+4. Bank B writes a reverse packet commitment.
+5. Bank B checkpoint progression creates a source-certified packet root.
+6. Bank A's remote client accepts the certified Bank B checkpoint.
+7. Bank A's packet handler verifies the reverse packet membership proof.
+8. The packet id is consumed.
+9. `EscrowVault` unescrows the canonical asset.
 
 ## Replay Protection
 

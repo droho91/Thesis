@@ -3,109 +3,203 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>IBC-Lite Bank Client Demo</title>
+    <title>Multi-Blockchain Lending Controller</title>
     <link rel="icon" type="image/png" href="./assets/logo.png" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="shell">
-      <header class="mast">
-        <img src="./assets/logo.png" alt="IBC-lite bank client mark" />
-        <div>
-          <p class="eyebrow">Local Thesis Simulation</p>
-          <h1>IBC-lite bank client</h1>
-          <p class="intro">
-            Bank A and Bank B move packets through source commitments, source-certified checkpoints,
-            remote client updates, membership proofs, and one-time execution.
+      <header class="topbar">
+        <div class="brand-tile">
+          <img src="./assets/logo.png" alt="Bank chain client mark" />
+        </div>
+        <div class="title-block">
+          <p class="eyebrow">A Lending System for Multi-Blockchain Ecosystems</p>
+          <h1>Inter-chain lending control desk</h1>
+          <p>
+            Operate the local two-chain demo directly: escrow on Bank A, prove state through the
+            client layer, mint a voucher on Bank B, use it in lending, then burn and unlock.
           </p>
         </div>
+        <div class="status-pill" id="deploymentStatus">Checking local stack</div>
       </header>
 
-      <section class="state-strip" aria-label="Current client state">
-        <article>
-          <span>Remote Client</span>
-          <strong id="clientState">Active</strong>
+      <section class="balances" aria-label="Balances">
+        <article class="metric metric-source">
+          <span>Bank A user aBANK</span>
+          <strong id="bankABalance">-</strong>
+          <small>canonical asset</small>
         </article>
-        <article>
-          <span>Trusted Consensus</span>
-          <strong id="trustedState">None</strong>
+        <article class="metric metric-escrow">
+          <span>Bank A escrow</span>
+          <strong id="escrowBalance">-</strong>
+          <small>locked source state</small>
         </article>
-        <article>
-          <span>Packet Execution</span>
-          <strong id="executionState">Waiting</strong>
+        <article class="metric metric-voucher">
+          <span>Bank B user voucher</span>
+          <strong id="voucherBalance">-</strong>
+          <small>verified representation</small>
+        </article>
+        <article class="metric metric-stable">
+          <span>Bank B stable balance</span>
+          <strong id="stableBalance">-</strong>
+          <small>borrowed asset</small>
+        </article>
+        <article class="metric metric-collateral">
+          <span>Lending collateral</span>
+          <strong id="collateralBalance">-</strong>
+          <small>pool position</small>
+        </article>
+        <article class="metric metric-debt">
+          <span>Lending debt</span>
+          <strong id="debtBalance">-</strong>
+          <small>repay gate</small>
         </article>
       </section>
 
-      <section class="workbench">
-        <div class="flow" id="flow">
-          <button class="step is-active" type="button" data-step="0">
-            <span>1</span>
-            <strong>Escrow on Bank A</strong>
-            <small>Canonical asset enters `EscrowVault`.</small>
-          </button>
-          <button class="step" type="button" data-step="1">
-            <span>2</span>
-            <strong>Write packet commitment</strong>
-            <small>`SourcePacketCommitment` appends the packet leaf.</small>
-          </button>
-          <button class="step" type="button" data-step="2">
-            <span>3</span>
-            <strong>Commit source checkpoint</strong>
-            <small>The packet root is bound to source epoch and block anchors.</small>
-          </button>
-          <button class="step" type="button" data-step="3">
-            <span>4</span>
-            <strong>Update remote client</strong>
-            <small>Bank B accepts only a validator-certified artifact.</small>
-          </button>
-          <button class="step" type="button" data-step="4">
-            <span>5</span>
-            <strong>Verify membership proof</strong>
-            <small>The packet leaf is checked against trusted remote state.</small>
-          </button>
-          <button class="step" type="button" data-step="5">
-            <span>6</span>
-            <strong>Mint voucher once</strong>
-            <small>`IBCPacketHandler` consumes the packet id before app execution.</small>
-          </button>
-        </div>
+      <section class="protocol-roadmap" aria-label="Live protocol progress">
+        <article id="routeEscrow">
+          <span>01</span>
+          <strong>Escrow</strong>
+          <small id="routeEscrowText">waiting</small>
+        </article>
+        <article id="routeCheckpoint">
+          <span>02</span>
+          <strong>Checkpoint</strong>
+          <small id="routeCheckpointText">waiting</small>
+        </article>
+        <article id="routeClient">
+          <span>03</span>
+          <strong>Client trust</strong>
+          <small id="routeClientText">waiting</small>
+        </article>
+        <article id="routeVoucher">
+          <span>04</span>
+          <strong>Voucher</strong>
+          <small id="routeVoucherText">waiting</small>
+        </article>
+        <article id="routeLending">
+          <span>05</span>
+          <strong>Lending</strong>
+          <small id="routeLendingText">waiting</small>
+        </article>
+        <article id="routeUnlock">
+          <span>06</span>
+          <strong>Unlock</strong>
+          <small id="routeUnlockText">waiting</small>
+        </article>
+      </section>
 
-        <aside class="detail" aria-live="polite">
-          <p class="eyebrow">Selected Step</p>
-          <h2 id="detailTitle">Escrow on Bank A</h2>
-          <p id="detailText">
-            The source app locks canonical tokens before any remote state exists. This is application
-            state, not trust state.
-          </p>
-          <dl>
+      <section class="workspace">
+        <section class="operations" aria-label="Demo operations">
+          <div class="section-head">
+            <p class="eyebrow">Direct actions</p>
+            <h2>Run the system step by step</h2>
+          </div>
+
+          <div class="action-group setup" data-phase="00">
             <div>
-              <dt>Source artifact</dt>
-              <dd id="artifactValue">none yet</dd>
+              <h3>Local stack</h3>
+              <p>Use these after starting Bank A and Bank B local nodes.</p>
+            </div>
+            <button class="button-primary" id="deploySeed" type="button">Deploy + Seed</button>
+            <button class="button-secondary" id="refreshState" type="button">Refresh State</button>
+            <button class="button-run" data-action="fullFlow" type="button">Run Full Flow</button>
+          </div>
+
+          <div class="action-group" data-phase="01">
+            <div>
+              <h3>1. Lock and mint path</h3>
+              <p>Move a source-certified packet from Bank A into Bank B's trusted client state.</p>
+            </div>
+            <button class="button-primary" data-action="lock" type="button">Lock aBANK</button>
+            <button class="button-secondary" data-action="checkpointForward" type="button">Commit A Checkpoint</button>
+            <button class="button-secondary" data-action="updateForwardClient" type="button">Update B Client</button>
+            <button class="button-run" data-action="proveForwardMint" type="button">Prove + Mint Voucher</button>
+          </div>
+
+          <div class="action-group" data-phase="02">
+            <div>
+              <h3>2. Lending workload</h3>
+              <p>Use the verified voucher as collateral in a deliberately minimal lending pool.</p>
+            </div>
+            <button class="button-primary" data-action="depositCollateral" type="button">Deposit Voucher</button>
+            <button class="button-secondary" data-action="borrow" type="button">Borrow sBANK</button>
+            <button class="button-secondary" data-action="repay" type="button">Repay sBANK</button>
+            <button class="button-run" data-action="withdrawCollateral" type="button">Withdraw Voucher</button>
+          </div>
+
+          <div class="action-group" data-phase="03">
+            <div>
+              <h3>3. Burn and unlock path</h3>
+              <p>Burn on Bank B, prove the reverse packet on Bank A, then release escrowed aBANK.</p>
+            </div>
+            <button class="button-danger" data-action="burn" type="button">Burn Voucher</button>
+            <button class="button-secondary" data-action="checkpointReverse" type="button">Commit B Checkpoint</button>
+            <button class="button-secondary" data-action="updateReverseClient" type="button">Update A Client</button>
+            <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock aBANK</button>
+          </div>
+        </section>
+
+        <aside class="receipt" aria-label="Readable trace">
+          <div class="section-head">
+            <p class="eyebrow">Technical receipt</p>
+            <h2>What the last run proved</h2>
+          </div>
+
+          <dl class="receipt-list">
+            <div>
+              <dt>A packets written</dt>
+              <dd id="packetSequenceA">-</dd>
             </div>
             <div>
-              <dt>Relayer power</dt>
-              <dd id="relayerValue">transport only</dd>
+              <dt>A checkpoints</dt>
+              <dd id="checkpointSequenceA">-</dd>
             </div>
             <div>
-              <dt>Replay gate</dt>
-              <dd id="replayValue">not reached</dd>
+              <dt>B trusts A through checkpoint</dt>
+              <dd id="trustedAOnB">-</dd>
+            </div>
+            <div>
+              <dt>Forward packet id</dt>
+              <dd id="forwardPacketId">-</dd>
+            </div>
+            <div>
+              <dt>Forward proof root</dt>
+              <dd id="forwardRoot">-</dd>
+            </div>
+            <div>
+              <dt>B packets written</dt>
+              <dd id="packetSequenceB">-</dd>
+            </div>
+            <div>
+              <dt>B checkpoints</dt>
+              <dd id="checkpointSequenceB">-</dd>
+            </div>
+            <div>
+              <dt>A trusts B through checkpoint</dt>
+              <dd id="trustedBOnA">-</dd>
+            </div>
+            <div>
+              <dt>Reverse packet id</dt>
+              <dd id="reversePacketId">-</dd>
+            </div>
+            <div>
+              <dt>Reverse proof root</dt>
+              <dd id="reverseRoot">-</dd>
             </div>
           </dl>
-          <div class="actions">
-            <button id="prevStep" type="button">Previous</button>
-            <button id="nextStep" type="button">Next</button>
-            <button id="freezeClient" type="button">Show Conflict Freeze</button>
-            <button id="recoverClient" type="button">Recover With Successor Epoch</button>
-          </div>
         </aside>
       </section>
 
-      <section class="reverse">
-        <h2>Reverse path</h2>
-        <p>
-          Burning the voucher on Bank B writes a reverse packet. Bank A updates its remote Bank B client,
-          verifies the reverse packet proof, consumes the packet id, and unescrows the canonical asset.
-        </p>
+      <section class="log-panel" aria-label="Action log">
+        <div class="section-head">
+          <p class="eyebrow">Action log</p>
+          <h2 id="lastMessage">Ready</h2>
+        </div>
+        <div class="console-frame">
+          <pre id="contractOutput">Start both local chains, then press Deploy + Seed.</pre>
+        </div>
       </section>
     </main>
     <script type="module" src="./app.js"></script>

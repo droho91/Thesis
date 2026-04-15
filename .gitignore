@@ -22,3 +22,6 @@
 # Runtime-generated demo state
 /demo/multichain-addresses.json
 /demo/multichain-relayer-state.json
+/demo/latest-run.js
+/demo/latest-run.json
+/.ibc-lite.local.json

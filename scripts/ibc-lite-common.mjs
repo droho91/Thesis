@@ -5,6 +5,8 @@ import { ethers } from "ethers";
 export const CONFIG_PATH = resolve(process.cwd(), ".ibc-lite.local.json");
 export const CHAIN_A_RPC = process.env.CHAIN_A_RPC || "http://127.0.0.1:8545";
 export const CHAIN_B_RPC = process.env.CHAIN_B_RPC || "http://127.0.0.1:9545";
+export const LOCAL_CHAIN_MNEMONIC =
+  process.env.LOCAL_CHAIN_MNEMONIC || "test test test test test test test test test test test junk";
 export const VALIDATOR_INDICES = (process.env.VALIDATOR_INDICES || "3,4,5")
   .split(",")
   .map((value) => Number(value.trim()));
@@ -48,17 +50,24 @@ export function pretty(hash) {
   return `${hash.slice(0, 10)}...${hash.slice(-6)}`;
 }
 
-export async function validatorAddresses(provider, indices = VALIDATOR_INDICES) {
-  return Promise.all(indices.map(async (index) => (await provider.getSigner(index)).getAddress()));
+export function localWallet(index, provider = null) {
+  const path = `m/44'/60'/0'/0/${index}`;
+  const wallet = ethers.HDNodeWallet.fromPhrase(LOCAL_CHAIN_MNEMONIC, undefined, path);
+  return provider ? wallet.connect(provider) : wallet;
 }
 
-export async function signaturesFor(provider, digest, indices = VALIDATOR_INDICES.slice(0, 2)) {
-  return Promise.all(
-    indices.map(async (index) => {
-      const signer = await provider.getSigner(index);
-      return signer.signMessage(ethers.getBytes(digest));
-    })
-  );
+export function localValidatorSignature(index, digest) {
+  const digestBytes = ethers.getBytes(digest);
+  const messageDigest = ethers.hashMessage(digestBytes);
+  return localWallet(index).signingKey.sign(messageDigest).serialized;
+}
+
+export async function validatorAddresses(_provider, indices = VALIDATOR_INDICES) {
+  return indices.map((index) => localWallet(index).address);
+}
+
+export async function signaturesFor(_provider, digest, indices = VALIDATOR_INDICES.slice(0, 2)) {
+  return indices.map((index) => localValidatorSignature(index, digest));
 }
 
 export function checkpointObject(result) {

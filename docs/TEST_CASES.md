@@ -29,6 +29,15 @@
 - source escrow -> destination voucher mint
 - destination voucher burn -> source unescrow
 
+## Lending Use Case
+
+`test/apps/VoucherLendingUseCase.t.sol` covers:
+
+- lending cannot start before a verified voucher exists
+- verified voucher can be deposited as collateral
+- user can borrow, repay, and withdraw in the minimal pool
+- end-to-end lending use case can return to burn/unescrow
+
 ## Invariant-Style Coverage
 
 `test/invariants/PacketReplayInvariant.t.sol` checks that executing a packet once cannot increase voucher supply a second time.
