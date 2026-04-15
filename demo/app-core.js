@@ -32,12 +32,14 @@ const ABI = {
   ],
   checkpointRegistry: [
     "function checkpointSequence() view returns (uint256)",
-    "function checkpointsBySequence(uint256 sequence) view returns (uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,uint256 validatorSetId,bytes32 validatorSetHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash,bytes32 checkpointHash)",
+    "function checkpointsBySequence(uint256 sequence) view returns (uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,address sourceValidatorSetRegistry,uint256 validatorEpochId,bytes32 validatorEpochHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash,bytes32 checkpointHash)",
   ],
   checkpointClient: [
     "function checkpointHashBySequence(uint256 sourceChainId, uint256 sequence) view returns (bytes32)",
     "function latestCheckpointSequence(uint256 sourceChainId) view returns (uint256)",
-    "function verifiedCheckpoint(uint256 sourceChainId, bytes32 checkpointHash) view returns (uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,uint256 validatorSetId,bytes32 validatorSetHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash,bytes32 checkpointHash,bool exists)",
+    "function verifiedCheckpoint(uint256 sourceChainId, bytes32 checkpointHash) view returns (uint256 sourceChainId,address sourceCheckpointRegistry,address sourceMessageBus,address sourceValidatorSetRegistry,uint256 validatorEpochId,bytes32 validatorEpochHash,uint256 sequence,bytes32 parentCheckpointHash,bytes32 messageRoot,uint256 firstMessageSequence,uint256 lastMessageSequence,uint256 messageCount,bytes32 messageAccumulator,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 timestamp,bytes32 sourceCommitmentHash,bytes32 checkpointHash,bool exists)",
+    "function activeValidatorEpochId(uint256 sourceChainId) view returns (uint256)",
+    "function clientState(uint256 sourceChainId) view returns (uint8)",
     "function sourceFrozen(uint256 sourceChainId) view returns (bool)",
   ],
   inbox: [
@@ -607,11 +609,11 @@ function renderStaticConfig() {
   setText("infraDestinationTitle", chainB.name || "Bank B");
 
   setText("a-vault", chainA.collateralVault || "-");
-  setText("a-gateway", `router ${chainA.bridgeRouter || "-"} | bus ${chainA.messageBus || "-"} | validators ${chainA.validatorSetRegistry || "-"}`);
+  setText("a-gateway", `router ${chainA.bridgeRouter || "-"} | bus ${chainA.messageBus || "-"} | epoch registry ${chainA.validatorSetRegistry || "-"}`);
   setText("a-token", chainA.localCollateralToken || "-");
   setText("a-router", chainA.swapRouter || "-");
 
-  setText("b-gateway", `router ${chainB.bridgeRouter || "-"} | bus ${chainB.messageBus || "-"} | validators ${chainB.validatorSetRegistry || "-"}`);
+  setText("b-gateway", `router ${chainB.bridgeRouter || "-"} | bus ${chainB.messageBus || "-"} | epoch registry ${chainB.validatorSetRegistry || "-"}`);
   setText("b-wrapped", chainB.wrappedRemoteToken || "-");
   setText("b-stable", chainB.stableToken || "-");
   setText("b-pool", chainB.lendingPool || "-");
@@ -886,7 +888,7 @@ async function findPendingBusMessage(events, source, destination, sourceChainId,
       checkpointMessageCount: checkpoint?.messageCount ?? 0n,
       sourceCheckpointCommitted,
       sourceCheckpointSequence: sourceCheckpoint?.sequence ?? 0n,
-      validatorSetId: checkpoint?.validatorSetId ?? sourceCheckpoint?.validatorSetId ?? 0n,
+      validatorEpochId: checkpoint?.validatorEpochId ?? sourceCheckpoint?.validatorEpochId ?? 0n,
       sourceBlockNumber: checkpoint?.sourceBlockNumber ?? sourceCheckpoint?.sourceBlockNumber ?? 0n,
       messageRoot: checkpoint?.messageRoot ?? sourceCheckpoint?.messageRoot ?? ethers.ZeroHash,
       checkpointCertified,
@@ -936,19 +938,19 @@ function updateBridgeStatus(state) {
     "bridgeStepLock",
     "bridgeStepLockText",
     hasLock ? "done" : "active",
-    hasLock ? `Detected (${state.lockEvents})` : "Waiting user lock tx"
+    hasLock ? `Epoch trusted; message detected (${state.lockEvents})` : "Waiting source message"
   );
   setBridgeStep(
     "bridgeStepHeaderLock",
     "bridgeStepHeaderLockText",
     lockCheckpointCertified ? "done" : state.pendingLockEvent?.sourceCheckpointCommitted ? "active" : hasLock ? "active" : "idle",
-    state.pendingLockEvent ? proofStatusText(state.pendingLockEvent) : mintExecuted ? "Message consumed" : "Waiting source checkpoint"
+    state.pendingLockEvent ? proofStatusText(state.pendingLockEvent) : mintExecuted ? "Message consumed once" : "Waiting source checkpoint"
   );
   setBridgeStep(
     "bridgeStepMint",
     "bridgeStepMintText",
     mintExecuted ? "done" : lockCheckpointCertified ? "active" : "idle",
-    mintExecuted ? `Minted (${state.mintEvents})` : lockReady ? "Inclusion proof can mint now" : lockCheckpointCertified ? lockState : "Waiting validator certificate"
+    mintExecuted ? `Consumed once; minted (${state.mintEvents})` : lockReady ? "Remote client accepted; inclusion proof ready" : lockCheckpointCertified ? lockState : "Waiting validator-certified source artifact"
   );
   setBridgeStep(
     "bridgeStepBurn",
@@ -966,7 +968,7 @@ function updateBridgeStatus(state) {
     "bridgeStepUnlock",
     "bridgeStepUnlockText",
     unlockExecuted ? "done" : burnCheckpointCertified ? "active" : "idle",
-    unlockExecuted ? `Unlocked (${state.unlockEvents})` : burnReady ? "Inclusion proof can unlock now" : burnCheckpointCertified ? burnState : "Waiting validator certificate"
+    unlockExecuted ? `Consumed once; unlocked (${state.unlockEvents})` : burnReady ? "Remote client accepted; inclusion proof ready" : burnCheckpointCertified ? burnState : "Waiting validator-certified source artifact"
   );
 }
 
@@ -985,7 +987,7 @@ function proofReady(event) {
 function proofStatusText(event) {
   if (!event) return "-";
   if (event.checkpointCertified) {
-    return `Checkpoint ${event.checkpointSequence} certified by set ${event.validatorSetId}; Merkle proof ready`;
+    return `Checkpoint ${event.checkpointSequence} certified by epoch ${event.validatorEpochId}; Merkle proof ready`;
   }
   if (event.sourceCheckpointCommitted) {
     return `Source checkpoint ${event.sourceCheckpointSequence} at block ${event.sourceBlockNumber}; waiting validator quorum`;
@@ -996,7 +998,7 @@ function proofStatusText(event) {
 function bridgeExecutionState(event) {
   if (!event) return "No pending message";
   if (!event.routeEnabled) return "Route disabled";
-  if (event.sourceFrozen) return "Source frozen";
+  if (event.sourceFrozen) return "Conflicting certified artifact froze the remote client";
   if (event.routeFrozen) return "Route frozen";
   if (event.routePaused) return "Route paused";
   if (event.highValueRequired && !event.highValueApproved) return "High-value approval required";
@@ -1215,7 +1217,7 @@ function nextActionInfo(state) {
           text: state.pendingLockEvent.sourceCheckpointCommitted
             ? `Waiting for ${source.name} validator quorum for ${market.id}.`
             : `Waiting for ${source.name} source checkpoint for ${market.id}.`,
-          hint: `Message ${short(state.pendingLockEvent.messageId)} must be committed on ${source.name}, certified by its validator set, and accepted on ${destination.name}.`,
+          hint: `Message ${short(state.pendingLockEvent.messageId)} must be committed on ${source.name}, certified by its validator epoch, and accepted on ${destination.name}.`,
         };
       }
       if (state.pendingLockEvent.sourceFrozen || state.pendingLockEvent.routePaused || state.pendingLockEvent.routeFrozen) {
@@ -1352,7 +1354,7 @@ function nextActionInfo(state) {
           text: state.pendingBurnEvent.sourceCheckpointCommitted
             ? `Waiting for ${destination.name} validator quorum for release.`
             : `Waiting for ${destination.name} source checkpoint for release.`,
-          hint: `Message ${short(state.pendingBurnEvent.messageId)} must be committed on ${destination.name}, certified by its validator set, and accepted on ${source.name}.`,
+          hint: `Message ${short(state.pendingBurnEvent.messageId)} must be committed on ${destination.name}, certified by its validator epoch, and accepted on ${source.name}.`,
         };
       }
       if (state.pendingBurnEvent.sourceFrozen || state.pendingBurnEvent.routePaused || state.pendingBurnEvent.routeFrozen) {

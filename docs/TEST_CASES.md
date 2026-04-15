@@ -8,13 +8,15 @@
 - source commitment hashes bind registry address, message bus, validator epoch, message range, accumulator, source block reference, and timestamp.
 - `>= 2/3` validator voting power accepts a checkpoint.
 - insufficient signatures fail.
-- signatures bound to the wrong validator set fail.
-- source-side validator epoch rotation and destination remote-view rotation are exercised.
-- rotated-out validator sets fail.
+- destination remote validator epochs cannot be advanced by plain admin sync.
+- source-certified validator epoch rotation and destination remote-view rotation are exercised.
+- signatures bound to the wrong validator epoch fail.
+- rotated-out validator epochs fail.
 - wrong checkpoint parent fails.
 - wrong checkpoint sequence fails.
 - duplicate checkpoints fail without freezing.
 - conflicting checkpoints at the same source sequence freeze the source client.
+- frozen clients recover only through an explicit recovery phase plus a certified successor epoch.
 - frozen source clients block message processing.
 - source registry checkpoints can contain multiple messages.
 

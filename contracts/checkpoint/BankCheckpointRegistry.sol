@@ -7,20 +7,20 @@ import {BankValidatorSetRegistry} from "./BankValidatorSetRegistry.sol";
 
 /// @title BankCheckpointRegistry
 /// @notice Source-chain canonical checkpoint producer for a permissioned bank EVM chain.
-/// @dev Checkpoints are committed on the source chain before validators certify them. Relayers
-///      can transport the emitted artifact, but they do not define the message root or source
-///      progression reference.
+/// @dev Relayers may trigger production, but the checkpoint content comes from source-chain
+///      message commitments and the active source validator epoch.
 contract BankCheckpointRegistry is AccessControl {
     bytes32 public constant CHECKPOINT_PRODUCER_ROLE = keccak256("CHECKPOINT_PRODUCER_ROLE");
-    bytes32 public constant CHECKPOINT_TYPEHASH = keccak256("BankChain.FinalizedCheckpoint.v3");
-    bytes32 public constant SOURCE_COMMITMENT_TYPEHASH = keccak256("BankChain.SourceCheckpointCommitment.v2");
+    bytes32 public constant CHECKPOINT_TYPEHASH = keccak256("BankChain.FinalizedCheckpoint.v4");
+    bytes32 public constant SOURCE_COMMITMENT_TYPEHASH = keccak256("BankChain.SourceCheckpointCommitment.v3");
 
     struct SourceCheckpoint {
         uint256 sourceChainId;
         address sourceCheckpointRegistry;
         address sourceMessageBus;
-        uint256 validatorSetId;
-        bytes32 validatorSetHash;
+        address sourceValidatorSetRegistry;
+        uint256 validatorEpochId;
+        bytes32 validatorEpochHash;
         uint256 sequence;
         bytes32 parentCheckpointHash;
         bytes32 messageRoot;
@@ -47,11 +47,12 @@ contract BankCheckpointRegistry is AccessControl {
     mapping(uint256 => SourceCheckpoint) public checkpointsBySequence;
     mapping(uint256 => bytes32) public messageRootBySequence;
     mapping(uint256 => uint256) public sourceBlockNumberBySequence;
+    mapping(uint256 => bytes32) public sourceBlockHashBySequence;
     mapping(bytes32 => bool) public canonicalCheckpointHash;
 
     event SourceCheckpointCommitted(
         uint256 indexed sequence,
-        uint256 indexed validatorSetId,
+        uint256 indexed validatorEpochId,
         bytes32 indexed checkpointHash,
         bytes32 parentCheckpointHash,
         bytes32 messageRoot,
@@ -61,7 +62,7 @@ contract BankCheckpointRegistry is AccessControl {
         bytes32 messageAccumulator,
         uint256 sourceBlockNumber,
         bytes32 sourceBlockHash,
-        bytes32 validatorSetHash,
+        bytes32 validatorEpochHash,
         bytes32 sourceCommitmentHash
     );
 
@@ -70,7 +71,10 @@ contract BankCheckpointRegistry is AccessControl {
         require(_messageBus != address(0), "MESSAGE_BUS_ZERO");
         require(_validatorSetRegistry != address(0), "VALIDATOR_REGISTRY_ZERO");
         require(MessageBus(_messageBus).localChainId() == _sourceChainId, "BUS_CHAIN_MISMATCH");
-        require(BankValidatorSetRegistry(_validatorSetRegistry).sourceChainId() == _sourceChainId, "VALIDATOR_CHAIN_MISMATCH");
+        require(
+            BankValidatorSetRegistry(_validatorSetRegistry).sourceChainId() == _sourceChainId,
+            "VALIDATOR_CHAIN_MISMATCH"
+        );
 
         sourceChainId = _sourceChainId;
         messageBus = MessageBus(_messageBus);
@@ -98,29 +102,46 @@ contract BankCheckpointRegistry is AccessControl {
         }
 
         (
-            uint256 validatorSetId,
+            uint256 validatorEpochId,
             uint256 totalVotingPower,
-            bytes32 validatorSetHash,
+            bytes32 validatorEpochHash,
+            uint256 quorumNumerator,
+            uint256 quorumDenominator,
 
-        ) = validatorSetRegistry.activeValidatorSet();
-        require(validatorSetId != 0, "VALIDATOR_SET_ZERO");
-        require(totalVotingPower > 0, "VALIDATOR_SET_EMPTY");
-        require(validatorSetHash != bytes32(0), "VALIDATOR_SET_HASH_ZERO");
+        ) = validatorSetRegistry.activeValidatorEpoch();
+        require(validatorEpochId != 0, "VALIDATOR_EPOCH_ZERO");
+        require(totalVotingPower > 0, "VALIDATOR_EPOCH_EMPTY");
+        require(validatorEpochHash != bytes32(0), "VALIDATOR_EPOCH_HASH_ZERO");
+        require(quorumNumerator == 2 && quorumDenominator == 3, "UNSUPPORTED_QUORUM");
 
         bytes32 messageRoot = merkleRoot(leaves);
         uint256 nextSequence = checkpointSequence + 1;
         bytes32 parentCheckpointHash = latestCheckpointHash;
         bytes32 messageAccumulator = messageBus.messageAccumulatorAt(uptoMessageSequence);
-        uint256 sourceBlockNumber = block.number;
-        bytes32 sourceBlockHash = sourceBlockNumber > 0 ? blockhash(sourceBlockNumber - 1) : bytes32(0);
+        uint256 sourceBlockNumber = block.number > 0 ? block.number - 1 : 0;
+        bytes32 sourceBlockHash = blockhash(sourceBlockNumber);
+        if (sourceBlockHash == bytes32(0)) {
+            sourceBlockHash = keccak256(
+                abi.encodePacked(
+                    "LOCAL_SOURCE_CHECKPOINT_ANCHOR",
+                    block.chainid,
+                    address(this),
+                    nextSequence,
+                    parentCheckpointHash,
+                    sourceBlockNumber
+                )
+            );
+        }
+        require(sourceBlockNumber >= latestSourceBlockNumber, "SOURCE_BLOCK_REGRESSION");
         uint256 timestamp = block.timestamp;
 
         checkpoint = SourceCheckpoint({
             sourceChainId: sourceChainId,
             sourceCheckpointRegistry: address(this),
             sourceMessageBus: address(messageBus),
-            validatorSetId: validatorSetId,
-            validatorSetHash: validatorSetHash,
+            sourceValidatorSetRegistry: address(validatorSetRegistry),
+            validatorEpochId: validatorEpochId,
+            validatorEpochHash: validatorEpochHash,
             sequence: nextSequence,
             parentCheckpointHash: parentCheckpointHash,
             messageRoot: messageRoot,
@@ -144,11 +165,12 @@ contract BankCheckpointRegistry is AccessControl {
         checkpointsBySequence[nextSequence] = checkpoint;
         messageRootBySequence[nextSequence] = messageRoot;
         sourceBlockNumberBySequence[nextSequence] = sourceBlockNumber;
+        sourceBlockHashBySequence[nextSequence] = sourceBlockHash;
         canonicalCheckpointHash[checkpoint.checkpointHash] = true;
 
         emit SourceCheckpointCommitted(
             nextSequence,
-            validatorSetId,
+            validatorEpochId,
             checkpoint.checkpointHash,
             parentCheckpointHash,
             messageRoot,
@@ -158,7 +180,7 @@ contract BankCheckpointRegistry is AccessControl {
             messageAccumulator,
             sourceBlockNumber,
             sourceBlockHash,
-            validatorSetHash,
+            validatorEpochHash,
             checkpoint.sourceCommitmentHash
         );
     }
@@ -170,8 +192,9 @@ contract BankCheckpointRegistry is AccessControl {
                 checkpoint.sourceChainId,
                 checkpoint.sourceCheckpointRegistry,
                 checkpoint.sourceMessageBus,
-                checkpoint.validatorSetId,
-                checkpoint.validatorSetHash,
+                checkpoint.sourceValidatorSetRegistry,
+                checkpoint.validatorEpochId,
+                checkpoint.validatorEpochHash,
                 checkpoint.sequence,
                 checkpoint.parentCheckpointHash,
                 checkpoint.messageRoot,
@@ -193,8 +216,9 @@ contract BankCheckpointRegistry is AccessControl {
                 checkpoint.sourceChainId,
                 checkpoint.sourceCheckpointRegistry,
                 checkpoint.sourceMessageBus,
-                checkpoint.validatorSetId,
-                checkpoint.validatorSetHash,
+                checkpoint.sourceValidatorSetRegistry,
+                checkpoint.validatorEpochId,
+                checkpoint.validatorEpochHash,
                 checkpoint.sequence,
                 checkpoint.parentCheckpointHash,
                 checkpoint.messageRoot,

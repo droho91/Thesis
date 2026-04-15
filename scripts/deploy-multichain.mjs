@@ -11,7 +11,7 @@ const DEFAULT_ROUTE_RATE_LIMIT_WEI = ethers.parseUnits(process.env.ROUTE_RATE_LI
 const DEFAULT_ROUTE_WINDOW_SECONDS = Number(process.env.ROUTE_WINDOW_SECONDS || 3600);
 const DEFAULT_HIGH_VALUE_THRESHOLD_WEI = ethers.parseUnits(process.env.HIGH_VALUE_THRESHOLD || "200", 18);
 const RELAYER_REWARD_BPS = Number(process.env.RELAYER_REWARD_BPS || 0);
-const VALIDATOR_SET_ID = BigInt(process.env.VALIDATOR_SET_ID || 1);
+const VALIDATOR_EPOCH_ID = BigInt(process.env.VALIDATOR_EPOCH_ID || process.env.VALIDATOR_SET_ID || 1);
 const VALIDATOR_INDICES = (process.env.VALIDATOR_INDICES || "3,4,5").split(",").map((value) => Number(value.trim()));
 
 const ACTION_LOCK_TO_MINT = 1;
@@ -94,12 +94,12 @@ async function configureVault(vaultArtifact, signer, vaultAddress, messageBus, r
   await tx.wait();
 }
 
-async function deployRouterInfra({ owner, chainId, artifacts, validatorAddresses }) {
+async function deploySourceCore({ owner, chainId, artifacts, validatorAddresses }) {
   const messageBus = await deploy(artifacts.messageBus, owner, [chainId]);
   const validatorPowers = validatorAddresses.map(() => 1n);
   const validatorSetRegistry = await deploy(artifacts.validatorSetRegistry, owner, [
     chainId,
-    VALIDATOR_SET_ID,
+    VALIDATOR_EPOCH_ID,
     validatorAddresses,
     validatorPowers,
   ]);
@@ -108,15 +108,27 @@ async function deployRouterInfra({ owner, chainId, artifacts, validatorAddresses
     await messageBus.getAddress(),
     await validatorSetRegistry.getAddress(),
   ]);
-  const checkpointClient = await deploy(artifacts.checkpointClient, owner, []);
+
+  return {
+    messageBus,
+    validatorSetRegistry,
+    checkpointRegistry,
+    messageBusAddress: await messageBus.getAddress(),
+    validatorSetRegistryAddress: await validatorSetRegistry.getAddress(),
+    checkpointRegistryAddress: await checkpointRegistry.getAddress(),
+  };
+}
+
+async function deployRouterInfra({ owner, chainId, artifacts, sourceCore, initialRemoteEpoch }) {
   const messageInbox = await deploy(artifacts.messageInbox, owner, []);
   const routeRegistry = await deploy(artifacts.routeRegistry, owner, []);
   const riskManager = await deploy(artifacts.riskManager, owner, [await routeRegistry.getAddress()]);
   const feeVault = await deploy(artifacts.feeVault, owner, [RELAYER_REWARD_BPS]);
+  const checkpointClientWithEpoch = await deploy(artifacts.checkpointClient, owner, [initialRemoteEpoch]);
   const bridgeRouter = await deploy(artifacts.bridgeRouter, owner, [
     chainId,
-    await messageBus.getAddress(),
-    await checkpointClient.getAddress(),
+    sourceCore.messageBusAddress,
+    await checkpointClientWithEpoch.getAddress(),
     await messageInbox.getAddress(),
     await routeRegistry.getAddress(),
     await riskManager.getAddress(),
@@ -128,10 +140,10 @@ async function deployRouterInfra({ owner, chainId, artifacts, validatorAddresses
   await (await feeVault.grantCollector(await bridgeRouter.getAddress())).wait();
 
   return {
-    messageBus: await messageBus.getAddress(),
-    validatorSetRegistry: await validatorSetRegistry.getAddress(),
-    checkpointRegistry: await checkpointRegistry.getAddress(),
-    checkpointClient: await checkpointClient.getAddress(),
+    messageBus: sourceCore.messageBusAddress,
+    validatorSetRegistry: sourceCore.validatorSetRegistryAddress,
+    checkpointRegistry: sourceCore.checkpointRegistryAddress,
+    checkpointClient: await checkpointClientWithEpoch.getAddress(),
     messageInbox: await messageInbox.getAddress(),
     routeRegistry: await routeRegistry.getAddress(),
     riskManager: await riskManager.getAddress(),
@@ -140,12 +152,12 @@ async function deployRouterInfra({ owner, chainId, artifacts, validatorAddresses
   };
 }
 
-async function deployChainStack({ key, remoteKey, owner, chainId, artifacts, validatorAddresses }) {
+async function deployChainStack({ key, remoteKey, owner, chainId, artifacts, sourceCore, initialRemoteEpoch }) {
   const collateralSymbol = key === "A" ? "aCOL" : "bCOL";
   const stableSymbol = key === "A" ? "sA" : "sB";
   const wrappedSymbol = key === "A" ? "wB" : "wA";
 
-  const infra = await deployRouterInfra({ owner, chainId, artifacts, validatorAddresses });
+  const infra = await deployRouterInfra({ owner, chainId, artifacts, sourceCore, initialRemoteEpoch });
 
   const localCollateralToken = await deploy(artifacts.stableToken, owner, [`${chainLabel(key)} Collateral`, collateralSymbol]);
   const stableToken = await deploy(artifacts.stableToken, owner, [`${chainLabel(key)} Stable`, stableSymbol]);
@@ -240,13 +252,6 @@ async function validatorAddresses(provider, indices) {
   return Promise.all(indices.map(async (index) => provider.getSigner(index).then((signer) => signer.getAddress())));
 }
 
-async function installRemoteValidatorSet({ checkpointArtifact, owner, checkpointClient, sourceChainId, validatorAddresses }) {
-  const client = new ethers.Contract(checkpointClient, checkpointArtifact.abi, owner);
-  const powers = validatorAddresses.map(() => 1n);
-  const tx = await client.setValidatorSet(sourceChainId, VALIDATOR_SET_ID, validatorAddresses, powers, true);
-  await tx.wait();
-}
-
 async function main() {
   const chainAProvider = new ethers.JsonRpcProvider(CHAIN_A_RPC);
   const chainBProvider = new ethers.JsonRpcProvider(CHAIN_B_RPC);
@@ -277,13 +282,29 @@ async function main() {
 
   const artifacts = await loadArtifacts();
 
+  const chainASourceCore = await deploySourceCore({
+    owner: ownerA,
+    chainId: chainAId,
+    artifacts,
+    validatorAddresses: validatorsA,
+  });
+  const chainBSourceCore = await deploySourceCore({
+    owner: ownerB,
+    chainId: chainBId,
+    artifacts,
+    validatorAddresses: validatorsB,
+  });
+  const chainAInitialEpoch = await chainASourceCore.validatorSetRegistry.validatorEpoch(VALIDATOR_EPOCH_ID);
+  const chainBInitialEpoch = await chainBSourceCore.validatorSetRegistry.validatorEpoch(VALIDATOR_EPOCH_ID);
+
   const chainAStack = await deployChainStack({
     key: "A",
     remoteKey: "B",
     owner: ownerA,
     chainId: chainAId,
     artifacts,
-    validatorAddresses: validatorsA,
+    sourceCore: chainASourceCore,
+    initialRemoteEpoch: chainBInitialEpoch,
   });
 
   const chainBStack = await deployChainStack({
@@ -292,22 +313,8 @@ async function main() {
     owner: ownerB,
     chainId: chainBId,
     artifacts,
-    validatorAddresses: validatorsB,
-  });
-
-  await installRemoteValidatorSet({
-    checkpointArtifact: artifacts.checkpointClient,
-    owner: ownerB,
-    checkpointClient: chainBStack.checkpointClient,
-    sourceChainId: chainAId,
-    validatorAddresses: validatorsA,
-  });
-  await installRemoteValidatorSet({
-    checkpointArtifact: artifacts.checkpointClient,
-    owner: ownerA,
-    checkpointClient: chainAStack.checkpointClient,
-    sourceChainId: chainBId,
-    validatorAddresses: validatorsB,
+    sourceCore: chainBSourceCore,
+    initialRemoteEpoch: chainAInitialEpoch,
   });
 
   const lockAToBRouteId = computeRouteId(
@@ -480,10 +487,10 @@ async function main() {
       note: "Relayers are permissionless transport. Canonical source checkpoints, bank-validator quorum, and Merkle inclusion proofs are the trust boundary.",
     },
     validatorSimulation: {
-      validatorSetId: VALIDATOR_SET_ID.toString(),
+      validatorEpochId: VALIDATOR_EPOCH_ID.toString(),
       validatorIndices: VALIDATOR_INDICES,
       note: "Local-only consortium simulation. Validators are local dev-node accounts.",
-      registryModel: "Each bank chain deploys a source-side BankValidatorSetRegistry. Destination clients keep the matching remote validator-set hash and voting power view.",
+      registryModel: "Each bank chain deploys a source-side BankValidatorSetRegistry. Destination clients bootstrap from the remote genesis epoch and accept later remote epochs only as source-certified epoch artifacts.",
     },
     checkpointDefaults: {
       routeTransferCapWei: DEFAULT_ROUTE_TRANSFER_CAP_WEI.toString(),

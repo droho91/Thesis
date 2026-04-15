@@ -28,8 +28,9 @@ function checkpointFromRegistryTuple(tuple) {
     sourceChainId: tuple.sourceChainId,
     sourceCheckpointRegistry: tuple.sourceCheckpointRegistry,
     sourceMessageBus: tuple.sourceMessageBus,
-    validatorSetId: tuple.validatorSetId,
-    validatorSetHash: tuple.validatorSetHash,
+    sourceValidatorSetRegistry: tuple.sourceValidatorSetRegistry,
+    validatorEpochId: tuple.validatorEpochId,
+    validatorEpochHash: tuple.validatorEpochHash,
     sequence: tuple.sequence,
     parentCheckpointHash: tuple.parentCheckpointHash,
     messageRoot: tuple.messageRoot,
@@ -41,6 +42,25 @@ function checkpointFromRegistryTuple(tuple) {
     sourceBlockHash: tuple.sourceBlockHash,
     timestamp: tuple.timestamp,
     sourceCommitmentHash: tuple.sourceCommitmentHash,
+  };
+}
+
+function epochFromRegistryTuple(tuple) {
+  return {
+    sourceChainId: tuple.sourceChainId,
+    sourceValidatorSetRegistry: tuple.sourceValidatorSetRegistry,
+    epochId: tuple.epochId,
+    parentEpochHash: tuple.parentEpochHash,
+    validators: tuple.validators,
+    votingPowers: tuple.votingPowers,
+    totalVotingPower: tuple.totalVotingPower,
+    quorumNumerator: tuple.quorumNumerator,
+    quorumDenominator: tuple.quorumDenominator,
+    activationBlockNumber: tuple.activationBlockNumber,
+    activationBlockHash: tuple.activationBlockHash,
+    timestamp: tuple.timestamp,
+    epochHash: tuple.epochHash,
+    active: tuple.active,
   };
 }
 
@@ -99,7 +119,35 @@ async function submitCheckpointFromSourceRegistry(cfg, leg, signers, sourceSeque
   }
 }
 
+async function submitSourceEpochsIfNeeded(cfg, leg, signers) {
+  const sourceChain = cfg.chains[leg.sourceChainKey];
+  const sourceProvider = providerFor(cfg, leg.sourceChainKey);
+  const destinationSigner = signerForDestination(signers, leg.destinationChainKey);
+  const client = new ethers.Contract(leg.destinationCheckpointClient, ABI.checkpointClient, destinationSigner);
+  const validatorRegistry = new ethers.Contract(leg.sourceValidatorSetRegistry, ABI.validatorRegistry, sourceProvider);
+
+  const sourceActiveEpochId = await validatorRegistry.activeValidatorEpochId();
+  let remoteActiveEpochId = await client.activeValidatorEpochId(sourceChain.chainId);
+  let accepted = 0;
+
+  while (remoteActiveEpochId < sourceActiveEpochId) {
+    const nextEpochId = remoteActiveEpochId + 1n;
+    const epoch = epochFromRegistryTuple(await validatorRegistry.validatorEpoch(nextEpochId));
+    const signatures = await signCheckpoint(cfg, leg.sourceChainKey, epoch.epochHash);
+    const tx = await client.submitValidatorEpoch(epoch, signatures);
+    await tx.wait();
+    accepted += 1;
+    remoteActiveEpochId = nextEpochId;
+    console.log(
+      `[epoch] ${leg.sourceChainKey}->${leg.destinationChainKey} accepted epoch=${nextEpochId} hash=${prettyHash(epoch.epochHash)} tx=${prettyHash(tx.hash)}`
+    );
+  }
+
+  return accepted;
+}
+
 async function processLeg(cfg, leg, signers) {
+  await submitSourceEpochsIfNeeded(cfg, leg, signers);
   await produceSourceCheckpointIfNeeded(cfg, leg, signers);
   const sourceProvider = providerFor(cfg, leg.sourceChainKey);
   const registry = new ethers.Contract(leg.sourceCheckpointRegistry, ABI.checkpointRegistry, sourceProvider);

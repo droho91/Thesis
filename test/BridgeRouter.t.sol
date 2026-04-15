@@ -26,8 +26,8 @@ contract BridgeRouterTest is Test {
     uint8 internal constant ACTION_BURN_TO_UNLOCK = 2;
     uint256 internal constant CHAIN_A = 100;
     uint256 internal constant CHAIN_B = 200;
-    uint256 internal constant VALIDATOR_SET_1 = 1;
-    uint256 internal constant VALIDATOR_SET_2 = 2;
+    uint256 internal constant VALIDATOR_EPOCH_1 = 1;
+    uint256 internal constant VALIDATOR_EPOCH_2 = 2;
 
     address internal user = address(0x1111);
     address internal relayer = address(0x2222);
@@ -88,24 +88,23 @@ contract BridgeRouterTest is Test {
         busB = new MessageBus(CHAIN_B);
         validatorRegistryA = new BankValidatorSetRegistry(
             CHAIN_A,
-            VALIDATOR_SET_1,
+            VALIDATOR_EPOCH_1,
             _validatorAddresses(validatorKeysA),
             _equalPowers(validatorKeysA.length)
         );
         validatorRegistryB = new BankValidatorSetRegistry(
             CHAIN_B,
-            VALIDATOR_SET_1,
+            VALIDATOR_EPOCH_1,
             _validatorAddresses(validatorKeysB),
             _equalPowers(validatorKeysB.length)
         );
         registryA = new BankCheckpointRegistry(CHAIN_A, address(busA), address(validatorRegistryA));
         registryB = new BankCheckpointRegistry(CHAIN_B, address(busB), address(validatorRegistryB));
 
-        (checkpointA, inboxA, routesA, riskA, feesA, routerA) = _deployRouterStack(CHAIN_A, busA);
-        (checkpointB, inboxB, routesB, riskB, feesB, routerB) = _deployRouterStack(CHAIN_B, busB);
-
-        _installValidatorSet(checkpointB, CHAIN_A, VALIDATOR_SET_1, validatorKeysA, true);
-        _installValidatorSet(checkpointA, CHAIN_B, VALIDATOR_SET_1, validatorKeysB, true);
+        (checkpointA, inboxA, routesA, riskA, feesA, routerA) =
+            _deployRouterStack(CHAIN_A, busA, _clientEpoch(validatorRegistryB.validatorEpoch(VALIDATOR_EPOCH_1)));
+        (checkpointB, inboxB, routesB, riskB, feesB, routerB) =
+            _deployRouterStack(CHAIN_B, busB, _clientEpoch(validatorRegistryA.validatorEpoch(VALIDATOR_EPOCH_1)));
 
         collateralA = new StableToken("Bank A Collateral", "aCOL");
         stableB = new StableToken("Bank B Stable", "sB");
@@ -165,6 +164,48 @@ contract BridgeRouterTest is Test {
         assertEq(wrappedA.balanceOf(user), 100 ether);
     }
 
+    function testRelayerOnlyCheckpointWithoutSourceCommitmentCannotAdvance() public {
+        (, uint256 messageSequence) = _lockOnA(12 ether);
+        BankValidatorSetRegistry.ValidatorEpoch memory sourceEpoch =
+            validatorRegistryA.validatorEpoch(VALIDATOR_EPOCH_1);
+        BankCheckpointClient.Checkpoint memory checkpoint = BankCheckpointClient.Checkpoint({
+            sourceChainId: CHAIN_A,
+            sourceCheckpointRegistry: address(registryA),
+            sourceMessageBus: address(busA),
+            sourceValidatorSetRegistry: address(validatorRegistryA),
+            validatorEpochId: sourceEpoch.epochId,
+            validatorEpochHash: sourceEpoch.epochHash,
+            sequence: 1,
+            parentCheckpointHash: bytes32(0),
+            messageRoot: busA.messageLeafAt(messageSequence),
+            firstMessageSequence: messageSequence,
+            lastMessageSequence: messageSequence,
+            messageCount: 1,
+            messageAccumulator: busA.messageAccumulatorAt(messageSequence),
+            sourceBlockNumber: block.number,
+            sourceBlockHash: keccak256("relayer-only-anchor"),
+            timestamp: block.timestamp,
+            sourceCommitmentHash: bytes32(0)
+        });
+
+        vm.expectRevert(bytes("SOURCE_COMMITMENT_ZERO"));
+        vm.prank(relayer);
+        checkpointB.submitCheckpoint(checkpoint, new bytes[](0));
+    }
+
+    function testSourceProgressionAnchorIsValidated() public {
+        (, uint256 messageSequence) = _lockOnA(12 ether);
+        BankCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint = registryA.commitCheckpoint(messageSequence);
+        BankCheckpointClient.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
+        checkpoint.sourceBlockHash = bytes32(0);
+        checkpoint.sourceCommitmentHash = checkpointB.hashSourceCommitment(checkpoint);
+        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
+
+        vm.expectRevert(bytes("SOURCE_BLOCK_HASH_ZERO"));
+        vm.prank(relayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
+    }
+
     function testValidCheckpointWithTwoThirdsSignaturesSucceeds() public {
         (MessageLib.Message memory message, uint256 messageSequence) = _lockOnA(100 ether);
         FinalizedMessage memory finalized = _finalizeAtoB(messageSequence, validatorKeysA, 2);
@@ -188,59 +229,82 @@ contract BridgeRouterTest is Test {
         checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 1));
     }
 
-    function testWrongValidatorSetIdFails() public {
-        (, uint256 messageSequence) = _lockOnA(20 ether);
-        _installValidatorSet(checkpointB, CHAIN_A, VALIDATOR_SET_2, rotatedValidatorKeysA, true);
-        BankCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint = registryA.commitCheckpoint(messageSequence);
-        BankCheckpointClient.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
-        checkpoint.validatorSetId = VALIDATOR_SET_2;
-        checkpoint.validatorSetHash = checkpointB.computeValidatorSetHash(
+    function testRemoteValidatorEpochCannotAdvanceByPlainAdminSync() public {
+        bytes memory callData = abi.encodeWithSignature(
+            "setValidatorSet(uint256,uint256,address[],uint256[],bool)",
             CHAIN_A,
-            VALIDATOR_SET_2,
-            _validatorAddresses(rotatedValidatorKeysA),
-            _equalPowers(rotatedValidatorKeysA.length)
-        );
-        checkpoint.sourceCommitmentHash = checkpointB.hashSourceCommitment(checkpoint);
-        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
-
-        vm.expectRevert(bytes("SIGNER_NOT_VALIDATOR"));
-        vm.prank(relayer);
-        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
-    }
-
-    function testValidatorRotationRequiresCurrentBankEpoch() public {
-        _installValidatorSet(checkpointB, CHAIN_A, VALIDATOR_SET_2, rotatedValidatorKeysA, true);
-        validatorRegistryA.commitValidatorSet(
-            VALIDATOR_SET_2,
+            VALIDATOR_EPOCH_2,
             _validatorAddresses(rotatedValidatorKeysA),
             _equalPowers(rotatedValidatorKeysA.length),
             true
         );
 
+        (bool ok,) = address(checkpointB).call(callData);
+        assertFalse(ok);
+        assertEq(checkpointB.activeValidatorEpochId(CHAIN_A), VALIDATOR_EPOCH_1);
+    }
+
+    function testWrongValidatorEpochIdFails() public {
+        (, uint256 messageSequence) = _lockOnA(20 ether);
+        BankCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint = registryA.commitCheckpoint(messageSequence);
+        BankCheckpointClient.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
+        checkpoint.validatorEpochId = VALIDATOR_EPOCH_2;
+        checkpoint.validatorEpochHash = keccak256("unknown-epoch");
+        checkpoint.sourceCommitmentHash = checkpointB.hashSourceCommitment(checkpoint);
+        bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
+
+        vm.expectRevert(bytes("VALIDATOR_EPOCH_INACTIVE"));
+        vm.prank(relayer);
+        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
+    }
+
+    function testValidatorRotationRequiresSourceCertifiedBankEpoch() public {
+        validatorRegistryA.commitValidatorEpoch(
+            VALIDATOR_EPOCH_2,
+            _validatorAddresses(rotatedValidatorKeysA),
+            _equalPowers(rotatedValidatorKeysA.length)
+        );
+        BankCheckpointClient.ValidatorEpoch memory rotatedEpoch =
+            _clientEpoch(validatorRegistryA.validatorEpoch(VALIDATOR_EPOCH_2));
+
         (, uint256 messageSequence) = _lockOnA(20 ether);
         BankCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint = registryA.commitCheckpoint(messageSequence);
         BankCheckpointClient.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
         bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
 
-        assertEq(checkpoint.validatorSetId, VALIDATOR_SET_2);
-        vm.expectRevert(bytes("SIGNER_NOT_VALIDATOR"));
+        assertEq(checkpoint.validatorEpochId, VALIDATOR_EPOCH_2);
+        vm.expectRevert(bytes("VALIDATOR_EPOCH_INACTIVE"));
         vm.prank(relayer);
-        checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
+        checkpointB.submitCheckpoint(checkpoint, _signatures(rotatedValidatorKeysA, checkpointHash, 2));
+
+        vm.prank(anyRelayer);
+        checkpointB.submitValidatorEpoch(rotatedEpoch, _signatures(validatorKeysA, rotatedEpoch.epochHash, 2));
 
         vm.prank(anyRelayer);
         checkpointB.submitCheckpoint(checkpoint, _signatures(rotatedValidatorKeysA, checkpointHash, 2));
         assertTrue(checkpointB.isCheckpointVerified(CHAIN_A, checkpointHash));
     }
 
-    function testDestinationRejectsStaleValidatorSetAfterRotation() public {
-        _installValidatorSet(checkpointB, CHAIN_A, VALIDATOR_SET_2, rotatedValidatorKeysA, true);
+    function testDestinationRejectsStaleValidatorEpochAfterCertifiedRotation() public {
+        validatorRegistryA.commitValidatorEpoch(
+            VALIDATOR_EPOCH_2,
+            _validatorAddresses(rotatedValidatorKeysA),
+            _equalPowers(rotatedValidatorKeysA.length)
+        );
+        BankCheckpointClient.ValidatorEpoch memory rotatedEpoch =
+            _clientEpoch(validatorRegistryA.validatorEpoch(VALIDATOR_EPOCH_2));
+        vm.prank(anyRelayer);
+        checkpointB.submitValidatorEpoch(rotatedEpoch, _signatures(validatorKeysA, rotatedEpoch.epochHash, 2));
 
         (, uint256 messageSequence) = _lockOnA(20 ether);
         BankCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint = registryA.commitCheckpoint(messageSequence);
         BankCheckpointClient.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
+        checkpoint.validatorEpochId = VALIDATOR_EPOCH_1;
+        checkpoint.validatorEpochHash = validatorRegistryA.validatorEpoch(VALIDATOR_EPOCH_1).epochHash;
+        checkpoint.sourceCommitmentHash = checkpointB.hashSourceCommitment(checkpoint);
         bytes32 checkpointHash = checkpointB.hashCheckpoint(checkpoint);
 
-        vm.expectRevert(bytes("VALIDATOR_SET_INACTIVE"));
+        vm.expectRevert(bytes("VALIDATOR_EPOCH_INACTIVE"));
         vm.prank(relayer);
         checkpointB.submitCheckpoint(checkpoint, _signatures(validatorKeysA, checkpointHash, 2));
     }
@@ -308,7 +372,17 @@ contract BridgeRouterTest is Test {
         vm.prank(relayer);
         routerB.relayMessage(message, finalized.proof);
 
-        checkpointB.unfreezeSource(CHAIN_A);
+        validatorRegistryA.commitValidatorEpoch(
+            VALIDATOR_EPOCH_2,
+            _validatorAddresses(rotatedValidatorKeysA),
+            _equalPowers(rotatedValidatorKeysA.length)
+        );
+        BankCheckpointClient.ValidatorEpoch memory recoveryEpoch =
+            _clientEpoch(validatorRegistryA.validatorEpoch(VALIDATOR_EPOCH_2));
+        checkpointB.beginRecovery(CHAIN_A);
+        assertTrue(checkpointB.sourceFrozen(CHAIN_A));
+        vm.prank(anyRelayer);
+        checkpointB.submitValidatorEpoch(recoveryEpoch, _signatures(validatorKeysA, recoveryEpoch.epochHash, 2));
         assertFalse(checkpointB.sourceFrozen(CHAIN_A));
     }
 
@@ -476,7 +550,11 @@ contract BridgeRouterTest is Test {
         assertEq(wrappedA.balanceOf(user), 45 ether);
     }
 
-    function _deployRouterStack(uint256 localChainId, MessageBus bus)
+    function _deployRouterStack(
+        uint256 localChainId,
+        MessageBus bus,
+        BankCheckpointClient.ValidatorEpoch memory initialRemoteEpoch
+    )
         internal
         returns (
             BankCheckpointClient checkpoint,
@@ -487,7 +565,7 @@ contract BridgeRouterTest is Test {
             BridgeRouter router
         )
     {
-        checkpoint = new BankCheckpointClient();
+        checkpoint = new BankCheckpointClient(initialRemoteEpoch);
         inbox = new MessageInbox();
         routes = new RouteRegistry();
         risk = new RiskManager(address(routes));
@@ -764,8 +842,9 @@ contract BridgeRouterTest is Test {
             sourceChainId: sourceCheckpoint.sourceChainId,
             sourceCheckpointRegistry: sourceCheckpoint.sourceCheckpointRegistry,
             sourceMessageBus: sourceCheckpoint.sourceMessageBus,
-            validatorSetId: sourceCheckpoint.validatorSetId,
-            validatorSetHash: sourceCheckpoint.validatorSetHash,
+            sourceValidatorSetRegistry: sourceCheckpoint.sourceValidatorSetRegistry,
+            validatorEpochId: sourceCheckpoint.validatorEpochId,
+            validatorEpochHash: sourceCheckpoint.validatorEpochHash,
             sequence: sourceCheckpoint.sequence,
             parentCheckpointHash: sourceCheckpoint.parentCheckpointHash,
             messageRoot: sourceCheckpoint.messageRoot,
@@ -780,20 +859,27 @@ contract BridgeRouterTest is Test {
         });
     }
 
-    function _installValidatorSet(
-        BankCheckpointClient checkpointClient,
-        uint256 sourceChainId,
-        uint256 validatorSetId,
-        uint256[] storage validatorKeys,
-        bool active
-    ) internal {
-        checkpointClient.setValidatorSet(
-            sourceChainId,
-            validatorSetId,
-            _validatorAddresses(validatorKeys),
-            _equalPowers(validatorKeys.length),
-            active
-        );
+    function _clientEpoch(BankValidatorSetRegistry.ValidatorEpoch memory sourceEpoch)
+        internal
+        pure
+        returns (BankCheckpointClient.ValidatorEpoch memory)
+    {
+        return BankCheckpointClient.ValidatorEpoch({
+            sourceChainId: sourceEpoch.sourceChainId,
+            sourceValidatorSetRegistry: sourceEpoch.sourceValidatorSetRegistry,
+            epochId: sourceEpoch.epochId,
+            parentEpochHash: sourceEpoch.parentEpochHash,
+            validators: sourceEpoch.validators,
+            votingPowers: sourceEpoch.votingPowers,
+            totalVotingPower: sourceEpoch.totalVotingPower,
+            quorumNumerator: sourceEpoch.quorumNumerator,
+            quorumDenominator: sourceEpoch.quorumDenominator,
+            activationBlockNumber: sourceEpoch.activationBlockNumber,
+            activationBlockHash: sourceEpoch.activationBlockHash,
+            timestamp: sourceEpoch.timestamp,
+            epochHash: sourceEpoch.epochHash,
+            active: sourceEpoch.active
+        });
     }
 
     function _validatorAddresses(uint256[] storage validatorKeys) internal view returns (address[] memory validators) {
