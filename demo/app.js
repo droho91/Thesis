@@ -4,6 +4,8 @@ const deploySeedButton = document.getElementById("deploySeed");
 const refreshButton = document.getElementById("refreshState");
 const deploymentStatus = document.getElementById("deploymentStatus");
 
+const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Expired", "Recovering"];
+
 function setText(id, value) {
   const node = document.getElementById(id);
   if (node) node.textContent = value ?? "-";
@@ -12,6 +14,14 @@ function setText(id, value) {
 function compact(value) {
   if (!value) return "-";
   return value.length > 22 ? `${value.slice(0, 12)}...${value.slice(-8)}` : value;
+}
+
+function positive(value) {
+  return Number(value || "0") > 0;
+}
+
+function statusName(value) {
+  return CLIENT_STATUS[Number(value)] || String(value ?? "-");
 }
 
 function setBusy(busy) {
@@ -37,46 +47,6 @@ async function requestJson(path, options = {}) {
   return payload;
 }
 
-function renderStatus(status) {
-  if (!status?.deployed) {
-    setText("deploymentStatus", "Not deployed");
-    deploymentStatus?.classList.remove("is-live");
-    deploymentStatus?.classList.add("is-offline");
-    setText("lastMessage", status?.message || "Start both local chains.");
-    renderRoadmap();
-    return;
-  }
-
-  setText("deploymentStatus", "Local stack active");
-  deploymentStatus?.classList.add("is-live");
-  deploymentStatus?.classList.remove("is-offline");
-  setText("bankABalance", `${status.balances.bankA} aBANK`);
-  setText("escrowBalance", `${status.balances.escrow} aBANK`);
-  setText("voucherBalance", `${status.balances.voucher} vA`);
-  setText("stableBalance", `${status.balances.stable} sBANK`);
-  setText("collateralBalance", `${status.balances.collateral} vA`);
-  setText("debtBalance", `${status.balances.debt} sBANK`);
-
-  setText("packetSequenceA", status.progress.packetSequenceA);
-  setText("checkpointSequenceA", status.progress.checkpointSequenceA);
-  setText("trustedAOnB", status.progress.trustedAOnB);
-  setText("packetSequenceB", status.progress.packetSequenceB);
-  setText("checkpointSequenceB", status.progress.checkpointSequenceB);
-  setText("trustedBOnA", status.progress.trustedBOnA);
-
-  const forward = status.trace?.forward || {};
-  const reverse = status.trace?.reverse || {};
-  setText("forwardPacketId", compact(forward.packetId));
-  setText("forwardRoot", compact(forward.packetRoot));
-  setText("reversePacketId", compact(reverse.packetId));
-  setText("reverseRoot", compact(reverse.packetRoot));
-  renderRoadmap(status);
-}
-
-function positive(value) {
-  return Number(value || "0") > 0;
-}
-
 function setRoute(id, state, text) {
   const node = document.getElementById(id);
   if (!node) return;
@@ -90,9 +60,9 @@ function renderRoadmap(status) {
     setRoute("routeEscrow", "active", "deploy first");
     setRoute("routeCheckpoint", "", "waiting");
     setRoute("routeClient", "", "waiting");
-    setRoute("routeVoucher", "", "waiting");
-    setRoute("routeLending", "", "waiting");
-    setRoute("routeUnlock", "", "waiting");
+    setRoute("routeProof", "", "waiting");
+    setRoute("routeReverse", "", "waiting");
+    setRoute("routeSafety", "", "available");
     return;
   }
 
@@ -102,23 +72,62 @@ function renderRoadmap(status) {
   const escrowed = positive(balances.escrow) || positive(progress.packetSequenceA);
   const checkpointed = positive(progress.checkpointSequenceA);
   const trusted = positive(progress.trustedAOnB);
-  const voucherReady = Boolean(trace.forward?.packetId) || positive(balances.voucher) || positive(balances.collateral);
-  const lendingActive = positive(balances.collateral) || positive(balances.debt);
-  const lendingTouched = Boolean(trace.lending?.lastAction);
-  const lendingComplete = Boolean(trace.lending?.completed);
+  const proven = Boolean(trace.forward?.packetId) || positive(balances.voucher);
   const reverseWritten = positive(progress.packetSequenceB);
+  const reverseTrusted = positive(progress.trustedBOnA);
   const unlocked = Boolean(trace.reverse?.packetId);
+  const frozen = Number(progress.statusAOnB) === 2;
+  const recovered = Boolean(trace.misbehaviour?.recovered);
 
   setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? "packet written" : "ready");
   setRoute("routeCheckpoint", checkpointed ? "done" : escrowed ? "active" : "", checkpointed ? "source certified" : "waiting");
   setRoute("routeClient", trusted ? "done" : checkpointed ? "active" : "", trusted ? "trusted remote" : "waiting");
-  setRoute("routeVoucher", voucherReady ? "done" : trusted ? "active" : "", voucherReady ? "minted" : "waiting");
+  setRoute("routeProof", proven ? "done" : trusted ? "active" : "", proven ? "executed once" : "waiting");
   setRoute(
-    "routeLending",
-    lendingComplete ? "done" : lendingActive || (voucherReady && !lendingTouched) ? "active" : lendingTouched ? "done" : "",
-    lendingComplete ? "closed" : lendingActive ? "position open" : voucherReady ? "ready" : "waiting"
+    "routeReverse",
+    unlocked ? "done" : reverseTrusted || reverseWritten ? "active" : "",
+    unlocked ? "unescrowed" : reverseTrusted ? "trusted" : reverseWritten ? "packet written" : "waiting"
   );
-  setRoute("routeUnlock", unlocked ? "done" : reverseWritten ? "active" : "", unlocked ? "unescrowed" : "waiting");
+  setRoute("routeSafety", frozen ? "active" : recovered ? "done" : "", frozen ? "frozen" : recovered ? "recovered" : "available");
+}
+
+function renderStatus(status) {
+  if (!status?.deployed) {
+    setText("deploymentStatus", status?.label || "Not deployed");
+    deploymentStatus?.classList.remove("is-live");
+    deploymentStatus?.classList.add("is-offline");
+    setText("lastMessage", status?.message || "Start both local chains.");
+    renderRoadmap();
+    return;
+  }
+
+  deploymentStatus?.classList.add("is-live");
+  deploymentStatus?.classList.remove("is-offline");
+  setText("deploymentStatus", "Local stack active");
+  setText("bankABalance", `${status.balances.bankA} aBANK`);
+  setText("escrowBalance", `${status.balances.escrow} aBANK`);
+  setText("voucherBalance", `${status.balances.voucher} vA`);
+  setText("statusAOnB", statusName(status.progress.statusAOnB));
+  setText("statusBOnA", statusName(status.progress.statusBOnA));
+
+  const forward = status.trace?.forward || {};
+  const reverse = status.trace?.reverse || {};
+  const misbehaviour = status.trace?.misbehaviour || {};
+  setText("replayState", forward.packetId || reverse.packetId ? "consumed" : "pending");
+  setText("packetSequenceA", status.progress.packetSequenceA);
+  setText("checkpointSequenceA", status.progress.checkpointSequenceA);
+  setText("trustedAOnB", status.progress.trustedAOnB);
+  setText("packetSequenceB", status.progress.packetSequenceB);
+  setText("checkpointSequenceB", status.progress.checkpointSequenceB);
+  setText("trustedBOnA", status.progress.trustedBOnA);
+  setText("forwardPacketId", compact(forward.packetId));
+  setText("forwardRoot", compact(forward.packetRoot));
+  setText("reversePacketId", compact(reverse.packetId));
+  setText(
+    "misbehaviourState",
+    misbehaviour.recovered ? `recovered epoch ${misbehaviour.epochId}` : misbehaviour.frozen ? `frozen seq ${misbehaviour.sequence}` : "none"
+  );
+  renderRoadmap(status);
 }
 
 async function refreshStatus() {

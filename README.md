@@ -11,7 +11,9 @@ The thesis contribution is the linkage layer:
 - one-time packet execution
 - freeze and explicit recovery on conflicting certified updates
 
-The lending system is now presented as an application workload on top of the linkage layer. A verified packet mints a voucher on Bank B; that voucher can be deposited into a deliberately minimal lending pool, borrowed against, repaid, withdrawn, burned, and then proven back to Bank A for unescrow.
+The application layer is intentionally small: a verified source packet locks a canonical asset on
+Bank A, mints a voucher on Bank B, burns the voucher on the reverse path, and unescrows the
+canonical asset on Bank A.
 
 No mainnet RPC, paid prover, cloud service, subscription API, or external infrastructure is required.
 
@@ -26,7 +28,7 @@ contracts/
   core/       IBC client interfaces, proof verifier, packet handler, misbehaviour evidence
   clients/    BankChainClient and bank-chain client state/message/consensus types
   source/     source validator epochs, packet commitments, source checkpoints
-  apps/       minimal transfer app, escrow vault, voucher token, voucher lending pool, local bank token
+  apps/       minimal transfer app, escrow vault, voucher token, local bank token
   libs/       Merkle, packet, commitment, and domain hash helpers
 ```
 
@@ -43,8 +45,7 @@ The trust anchor is `BankChainClient`, not a bridge router. A destination chain 
 7. A relayer submits the packet plus Merkle proof to `IBCPacketHandler.recvPacket`.
 8. The handler verifies membership against the trusted remote client state, consumes the packet id once, and calls the destination app.
 9. Bank B mints `VoucherToken`.
-10. The user can use the verified voucher in `VoucherLendingPool` as the lending workload.
-11. The reverse path burns the voucher on Bank B, commits a reverse packet, updates Bank A's remote client, proves membership, and unescrows from Bank A.
+10. The reverse path burns the voucher on Bank B, commits a reverse packet, updates Bank A's remote client, proves membership, and unescrows from Bank A.
 
 ## Local Commands
 
@@ -63,8 +64,8 @@ The UI has direct operation buttons instead of a passive diagram:
 
 - `Deploy + Seed`: deploy the two-chain IBC-lite stack and seed demo balances.
 - Lock/mint path: `Lock aBANK`, `Commit A Checkpoint`, `Update B Client`, `Prove + Mint Voucher`.
-- Lending workload: `Deposit Voucher`, `Borrow sBANK`, `Repay sBANK`, `Withdraw Voucher`.
 - Burn/unlock path: `Burn Voucher`, `Commit B Checkpoint`, `Update A Client`, `Prove + Unlock aBANK`.
+- Safety path: `Submit Conflict`, `Recover Client`.
 - `Run Full Flow`: execute the whole sequence from escrow to unescrow.
 
 The contract-backed flow writes the latest proof trace to `demo/latest-run.js` and `demo/latest-run.json` so the UI can display the real packet ids and hashes.
@@ -75,8 +76,8 @@ The contract-backed flow writes the latest proof trace to `demo/latest-run.js` a
 4. Bank B updates its `BankChainClient` from a validator-certified artifact.
 5. Bank B verifies packet membership proof and executes the packet once.
 6. Bank B mints `vA`.
-7. The user deposits `vA` into the minimal lending pool, borrows, repays, and withdraws.
-8. Bank B burns `vA`, writes a reverse packet, Bank A updates its client, verifies proof, and unescrows `aBANK`.
+7. Bank B burns `vA`, writes a reverse packet, Bank A updates its client, verifies proof, and unescrows `aBANK`.
+8. A conflicting certified update can freeze the remote client; recovery requires an explicit successor validator epoch.
 
 Start the UI controller:
 
@@ -131,12 +132,12 @@ The Solidity tests cover:
 - replay rejection
 - trusted remote state as a precondition for packet execution
 - escrow -> voucher mint
-- voucher lending use case after proof execution
 - burn -> unescrow
 
 ## Documentation
 
 - `docs/IBC_LIGHT_CLIENT_SCOPE.md`
+- `docs/HARD_RESET_DECISION.md`
 - `docs/CLIENT_STATE_MACHINE.md`
 - `docs/PACKET_FLOW.md`
 - `docs/TRUST_ASSUMPTIONS.md`

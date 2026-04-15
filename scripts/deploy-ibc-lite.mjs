@@ -60,7 +60,6 @@ async function main() {
     bankToken: await loadArtifact("apps/BankToken.sol", "BankToken"),
     escrow: await loadArtifact("apps/EscrowVault.sol", "EscrowVault"),
     voucher: await loadArtifact("apps/VoucherToken.sol", "VoucherToken"),
-    lending: await loadArtifact("apps/VoucherLendingPool.sol", "VoucherLendingPool"),
     app: await loadArtifact("apps/MinimalTransferApp.sol", "MinimalTransferApp"),
   };
 
@@ -82,12 +81,6 @@ async function main() {
   const bankTokenA = await deploy(artifacts.bankToken, ownerA, ["Bank A Deposit Token", "aBANK"]);
   const escrowA = await deploy(artifacts.escrow, ownerA, [await bankTokenA.getAddress()]);
   const voucherB = await deploy(artifacts.voucher, ownerB, ["Voucher for Bank A Deposit", "vA"]);
-  const stableB = await deploy(artifacts.bankToken, ownerB, ["Bank B Stable Token", "sBANK"]);
-  const lendingB = await deploy(artifacts.lending, ownerB, [
-    await voucherB.getAddress(),
-    await stableB.getAddress(),
-    Number(process.env.LENDING_COLLATERAL_FACTOR_BPS || 5000),
-  ]);
   const appA = await deploy(artifacts.app, ownerA, [
     sourceA.chainId,
     await sourceA.packetStore.getAddress(),
@@ -133,8 +126,6 @@ async function main() {
         client: await clientB.getAddress(),
         packetHandler: await handlerB.getAddress(),
         voucherToken: await voucherB.getAddress(),
-        stableToken: await stableB.getAddress(),
-        lendingPool: await lendingB.getAddress(),
         transferApp: await appB.getAddress(),
       },
     },

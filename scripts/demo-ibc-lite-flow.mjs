@@ -16,7 +16,6 @@ import {
 const ACTION_LOCK_MINT = 1;
 const ACTION_BURN_UNLOCK = 2;
 const TRANSFER_AMOUNT = ethers.parseUnits(process.env.DEMO_AMOUNT || "100", 18);
-const BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW || "40", 18);
 const UI_TRACE_PATH = resolve(process.cwd(), "demo", "latest-run.js");
 const UI_TRACE_JSON_PATH = resolve(process.cwd(), "demo", "latest-run.json");
 
@@ -25,7 +24,6 @@ async function loadArtifacts() {
     app: await loadArtifact("apps/MinimalTransferApp.sol", "MinimalTransferApp"),
     bankToken: await loadArtifact("apps/BankToken.sol", "BankToken"),
     voucher: await loadArtifact("apps/VoucherToken.sol", "VoucherToken"),
-    lending: await loadArtifact("apps/VoucherLendingPool.sol", "VoucherLendingPool"),
     escrow: await loadArtifact("apps/EscrowVault.sol", "EscrowVault"),
     packetStore: await loadArtifact("source/SourcePacketCommitment.sol", "SourcePacketCommitment"),
     checkpointRegistry: await loadArtifact("source/SourceCheckpointRegistry.sol", "SourceCheckpointRegistry"),
@@ -61,11 +59,9 @@ function packetTuple({
   };
 }
 
-async function ensureSeed({ cfg, artifacts, ownerA, ownerB, userA, userB }) {
+async function ensureSeed({ cfg, artifacts, ownerA, userA }) {
   const canonical = new ethers.Contract(cfg.chains.A.canonicalToken, artifacts.bankToken.abi, ownerA);
-  const stable = new ethers.Contract(cfg.chains.B.stableToken, artifacts.bankToken.abi, ownerB);
   const canonicalBalance = await canonical.balanceOf(await userA.getAddress());
-  const stablePoolBalance = await stable.balanceOf(cfg.chains.B.lendingPool);
 
   if (canonicalBalance < TRANSFER_AMOUNT) {
     const mintAmount = TRANSFER_AMOUNT * 5n;
@@ -73,17 +69,7 @@ async function ensureSeed({ cfg, artifacts, ownerA, ownerB, userA, userB }) {
     console.log(`[seed] minted ${ethers.formatUnits(mintAmount, 18)} aBANK to Bank A user`);
   }
 
-  if (stablePoolBalance < BORROW_AMOUNT) {
-    const mintAmount = BORROW_AMOUNT * 5n;
-    await (await stable.mint(cfg.chains.B.lendingPool, mintAmount)).wait();
-    console.log(`[seed] funded Bank B lending pool with ${ethers.formatUnits(mintAmount, 18)} sBANK`);
-  }
-
-  const voucher = new ethers.Contract(cfg.chains.B.voucherToken, artifacts.voucher.abi, userB);
-  const stableUser = new ethers.Contract(cfg.chains.B.stableToken, artifacts.bankToken.abi, userB);
   await (await canonical.connect(userA).approve(cfg.chains.A.escrowVault, ethers.MaxUint256)).wait();
-  await (await voucher.approve(cfg.chains.B.lendingPool, ethers.MaxUint256)).wait();
-  await (await stableUser.approve(cfg.chains.B.lendingPool, ethers.MaxUint256)).wait();
 }
 
 async function commitSourceCheckpoint(chainKey, cfg, artifacts) {
@@ -150,17 +136,14 @@ async function main() {
   const cfg = await loadConfig();
   const artifacts = await loadArtifacts();
   const ownerA = await signerFor(cfg, "A", 0);
-  const ownerB = await signerFor(cfg, "B", 0);
   const userA = await signerFor(cfg, "A", Number(process.env.USER_INDEX || 1));
   const userB = await signerFor(cfg, "B", Number(process.env.USER_INDEX || 1));
 
-  await ensureSeed({ cfg, artifacts, ownerA, ownerB, userA, userB });
+  await ensureSeed({ cfg, artifacts, ownerA, userA });
 
   const appA = new ethers.Contract(cfg.chains.A.transferApp, artifacts.app.abi, userA);
   const appB = new ethers.Contract(cfg.chains.B.transferApp, artifacts.app.abi, userB);
   const voucher = new ethers.Contract(cfg.chains.B.voucherToken, artifacts.voucher.abi, userB);
-  const stable = new ethers.Contract(cfg.chains.B.stableToken, artifacts.bankToken.abi, userB);
-  const lending = new ethers.Contract(cfg.chains.B.lendingPool, artifacts.lending.abi, userB);
   const escrow = new ethers.Contract(cfg.chains.A.escrowVault, artifacts.escrow.abi, ownerA);
 
   console.log("\n=== Forward path: Bank A escrow -> Bank B voucher ===");
@@ -182,15 +165,6 @@ async function main() {
   const consensusA = await updateRemoteClient("A", "B", checkpointA, cfg, artifacts);
   const lockProof = await relayPacket("A", "B", forwardPacket, checkpointA, consensusA, cfg, artifacts);
   console.log(`[B] voucher balance=${ethers.formatUnits(await voucher.balanceOf(await userB.getAddress()), 18)} vA`);
-
-  console.log("\n=== Lending workload: voucher collateral ===");
-  await (await lending.depositCollateral(TRANSFER_AMOUNT)).wait();
-  await (await lending.borrow(BORROW_AMOUNT)).wait();
-  await (await lending.repay(BORROW_AMOUNT)).wait();
-  await (await lending.withdrawCollateral(TRANSFER_AMOUNT)).wait();
-  console.log(`[B] borrowed and repaid ${ethers.formatUnits(BORROW_AMOUNT, 18)} sBANK`);
-  console.log(`[B] voucher returned=${ethers.formatUnits(await voucher.balanceOf(await userB.getAddress()), 18)} vA`);
-  console.log(`[B] user stable balance=${ethers.formatUnits(await stable.balanceOf(await userB.getAddress()), 18)} sBANK`);
 
   console.log("\n=== Reverse path: Bank B burn -> Bank A unescrow ===");
   await (await appB.burnAndRelease(cfg.chains.A.chainId, await userA.getAddress(), TRANSFER_AMOUNT)).wait();
@@ -215,7 +189,6 @@ async function main() {
   await writeUiTrace({
     generatedAt: new Date().toISOString(),
     amount: ethers.formatUnits(TRANSFER_AMOUNT, 18),
-    borrowAmount: ethers.formatUnits(BORROW_AMOUNT, 18),
     userA: await userA.getAddress(),
     userB: await userB.getAddress(),
     forward: {
@@ -241,7 +214,7 @@ async function main() {
   console.log(`burnPacketId       ${burnProof.packetId}`);
   console.log(`A consensus hash   ${consensusA}`);
   console.log(`B consensus hash   ${consensusB}`);
-  console.log("Demo flow complete.");
+  console.log("IBC-lite transfer proof flow complete.");
 }
 
 main().catch((error) => {

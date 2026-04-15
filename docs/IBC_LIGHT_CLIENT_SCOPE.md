@@ -2,9 +2,9 @@
 
 ## Thesis Goal
 
-The thesis is a local simulation of an IBC/light-client-like inter-chain client for two permissioned EVM bank chains, demonstrated with a lending workload.
+The thesis is a local simulation of an IBC/light-client-like inter-chain client for two permissioned EVM bank chains, demonstrated with a minimal lock/mint and burn/unescrow app flow.
 
-The contribution is the inter-chain linkage mechanism. Lending remains as the system scenario, but it is intentionally minimal so the demo does not become an oracle, liquidation, swap, or risk-management thesis.
+The contribution is the inter-chain linkage mechanism. The app exists only to demonstrate verified remote state transition and must not dominate the repository.
 
 ## Included
 
@@ -17,10 +17,10 @@ The contribution is the inter-chain linkage mechanism. Lending remains as the sy
 - freeze on conflicting certified updates
 - explicit recovery through a certified successor epoch
 - minimal lock/mint and burn/unescrow app flow
-- minimal voucher-backed lending workload after proof execution
 
 ## Excluded
 
+- lending business logic
 - advanced lending positions
 - liquidation
 - price oracles

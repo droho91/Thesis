@@ -6,7 +6,6 @@ import {BankToken} from "../../contracts/apps/BankToken.sol";
 import {EscrowVault} from "../../contracts/apps/EscrowVault.sol";
 import {MinimalTransferApp} from "../../contracts/apps/MinimalTransferApp.sol";
 import {VoucherToken} from "../../contracts/apps/VoucherToken.sol";
-import {VoucherLendingPool} from "../../contracts/apps/VoucherLendingPool.sol";
 import {BankChainClient} from "../../contracts/clients/BankChainClient.sol";
 import {BankChainClientMessage} from "../../contracts/clients/BankChainClientMessage.sol";
 import {BankChainClientState} from "../../contracts/clients/BankChainClientState.sol";
@@ -42,10 +41,8 @@ abstract contract IBCLocalSimulationBase is Test {
     IBCPacketHandler internal handlerA;
     IBCPacketHandler internal handlerB;
     BankToken internal canonicalA;
-    BankToken internal stableB;
     EscrowVault internal escrowA;
     VoucherToken internal voucherB;
-    VoucherLendingPool internal lendingB;
     MinimalTransferApp internal appA;
     MinimalTransferApp internal appB;
 
@@ -89,10 +86,8 @@ abstract contract IBCLocalSimulationBase is Test {
         handlerB = new IBCPacketHandler(CHAIN_B, address(clientB));
 
         canonicalA = new BankToken("Bank A Deposit Token", "aBANK");
-        stableB = new BankToken("Bank B Stable Token", "sBANK");
         escrowA = new EscrowVault(address(canonicalA));
         voucherB = new VoucherToken("Voucher for Bank A Deposit", "vA");
-        lendingB = new VoucherLendingPool(address(voucherB), address(stableB), 5_000);
         appA = new MinimalTransferApp(CHAIN_A, address(packetsA), address(handlerA), address(escrowA), address(0));
         appB = new MinimalTransferApp(CHAIN_B, address(packetsB), address(handlerB), address(0), address(voucherB));
 
@@ -104,7 +99,6 @@ abstract contract IBCLocalSimulationBase is Test {
         appB.configureRemoteApp(CHAIN_A, address(appA));
 
         canonicalA.mint(user, 1_000 ether);
-        stableB.mint(address(lendingB), 1_000 ether);
         vm.prank(user);
         canonicalA.approve(address(escrowA), type(uint256).max);
     }

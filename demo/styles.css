@@ -283,15 +283,11 @@ dt {
   --metric-color: var(--green);
 }
 
-.metric-stable {
+.metric-client {
   --metric-color: #4d7f7a;
 }
 
-.metric-collateral {
-  --metric-color: #3e7f56;
-}
-
-.metric-debt {
+.metric-proof {
   --metric-color: var(--coral);
 }
 

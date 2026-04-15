@@ -2,7 +2,7 @@
 
 The repository now models a local IBC/light-client-like inter-chain client for two permissioned EVM bank chains.
 
-The linkage layer is the thesis object. Lending is retained as the application scenario, but the lending path depends on the client/proof flow: escrow a source asset, mint a voucher after proof verification, use that voucher in a minimal lending pool, then burn and unescrow through the reverse packet path.
+The linkage layer is the thesis object. The application path is deliberately minimal: escrow a source asset, mint a voucher after proof verification, burn the voucher, then unescrow through the reverse packet path.
 
 ## Layer Separation
 
@@ -28,7 +28,6 @@ Application layer:
 - `MinimalTransferApp`
 - `EscrowVault`
 - `VoucherToken`
-- `VoucherLendingPool`
 - `BankToken` for local demo assets
 
 The destination chain does not rely on a bridge router or route policy as its trust anchor. It relies on a remote client state that advances only through source-certified artifacts.
@@ -85,12 +84,6 @@ The packet execution path is:
 6. destination app executes
 
 Invalid proofs fail before application logic runs.
-
-## Lending Workload
-
-`VoucherLendingPool` is intentionally small. It accepts a verified voucher as collateral, lets the user borrow a local stable token within a fixed collateral factor, then repay and withdraw. It does not implement oracle pricing, liquidation, swaps, interest, or fee policy.
-
-This preserves the project title as a multi-blockchain lending system while keeping the research focus on how two chains communicate and verify state.
 
 ## Misbehaviour
 

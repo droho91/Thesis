@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Multi-Blockchain Lending Controller</title>
+    <title>IBC-Lite Bank Chain Controller</title>
     <link rel="icon" type="image/png" href="./assets/logo.png" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -14,46 +14,47 @@
           <img src="./assets/logo.png" alt="Bank chain client mark" />
         </div>
         <div class="title-block">
-          <p class="eyebrow">A Lending System for Multi-Blockchain Ecosystems</p>
-          <h1>Inter-chain lending control desk</h1>
+          <p class="eyebrow">Local IBC / light-client prototype</p>
+          <h1>Verified bank-chain communication</h1>
           <p>
-            Operate the local two-chain demo directly: escrow on Bank A, prove state through the
-            client layer, mint a voucher on Bank B, use it in lending, then burn and unlock.
+            Control the local two-chain model directly: write source packet commitments, advance a
+            remote client from source-certified artifacts, verify membership proofs, block replay,
+            freeze on conflict, and recover explicitly.
           </p>
         </div>
         <div class="status-pill" id="deploymentStatus">Checking local stack</div>
       </header>
 
-      <section class="balances" aria-label="Balances">
+      <section class="balances" aria-label="Live state">
         <article class="metric metric-source">
           <span>Bank A user aBANK</span>
           <strong id="bankABalance">-</strong>
-          <small>canonical asset</small>
+          <small>canonical source asset</small>
         </article>
         <article class="metric metric-escrow">
           <span>Bank A escrow</span>
           <strong id="escrowBalance">-</strong>
-          <small>locked source state</small>
+          <small>locked by source app</small>
         </article>
         <article class="metric metric-voucher">
-          <span>Bank B user voucher</span>
+          <span>Bank B voucher</span>
           <strong id="voucherBalance">-</strong>
-          <small>verified representation</small>
+          <small>minted after proof</small>
         </article>
-        <article class="metric metric-stable">
-          <span>Bank B stable balance</span>
-          <strong id="stableBalance">-</strong>
-          <small>borrowed asset</small>
+        <article class="metric metric-client">
+          <span>B client for A</span>
+          <strong id="statusAOnB">-</strong>
+          <small>remote trust anchor</small>
         </article>
-        <article class="metric metric-collateral">
-          <span>Lending collateral</span>
-          <strong id="collateralBalance">-</strong>
-          <small>pool position</small>
+        <article class="metric metric-client">
+          <span>A client for B</span>
+          <strong id="statusBOnA">-</strong>
+          <small>reverse trust anchor</small>
         </article>
-        <article class="metric metric-debt">
-          <span>Lending debt</span>
-          <strong id="debtBalance">-</strong>
-          <small>repay gate</small>
+        <article class="metric metric-proof">
+          <span>Replay gate</span>
+          <strong id="replayState">-</strong>
+          <small>consumed packet ids</small>
         </article>
       </section>
 
@@ -65,28 +66,28 @@
         </article>
         <article id="routeCheckpoint">
           <span>02</span>
-          <strong>Checkpoint</strong>
+          <strong>Source artifact</strong>
           <small id="routeCheckpointText">waiting</small>
         </article>
         <article id="routeClient">
           <span>03</span>
-          <strong>Client trust</strong>
+          <strong>Client update</strong>
           <small id="routeClientText">waiting</small>
         </article>
-        <article id="routeVoucher">
+        <article id="routeProof">
           <span>04</span>
-          <strong>Voucher</strong>
-          <small id="routeVoucherText">waiting</small>
+          <strong>Proof execution</strong>
+          <small id="routeProofText">waiting</small>
         </article>
-        <article id="routeLending">
+        <article id="routeReverse">
           <span>05</span>
-          <strong>Lending</strong>
-          <small id="routeLendingText">waiting</small>
+          <strong>Reverse packet</strong>
+          <small id="routeReverseText">waiting</small>
         </article>
-        <article id="routeUnlock">
+        <article id="routeSafety">
           <span>06</span>
-          <strong>Unlock</strong>
-          <small id="routeUnlockText">waiting</small>
+          <strong>Freeze / recovery</strong>
+          <small id="routeSafetyText">available</small>
         </article>
       </section>
 
@@ -94,7 +95,7 @@
         <section class="operations" aria-label="Demo operations">
           <div class="section-head">
             <p class="eyebrow">Direct actions</p>
-            <h2>Run the system step by step</h2>
+            <h2>Operate the verified state transition</h2>
           </div>
 
           <div class="action-group setup" data-phase="00">
@@ -109,42 +110,40 @@
 
           <div class="action-group" data-phase="01">
             <div>
-              <h3>1. Lock and mint path</h3>
-              <p>Move a source-certified packet from Bank A into Bank B's trusted client state.</p>
+              <h3>Forward path: lock, prove, mint</h3>
+              <p>Bank B can mint a voucher only after its Bank A client trusts a certified checkpoint.</p>
             </div>
             <button class="button-primary" data-action="lock" type="button">Lock aBANK</button>
             <button class="button-secondary" data-action="checkpointForward" type="button">Commit A Checkpoint</button>
             <button class="button-secondary" data-action="updateForwardClient" type="button">Update B Client</button>
-            <button class="button-run" data-action="proveForwardMint" type="button">Prove + Mint Voucher</button>
+            <button class="button-run" data-action="proveForwardMint" type="button">Prove + Mint</button>
           </div>
 
           <div class="action-group" data-phase="02">
             <div>
-              <h3>2. Lending workload</h3>
-              <p>Use the verified voucher as collateral in a deliberately minimal lending pool.</p>
-            </div>
-            <button class="button-primary" data-action="depositCollateral" type="button">Deposit Voucher</button>
-            <button class="button-secondary" data-action="borrow" type="button">Borrow sBANK</button>
-            <button class="button-secondary" data-action="repay" type="button">Repay sBANK</button>
-            <button class="button-run" data-action="withdrawCollateral" type="button">Withdraw Voucher</button>
-          </div>
-
-          <div class="action-group" data-phase="03">
-            <div>
-              <h3>3. Burn and unlock path</h3>
-              <p>Burn on Bank B, prove the reverse packet on Bank A, then release escrowed aBANK.</p>
+              <h3>Reverse path: burn, prove, unlock</h3>
+              <p>Bank A releases escrow only after the reverse packet is committed, trusted, and proven.</p>
             </div>
             <button class="button-danger" data-action="burn" type="button">Burn Voucher</button>
             <button class="button-secondary" data-action="checkpointReverse" type="button">Commit B Checkpoint</button>
             <button class="button-secondary" data-action="updateReverseClient" type="button">Update A Client</button>
-            <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock aBANK</button>
+            <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock</button>
+          </div>
+
+          <div class="action-group" data-phase="03">
+            <div>
+              <h3>Safety path: misbehaviour and recovery</h3>
+              <p>A conflicting certified update freezes the client; recovery requires an explicit successor epoch.</p>
+            </div>
+            <button class="button-danger" data-action="freezeClient" type="button">Submit Conflict</button>
+            <button class="button-run" data-action="recoverClient" type="button">Recover Client</button>
           </div>
         </section>
 
         <aside class="receipt" aria-label="Readable trace">
           <div class="section-head">
             <p class="eyebrow">Technical receipt</p>
-            <h2>What the last run proved</h2>
+            <h2>What the latest trusted path proves</h2>
           </div>
 
           <dl class="receipt-list">
@@ -185,8 +184,8 @@
               <dd id="reversePacketId">-</dd>
             </div>
             <div>
-              <dt>Reverse proof root</dt>
-              <dd id="reverseRoot">-</dd>
+              <dt>Misbehaviour evidence</dt>
+              <dd id="misbehaviourState">-</dd>
             </div>
           </dl>
         </aside>
