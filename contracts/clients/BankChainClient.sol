@@ -1,0 +1,603 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {IBCClient} from "../core/IBCClient.sol";
+import {IBCClientStore} from "../core/IBCClientStore.sol";
+import {IBCClientTypes} from "../core/IBCClientTypes.sol";
+import {IBCMisbehaviour} from "../core/IBCMisbehaviour.sol";
+import {BankChainClientMessage} from "./BankChainClientMessage.sol";
+import {BankChainClientState} from "./BankChainClientState.sol";
+import {BankChainClientVerifier} from "./BankChainClientVerifier.sol";
+import {BankChainConsensusState} from "./BankChainConsensusState.sol";
+import {MerkleLib} from "../libs/MerkleLib.sol";
+
+/// @title BankChainClient
+/// @notice IBC/light-client-like trust anchor for a remote permissioned EVM bank chain.
+contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
+    bytes32 public constant CLIENT_ADMIN_ROLE = keccak256("CLIENT_ADMIN_ROLE");
+
+    mapping(uint256 => mapping(uint256 => BankChainClientState.ValidatorEpoch)) private validatorEpochs;
+    mapping(uint256 => mapping(uint256 => mapping(address => uint256))) public validatorVotingPower;
+    mapping(uint256 => mapping(bytes32 => BankChainConsensusState.ConsensusState)) private consensusStates;
+    mapping(uint256 => mapping(uint256 => bytes32)) public consensusStateHashBySequence;
+    mapping(uint256 => mapping(uint256 => bytes32)) public conflictingConsensusStateHashBySequence;
+    mapping(uint256 => mapping(bytes32 => bool)) public knownValidatorEpochHash;
+    mapping(uint256 => uint256) public activeValidatorEpochId;
+    mapping(uint256 => uint256) public latestConsensusStateSequence;
+    mapping(uint256 => bytes32) public latestConsensusStateHash;
+    mapping(uint256 => uint256) public latestPacketSequence;
+    mapping(uint256 => uint256) public latestSourceBlockNumber;
+    mapping(uint256 => bytes32) public latestSourceBlockHash;
+    mapping(uint256 => address) public sourceCheckpointRegistryForChain;
+    mapping(uint256 => address) public sourcePacketCommitmentForChain;
+    mapping(uint256 => address) public sourceValidatorSetRegistryForChain;
+    mapping(uint256 => IBCMisbehaviour.Evidence) public frozenEvidence;
+
+    event TrustedValidatorEpochBootstrapped(
+        uint256 indexed sourceChainId,
+        uint256 indexed epochId,
+        bytes32 indexed epochHash,
+        address sourceValidatorSetRegistry,
+        uint256 activationBlockNumber,
+        bytes32 activationBlockHash
+    );
+    event SourceValidatorEpochAccepted(
+        uint256 indexed sourceChainId,
+        uint256 indexed epochId,
+        bytes32 indexed epochHash,
+        bytes32 parentEpochHash,
+        uint256 totalVotingPower,
+        uint256 activationBlockNumber,
+        bytes32 activationBlockHash,
+        address relayer
+    );
+    event ClientUpdated(
+        uint256 indexed sourceChainId,
+        uint256 indexed sequence,
+        bytes32 indexed consensusStateHash,
+        uint256 validatorEpochId,
+        bytes32 validatorEpochHash,
+        bytes32 packetRoot,
+        uint256 firstPacketSequence,
+        uint256 lastPacketSequence,
+        bytes32 packetAccumulator,
+        uint256 sourceBlockNumber,
+        bytes32 sourceBlockHash,
+        bytes32 sourceCommitmentHash,
+        address relayer
+    );
+    event MisbehaviourDetected(
+        uint256 indexed sourceChainId,
+        uint256 indexed sequence,
+        bytes32 indexed evidenceHash,
+        bytes32 trustedConsensusStateHash,
+        bytes32 conflictingConsensusStateHash,
+        address relayer
+    );
+
+    constructor(BankChainClientState.ValidatorEpoch memory initialTrustedEpoch) {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(CLIENT_ADMIN_ROLE, msg.sender);
+        _validateEpochShape(initialTrustedEpoch);
+        require(initialTrustedEpoch.parentEpochHash == bytes32(0), "INITIAL_PARENT_NONZERO");
+        require(initialTrustedEpoch.active, "INITIAL_EPOCH_INACTIVE");
+        _storeValidatorEpoch(initialTrustedEpoch, true);
+        sourceValidatorSetRegistryForChain[initialTrustedEpoch.sourceChainId] =
+            initialTrustedEpoch.sourceValidatorSetRegistry;
+        _setStatus(initialTrustedEpoch.sourceChainId, IBCClientTypes.Status.Active, initialTrustedEpoch.epochHash);
+
+        emit TrustedValidatorEpochBootstrapped(
+            initialTrustedEpoch.sourceChainId,
+            initialTrustedEpoch.epochId,
+            initialTrustedEpoch.epochHash,
+            initialTrustedEpoch.sourceValidatorSetRegistry,
+            initialTrustedEpoch.activationBlockNumber,
+            initialTrustedEpoch.activationBlockHash
+        );
+    }
+
+    function status(uint256 sourceChainId)
+        public
+        view
+        override(IBCClient, IBCClientStore)
+        returns (IBCClientTypes.Status)
+    {
+        return IBCClientStore.status(sourceChainId);
+    }
+
+    function updateValidatorEpoch(
+        BankChainClientState.ValidatorEpoch calldata epoch,
+        bytes[] calldata signatures
+    ) external returns (bytes32 epochHash) {
+        _validateEpochShapeCalldata(epoch);
+        uint256 sourceChainId = epoch.sourceChainId;
+        IBCClientTypes.Status clientStatus = clientStatuses[sourceChainId];
+        require(
+            clientStatus == IBCClientTypes.Status.Active || clientStatus == IBCClientTypes.Status.Recovering,
+            "CLIENT_NOT_UPDATEABLE"
+        );
+        require(
+            sourceValidatorSetRegistryForChain[sourceChainId] == epoch.sourceValidatorSetRegistry,
+            "VALIDATOR_REGISTRY_MISMATCH"
+        );
+
+        BankChainClientState.ValidatorEpoch storage current =
+            validatorEpochs[sourceChainId][activeValidatorEpochId[sourceChainId]];
+        require(current.epochHash != bytes32(0), "CURRENT_EPOCH_UNKNOWN");
+        require(epoch.epochId == current.epochId + 1, "WRONG_EPOCH");
+        require(epoch.parentEpochHash == current.epochHash, "WRONG_PARENT_EPOCH");
+        require(epoch.activationBlockNumber >= current.activationBlockNumber, "EPOCH_ANCHOR_REGRESSION");
+        require(epoch.active, "EPOCH_INACTIVE");
+        epochHash = BankChainClientState.hashCalldata(epoch);
+        require(epochHash == epoch.epochHash, "EPOCH_HASH_MISMATCH");
+        require(!knownValidatorEpochHash[sourceChainId][epochHash], "EPOCH_EXISTS");
+
+        _requireQuorum(
+            sourceChainId,
+            current.epochId,
+            current.totalVotingPower,
+            current.quorumNumerator,
+            current.quorumDenominator,
+            epochHash,
+            signatures
+        );
+
+        _storeValidatorEpochCalldata(epoch, true);
+        if (clientStatus == IBCClientTypes.Status.Recovering) {
+            delete frozenEvidence[sourceChainId];
+            _setStatus(sourceChainId, IBCClientTypes.Status.Active, epochHash);
+        }
+
+        emit SourceValidatorEpochAccepted(
+            sourceChainId,
+            epoch.epochId,
+            epochHash,
+            epoch.parentEpochHash,
+            epoch.totalVotingPower,
+            epoch.activationBlockNumber,
+            epoch.activationBlockHash,
+            msg.sender
+        );
+    }
+
+    function updateState(BankChainClientMessage.ClientMessage calldata clientMessage, bytes[] calldata signatures)
+        external
+        returns (bytes32 consensusStateHash)
+    {
+        BankChainClientMessage.Checkpoint calldata checkpoint = clientMessage.checkpoint;
+        _validateCheckpointShape(checkpoint);
+        require(clientStatuses[checkpoint.sourceChainId] == IBCClientTypes.Status.Active, "CLIENT_NOT_ACTIVE");
+
+        BankChainClientState.ValidatorEpoch storage epoch =
+            validatorEpochs[checkpoint.sourceChainId][checkpoint.validatorEpochId];
+        require(epoch.active, "VALIDATOR_EPOCH_INACTIVE");
+        require(
+            activeValidatorEpochId[checkpoint.sourceChainId] == checkpoint.validatorEpochId,
+            "VALIDATOR_EPOCH_NOT_CURRENT"
+        );
+        require(epoch.epochHash == checkpoint.validatorEpochHash, "VALIDATOR_EPOCH_HASH_MISMATCH");
+        require(epoch.sourceValidatorSetRegistry == checkpoint.sourceValidatorSetRegistry, "VALIDATOR_REGISTRY_MISMATCH");
+
+        consensusStateHash = BankChainClientMessage.checkpointHashCalldata(checkpoint);
+        require(
+            BankChainClientMessage.sourceCommitmentHashCalldata(checkpoint) == checkpoint.sourceCommitmentHash,
+            "SOURCE_COMMITMENT_MISMATCH"
+        );
+        _requireQuorum(
+            checkpoint.sourceChainId,
+            checkpoint.validatorEpochId,
+            epoch.totalVotingPower,
+            epoch.quorumNumerator,
+            epoch.quorumDenominator,
+            consensusStateHash,
+            signatures
+        );
+
+        bytes32 existingHash = consensusStateHashBySequence[checkpoint.sourceChainId][checkpoint.sequence];
+        if (existingHash != bytes32(0)) {
+            if (existingHash == consensusStateHash) revert("CONSENSUS_STATE_EXISTS");
+            _freezeForMisbehaviour(checkpoint.sourceChainId, checkpoint.sequence, existingHash, consensusStateHash);
+            return consensusStateHash;
+        }
+
+        _validateProgression(checkpoint, epoch);
+        _bindSourceEndpoints(checkpoint);
+
+        consensusStates[checkpoint.sourceChainId][consensusStateHash] = BankChainConsensusState.ConsensusState({
+            sourceChainId: checkpoint.sourceChainId,
+            sourceCheckpointRegistry: checkpoint.sourceCheckpointRegistry,
+            sourcePacketCommitment: checkpoint.sourcePacketCommitment,
+            sourceValidatorSetRegistry: checkpoint.sourceValidatorSetRegistry,
+            validatorEpochId: checkpoint.validatorEpochId,
+            validatorEpochHash: checkpoint.validatorEpochHash,
+            sequence: checkpoint.sequence,
+            parentCheckpointHash: checkpoint.parentCheckpointHash,
+            packetRoot: checkpoint.packetRoot,
+            firstPacketSequence: checkpoint.firstPacketSequence,
+            lastPacketSequence: checkpoint.lastPacketSequence,
+            packetCount: checkpoint.packetCount,
+            packetAccumulator: checkpoint.packetAccumulator,
+            sourceBlockNumber: checkpoint.sourceBlockNumber,
+            sourceBlockHash: checkpoint.sourceBlockHash,
+            timestamp: checkpoint.timestamp,
+            sourceCommitmentHash: checkpoint.sourceCommitmentHash,
+            consensusStateHash: consensusStateHash,
+            exists: true
+        });
+        consensusStateHashBySequence[checkpoint.sourceChainId][checkpoint.sequence] = consensusStateHash;
+        latestConsensusStateSequence[checkpoint.sourceChainId] = checkpoint.sequence;
+        latestConsensusStateHash[checkpoint.sourceChainId] = consensusStateHash;
+        latestPacketSequence[checkpoint.sourceChainId] = checkpoint.lastPacketSequence;
+        latestSourceBlockNumber[checkpoint.sourceChainId] = checkpoint.sourceBlockNumber;
+        latestSourceBlockHash[checkpoint.sourceChainId] = checkpoint.sourceBlockHash;
+
+        emit ClientUpdated(
+            checkpoint.sourceChainId,
+            checkpoint.sequence,
+            consensusStateHash,
+            checkpoint.validatorEpochId,
+            checkpoint.validatorEpochHash,
+            checkpoint.packetRoot,
+            checkpoint.firstPacketSequence,
+            checkpoint.lastPacketSequence,
+            checkpoint.packetAccumulator,
+            checkpoint.sourceBlockNumber,
+            checkpoint.sourceBlockHash,
+            checkpoint.sourceCommitmentHash,
+            msg.sender
+        );
+    }
+
+    function beginRecovery(uint256 sourceChainId) external onlyRole(CLIENT_ADMIN_ROLE) {
+        require(clientStatuses[sourceChainId] == IBCClientTypes.Status.Frozen, "CLIENT_NOT_FROZEN");
+        _setStatus(sourceChainId, IBCClientTypes.Status.Recovering, frozenEvidence[sourceChainId].evidenceHash);
+    }
+
+    function sourceFrozen(uint256 sourceChainId) external view returns (bool) {
+        IBCClientTypes.Status clientStatus = clientStatuses[sourceChainId];
+        return clientStatus == IBCClientTypes.Status.Frozen || clientStatus == IBCClientTypes.Status.Recovering;
+    }
+
+    function verifyMembership(
+        uint256 sourceChainId,
+        bytes32 consensusStateHash,
+        bytes32 leaf,
+        uint256 leafIndex,
+        bytes32[] calldata siblings
+    ) external view override returns (bool) {
+        if (clientStatuses[sourceChainId] != IBCClientTypes.Status.Active) return false;
+        BankChainConsensusState.ConsensusState storage consensus =
+            consensusStates[sourceChainId][consensusStateHash];
+        if (!consensus.exists || leaf == bytes32(0) || leafIndex >= consensus.packetCount) return false;
+        return MerkleLib.verify(consensus.packetRoot, leaf, leafIndex, siblings);
+    }
+
+    function verifyNonMembership(
+        uint256,
+        bytes32,
+        bytes32,
+        bytes calldata
+    ) external pure override returns (bool) {
+        return false;
+    }
+
+    function isConsensusStateVerified(uint256 sourceChainId, bytes32 consensusStateHash)
+        external
+        view
+        returns (bool)
+    {
+        return consensusStates[sourceChainId][consensusStateHash].exists;
+    }
+
+    function consensusState(uint256 sourceChainId, bytes32 consensusStateHash)
+        external
+        view
+        returns (BankChainConsensusState.ConsensusState memory)
+    {
+        BankChainConsensusState.ConsensusState memory stored = consensusStates[sourceChainId][consensusStateHash];
+        require(stored.exists, "CONSENSUS_STATE_UNKNOWN");
+        return stored;
+    }
+
+    function validatorEpoch(uint256 sourceChainId, uint256 epochId)
+        external
+        view
+        returns (BankChainClientState.ValidatorEpoch memory)
+    {
+        BankChainClientState.ValidatorEpoch memory epoch = validatorEpochs[sourceChainId][epochId];
+        require(epoch.epochHash != bytes32(0), "EPOCH_UNKNOWN");
+        return epoch;
+    }
+
+    function hashValidatorEpoch(BankChainClientState.ValidatorEpoch memory epoch) public pure returns (bytes32) {
+        return BankChainClientState.hash(epoch);
+    }
+
+    function hashSourceCommitment(BankChainClientMessage.Checkpoint memory checkpoint)
+        public
+        pure
+        returns (bytes32)
+    {
+        return BankChainClientMessage.sourceCommitmentHash(checkpoint);
+    }
+
+    function hashConsensusState(BankChainClientMessage.Checkpoint memory checkpoint)
+        public
+        pure
+        returns (bytes32)
+    {
+        return BankChainClientMessage.checkpointHash(checkpoint);
+    }
+
+    function _freezeForMisbehaviour(
+        uint256 sourceChainId,
+        uint256 sequence,
+        bytes32 trustedConsensusStateHash,
+        bytes32 conflictingConsensusStateHash
+    ) internal {
+        bytes32 evidenceHash = IBCMisbehaviour.hashEvidence(
+            sourceChainId,
+            sequence,
+            trustedConsensusStateHash,
+            conflictingConsensusStateHash
+        );
+        conflictingConsensusStateHashBySequence[sourceChainId][sequence] = conflictingConsensusStateHash;
+        frozenEvidence[sourceChainId] = IBCMisbehaviour.Evidence({
+            sourceChainId: sourceChainId,
+            sequence: sequence,
+            trustedConsensusStateHash: trustedConsensusStateHash,
+            conflictingConsensusStateHash: conflictingConsensusStateHash,
+            evidenceHash: evidenceHash,
+            detectedAt: block.timestamp,
+            exists: true
+        });
+        _setStatus(sourceChainId, IBCClientTypes.Status.Frozen, evidenceHash);
+        emit MisbehaviourDetected(
+            sourceChainId,
+            sequence,
+            evidenceHash,
+            trustedConsensusStateHash,
+            conflictingConsensusStateHash,
+            msg.sender
+        );
+    }
+
+    function _validateEpochShape(BankChainClientState.ValidatorEpoch memory epoch) internal pure {
+        require(epoch.sourceChainId != 0, "CHAIN_ID_ZERO");
+        require(epoch.sourceValidatorSetRegistry != address(0), "VALIDATOR_REGISTRY_ZERO");
+        require(epoch.epochId != 0, "EPOCH_ZERO");
+        require(epoch.validators.length == epoch.votingPowers.length, "VALIDATOR_LENGTH_MISMATCH");
+        require(epoch.validators.length > 0, "VALIDATORS_EMPTY");
+        require(epoch.totalVotingPower > 0, "VALIDATOR_EPOCH_EMPTY");
+        require(epoch.quorumNumerator != 0, "QUORUM_ZERO");
+        require(epoch.quorumDenominator != 0, "QUORUM_DENOMINATOR_ZERO");
+        require(epoch.quorumNumerator * 2 > epoch.quorumDenominator, "QUORUM_NOT_SAFETY_MAJORITY");
+        require(epoch.activationBlockHash != bytes32(0), "EPOCH_BLOCK_HASH_ZERO");
+        require(epoch.timestamp != 0, "EPOCH_TIMESTAMP_ZERO");
+        require(epoch.epochHash != bytes32(0), "EPOCH_HASH_ZERO");
+
+        uint256 totalPower;
+        for (uint256 i = 0; i < epoch.validators.length; i++) {
+            address validator = epoch.validators[i];
+            uint256 power = epoch.votingPowers[i];
+            require(validator != address(0), "VALIDATOR_ZERO");
+            require(power > 0, "VALIDATOR_POWER_ZERO");
+            totalPower += power;
+            for (uint256 j = 0; j < i; j++) {
+                require(epoch.validators[j] != validator, "DUPLICATE_VALIDATOR");
+            }
+        }
+        require(totalPower == epoch.totalVotingPower, "TOTAL_POWER_MISMATCH");
+        require(BankChainClientState.hash(epoch) == epoch.epochHash, "EPOCH_HASH_MISMATCH");
+    }
+
+    function _validateEpochShapeCalldata(BankChainClientState.ValidatorEpoch calldata epoch) internal pure {
+        require(epoch.sourceChainId != 0, "CHAIN_ID_ZERO");
+        require(epoch.sourceValidatorSetRegistry != address(0), "VALIDATOR_REGISTRY_ZERO");
+        require(epoch.epochId != 0, "EPOCH_ZERO");
+        require(epoch.validators.length == epoch.votingPowers.length, "VALIDATOR_LENGTH_MISMATCH");
+        require(epoch.validators.length > 0, "VALIDATORS_EMPTY");
+        require(epoch.totalVotingPower > 0, "VALIDATOR_EPOCH_EMPTY");
+        require(epoch.quorumNumerator != 0, "QUORUM_ZERO");
+        require(epoch.quorumDenominator != 0, "QUORUM_DENOMINATOR_ZERO");
+        require(epoch.quorumNumerator * 2 > epoch.quorumDenominator, "QUORUM_NOT_SAFETY_MAJORITY");
+        require(epoch.activationBlockHash != bytes32(0), "EPOCH_BLOCK_HASH_ZERO");
+        require(epoch.timestamp != 0, "EPOCH_TIMESTAMP_ZERO");
+        require(epoch.epochHash != bytes32(0), "EPOCH_HASH_ZERO");
+
+        uint256 totalPower;
+        for (uint256 i = 0; i < epoch.validators.length; i++) {
+            address validator = epoch.validators[i];
+            uint256 power = epoch.votingPowers[i];
+            require(validator != address(0), "VALIDATOR_ZERO");
+            require(power > 0, "VALIDATOR_POWER_ZERO");
+            totalPower += power;
+            for (uint256 j = 0; j < i; j++) {
+                require(epoch.validators[j] != validator, "DUPLICATE_VALIDATOR");
+            }
+        }
+        require(totalPower == epoch.totalVotingPower, "TOTAL_POWER_MISMATCH");
+        require(BankChainClientState.hashCalldata(epoch) == epoch.epochHash, "EPOCH_HASH_MISMATCH");
+    }
+
+    function _validateCheckpointShape(BankChainClientMessage.Checkpoint calldata checkpoint) internal pure {
+        require(checkpoint.sourceChainId != 0, "CHAIN_ID_ZERO");
+        require(checkpoint.sourceCheckpointRegistry != address(0), "SOURCE_REGISTRY_ZERO");
+        require(checkpoint.sourcePacketCommitment != address(0), "SOURCE_PACKET_STORE_ZERO");
+        require(checkpoint.sourceValidatorSetRegistry != address(0), "VALIDATOR_REGISTRY_ZERO");
+        require(checkpoint.validatorEpochId != 0, "VALIDATOR_EPOCH_ZERO");
+        require(checkpoint.validatorEpochHash != bytes32(0), "VALIDATOR_EPOCH_HASH_ZERO");
+        require(checkpoint.sequence != 0, "SEQUENCE_ZERO");
+        require(checkpoint.packetRoot != bytes32(0), "PACKET_ROOT_ZERO");
+        require(checkpoint.sourceCommitmentHash != bytes32(0), "SOURCE_COMMITMENT_ZERO");
+        require(checkpoint.packetAccumulator != bytes32(0), "PACKET_ACCUMULATOR_ZERO");
+        require(checkpoint.packetCount > 0, "PACKET_COUNT_ZERO");
+        require(checkpoint.firstPacketSequence != 0, "FIRST_PACKET_ZERO");
+        require(checkpoint.lastPacketSequence >= checkpoint.firstPacketSequence, "BAD_PACKET_RANGE");
+        require(
+            checkpoint.lastPacketSequence - checkpoint.firstPacketSequence + 1 == checkpoint.packetCount,
+            "PACKET_COUNT_MISMATCH"
+        );
+        require(checkpoint.sourceBlockHash != bytes32(0), "SOURCE_BLOCK_HASH_ZERO");
+        require(checkpoint.timestamp != 0, "TIMESTAMP_ZERO");
+    }
+
+    function _validateProgression(
+        BankChainClientMessage.Checkpoint calldata checkpoint,
+        BankChainClientState.ValidatorEpoch storage epoch
+    ) internal view {
+        uint256 latestSequence = latestConsensusStateSequence[checkpoint.sourceChainId];
+        require(checkpoint.sequence == latestSequence + 1, "WRONG_SEQUENCE");
+        require(checkpoint.sourceBlockNumber >= epoch.activationBlockNumber, "CHECKPOINT_BEFORE_EPOCH");
+
+        if (latestSequence == 0) {
+            require(checkpoint.parentCheckpointHash == bytes32(0), "WRONG_PARENT_CHECKPOINT");
+            require(checkpoint.firstPacketSequence == 1, "WRONG_PACKET_RANGE");
+        } else {
+            require(
+                checkpoint.parentCheckpointHash == latestConsensusStateHash[checkpoint.sourceChainId],
+                "WRONG_PARENT_CHECKPOINT"
+            );
+            require(
+                checkpoint.firstPacketSequence == latestPacketSequence[checkpoint.sourceChainId] + 1,
+                "WRONG_PACKET_RANGE"
+            );
+            uint256 latestBlockNumber = latestSourceBlockNumber[checkpoint.sourceChainId];
+            require(checkpoint.sourceBlockNumber >= latestBlockNumber, "SOURCE_BLOCK_REGRESSION");
+            if (checkpoint.sourceBlockNumber == latestBlockNumber) {
+                require(
+                    checkpoint.sourceBlockHash == latestSourceBlockHash[checkpoint.sourceChainId],
+                    "SOURCE_BLOCK_HASH_MISMATCH"
+                );
+            }
+        }
+    }
+
+    function _bindSourceEndpoints(BankChainClientMessage.Checkpoint calldata checkpoint) internal {
+        address knownRegistry = sourceCheckpointRegistryForChain[checkpoint.sourceChainId];
+        address knownPacketStore = sourcePacketCommitmentForChain[checkpoint.sourceChainId];
+        if (knownRegistry == address(0)) {
+            sourceCheckpointRegistryForChain[checkpoint.sourceChainId] = checkpoint.sourceCheckpointRegistry;
+        } else {
+            require(knownRegistry == checkpoint.sourceCheckpointRegistry, "SOURCE_REGISTRY_MISMATCH");
+        }
+
+        if (knownPacketStore == address(0)) {
+            sourcePacketCommitmentForChain[checkpoint.sourceChainId] = checkpoint.sourcePacketCommitment;
+        } else {
+            require(knownPacketStore == checkpoint.sourcePacketCommitment, "SOURCE_PACKET_STORE_MISMATCH");
+        }
+    }
+
+    function _storeValidatorEpoch(BankChainClientState.ValidatorEpoch memory epoch, bool makeActive) internal {
+        BankChainClientState.ValidatorEpoch storage previous =
+            validatorEpochs[epoch.sourceChainId][activeValidatorEpochId[epoch.sourceChainId]];
+        if (makeActive && previous.epochHash != bytes32(0)) {
+            previous.active = false;
+        }
+
+        BankChainClientState.ValidatorEpoch storage stored = validatorEpochs[epoch.sourceChainId][epoch.epochId];
+        for (uint256 i = 0; i < stored.validators.length; i++) {
+            validatorVotingPower[epoch.sourceChainId][epoch.epochId][stored.validators[i]] = 0;
+        }
+        delete stored.validators;
+        delete stored.votingPowers;
+
+        stored.sourceChainId = epoch.sourceChainId;
+        stored.sourceValidatorSetRegistry = epoch.sourceValidatorSetRegistry;
+        stored.epochId = epoch.epochId;
+        stored.parentEpochHash = epoch.parentEpochHash;
+        stored.totalVotingPower = epoch.totalVotingPower;
+        stored.quorumNumerator = epoch.quorumNumerator;
+        stored.quorumDenominator = epoch.quorumDenominator;
+        stored.activationBlockNumber = epoch.activationBlockNumber;
+        stored.activationBlockHash = epoch.activationBlockHash;
+        stored.timestamp = epoch.timestamp;
+        stored.epochHash = epoch.epochHash;
+        stored.active = makeActive;
+        for (uint256 i = 0; i < epoch.validators.length; i++) {
+            stored.validators.push(epoch.validators[i]);
+            stored.votingPowers.push(epoch.votingPowers[i]);
+            validatorVotingPower[epoch.sourceChainId][epoch.epochId][epoch.validators[i]] = epoch.votingPowers[i];
+        }
+
+        if (makeActive) {
+            activeValidatorEpochId[epoch.sourceChainId] = epoch.epochId;
+        }
+        knownValidatorEpochHash[epoch.sourceChainId][epoch.epochHash] = true;
+    }
+
+    function _storeValidatorEpochCalldata(BankChainClientState.ValidatorEpoch calldata epoch, bool makeActive)
+        internal
+    {
+        BankChainClientState.ValidatorEpoch storage previous =
+            validatorEpochs[epoch.sourceChainId][activeValidatorEpochId[epoch.sourceChainId]];
+        if (makeActive && previous.epochHash != bytes32(0)) {
+            previous.active = false;
+        }
+
+        BankChainClientState.ValidatorEpoch storage stored = validatorEpochs[epoch.sourceChainId][epoch.epochId];
+        for (uint256 i = 0; i < stored.validators.length; i++) {
+            validatorVotingPower[epoch.sourceChainId][epoch.epochId][stored.validators[i]] = 0;
+        }
+        delete stored.validators;
+        delete stored.votingPowers;
+
+        stored.sourceChainId = epoch.sourceChainId;
+        stored.sourceValidatorSetRegistry = epoch.sourceValidatorSetRegistry;
+        stored.epochId = epoch.epochId;
+        stored.parentEpochHash = epoch.parentEpochHash;
+        stored.totalVotingPower = epoch.totalVotingPower;
+        stored.quorumNumerator = epoch.quorumNumerator;
+        stored.quorumDenominator = epoch.quorumDenominator;
+        stored.activationBlockNumber = epoch.activationBlockNumber;
+        stored.activationBlockHash = epoch.activationBlockHash;
+        stored.timestamp = epoch.timestamp;
+        stored.epochHash = epoch.epochHash;
+        stored.active = makeActive;
+        for (uint256 i = 0; i < epoch.validators.length; i++) {
+            stored.validators.push(epoch.validators[i]);
+            stored.votingPowers.push(epoch.votingPowers[i]);
+            validatorVotingPower[epoch.sourceChainId][epoch.epochId][epoch.validators[i]] = epoch.votingPowers[i];
+        }
+
+        if (makeActive) {
+            activeValidatorEpochId[epoch.sourceChainId] = epoch.epochId;
+        }
+        knownValidatorEpochHash[epoch.sourceChainId][epoch.epochHash] = true;
+    }
+
+    function _requireQuorum(
+        uint256 sourceChainId,
+        uint256 validatorEpochId,
+        uint256 totalVotingPower,
+        uint256 quorumNumerator,
+        uint256 quorumDenominator,
+        bytes32 digest,
+        bytes[] calldata signatures
+    ) internal view {
+        require(signatures.length > 0, "SIGNATURES_EMPTY");
+
+        address[] memory seen = new address[](signatures.length);
+        uint256 signedPower;
+        for (uint256 i = 0; i < signatures.length; i++) {
+            address signer = BankChainClientVerifier.recoverDirect(digest, signatures[i]);
+            uint256 power = validatorVotingPower[sourceChainId][validatorEpochId][signer];
+            if (power == 0) {
+                signer = BankChainClientVerifier.recoverEthSigned(digest, signatures[i]);
+                power = validatorVotingPower[sourceChainId][validatorEpochId][signer];
+            }
+            require(power > 0, "SIGNER_NOT_VALIDATOR");
+
+            for (uint256 j = 0; j < i; j++) {
+                require(seen[j] != signer, "DUPLICATE_SIGNATURE");
+            }
+
+            seen[i] = signer;
+            signedPower += power;
+        }
+
+        require(signedPower * quorumDenominator >= totalVotingPower * quorumNumerator, "INSUFFICIENT_QUORUM");
+    }
+}

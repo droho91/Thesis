@@ -3,69 +3,111 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bank-Chain Linkage Prototype</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
-    <script>
-      try {
-        const storedTheme =
-          localStorage.getItem("crosschain-lending-theme") ||
-          localStorage.getItem("chainlend-theme");
-        const theme =
-          storedTheme === "light" || storedTheme === "dark"
-            ? storedTheme
-            : window.matchMedia?.("(prefers-color-scheme: light)")?.matches
-              ? "light"
-              : "dark";
-        document.documentElement.dataset.theme = theme;
-      } catch {
-        document.documentElement.dataset.theme = "dark";
-      }
-    </script>
-    <link rel="icon" type="image/png" href="./assets/logo.png?v=5" />
+    <title>IBC-Lite Bank Client Demo</title>
+    <link rel="icon" type="image/png" href="./assets/logo.png" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand-stack">
-        <a class="brand-link" href="./index.html" aria-label="Bank-chain linkage home">
-          <img class="brand-logo" src="./assets/logo.png?v=5" alt="Bank-chain linkage logo" />
-        </a>
+    <main class="shell">
+      <header class="mast">
+        <img src="./assets/logo.png" alt="IBC-lite bank client mark" />
         <div>
-          <p class="eyebrow">Thesis Prototype</p>
-          <h1>Bank-Chain Linkage Prototype</h1>
-          <p class="subtitle">Follow source checkpoints, bank-validator quorum, Merkle inclusion, replay protection, and recovery across two local bank chains.</p>
+          <p class="eyebrow">Local Thesis Simulation</p>
+          <h1>IBC-lite bank client</h1>
+          <p class="intro">
+            Bank A and Bank B move packets through source commitments, source-certified checkpoints,
+            remote client updates, membership proofs, and one-time execution.
+          </p>
         </div>
-      </div>
-      <div class="topbar-actions">
-        <div class="theme-toggle" role="group" aria-label="Theme mode">
-          <button class="theme-toggle-option" type="button" data-theme-option="dark" aria-label="Dark mode" title="Dark mode">☾</button>
-          <button class="theme-toggle-option" type="button" data-theme-option="light" aria-label="Light mode" title="Light mode">☀</button>
-        </div>
-      </div>
-    </header>
+      </header>
 
-    <main class="panel-grid">
-      <section class="panel portal-card">
-        <h3>Linkage Walkthrough</h3>
-        <p class="panel-note">
-          Lock collateral, watch the certified checkpoint path, then use the minted position.
-        </p>
-        <a class="btn primary" href="./user.html">Open Linkage Flow</a>
+      <section class="state-strip" aria-label="Current client state">
+        <article>
+          <span>Remote Client</span>
+          <strong id="clientState">Active</strong>
+        </article>
+        <article>
+          <span>Trusted Consensus</span>
+          <strong id="trustedState">None</strong>
+        </article>
+        <article>
+          <span>Packet Execution</span>
+          <strong id="executionState">Waiting</strong>
+        </article>
       </section>
 
-      <section class="panel portal-card">
-        <h3>Operator Console</h3>
-        <p class="panel-note">
-          Track validator epochs, checkpoint status, route safety, liquidity, and recovery.
+      <section class="workbench">
+        <div class="flow" id="flow">
+          <button class="step is-active" type="button" data-step="0">
+            <span>1</span>
+            <strong>Escrow on Bank A</strong>
+            <small>Canonical asset enters `EscrowVault`.</small>
+          </button>
+          <button class="step" type="button" data-step="1">
+            <span>2</span>
+            <strong>Write packet commitment</strong>
+            <small>`SourcePacketCommitment` appends the packet leaf.</small>
+          </button>
+          <button class="step" type="button" data-step="2">
+            <span>3</span>
+            <strong>Commit source checkpoint</strong>
+            <small>The packet root is bound to source epoch and block anchors.</small>
+          </button>
+          <button class="step" type="button" data-step="3">
+            <span>4</span>
+            <strong>Update remote client</strong>
+            <small>Bank B accepts only a validator-certified artifact.</small>
+          </button>
+          <button class="step" type="button" data-step="4">
+            <span>5</span>
+            <strong>Verify membership proof</strong>
+            <small>The packet leaf is checked against trusted remote state.</small>
+          </button>
+          <button class="step" type="button" data-step="5">
+            <span>6</span>
+            <strong>Mint voucher once</strong>
+            <small>`IBCPacketHandler` consumes the packet id before app execution.</small>
+          </button>
+        </div>
+
+        <aside class="detail" aria-live="polite">
+          <p class="eyebrow">Selected Step</p>
+          <h2 id="detailTitle">Escrow on Bank A</h2>
+          <p id="detailText">
+            The source app locks canonical tokens before any remote state exists. This is application
+            state, not trust state.
+          </p>
+          <dl>
+            <div>
+              <dt>Source artifact</dt>
+              <dd id="artifactValue">none yet</dd>
+            </div>
+            <div>
+              <dt>Relayer power</dt>
+              <dd id="relayerValue">transport only</dd>
+            </div>
+            <div>
+              <dt>Replay gate</dt>
+              <dd id="replayValue">not reached</dd>
+            </div>
+          </dl>
+          <div class="actions">
+            <button id="prevStep" type="button">Previous</button>
+            <button id="nextStep" type="button">Next</button>
+            <button id="freezeClient" type="button">Show Conflict Freeze</button>
+            <button id="recoverClient" type="button">Recover With Successor Epoch</button>
+          </div>
+        </aside>
+      </section>
+
+      <section class="reverse">
+        <h2>Reverse path</h2>
+        <p>
+          Burning the voucher on Bank B writes a reverse packet. Bank A updates its remote Bank B client,
+          verifies the reverse packet proof, consumes the packet id, and unescrows the canonical asset.
         </p>
-        <a class="btn" href="./owner.html">Open Console</a>
       </section>
     </main>
-    <script type="module" src="./theme.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
