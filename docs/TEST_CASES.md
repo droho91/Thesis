@@ -34,6 +34,14 @@
 - source escrow -> destination voucher mint
 - destination voucher burn -> source unescrow
 
+## Lending Use Case
+
+`test/apps/CrossChainLendingUseCase.t.sol` covers:
+
+- verified voucher can be deposited as Bank B collateral
+- borrowing is capped by the collateral factor
+- debt must be repaid before collateral is withdrawn for the reverse burn path
+
 ## Invariant-Style Coverage
 
 `test/invariants/PacketReplayInvariant.t.sol` checks that executing a packet once cannot increase voucher supply a second time.

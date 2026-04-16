@@ -2,9 +2,11 @@
 
 ## Thesis Goal
 
-The thesis is a local simulation of an IBC/light-client-like inter-chain client for two permissioned EVM bank chains, demonstrated with a minimal lock/mint and burn/unescrow app flow.
+The thesis is **A Lending System for Multi-Blockchain Ecosystems**.
 
-The contribution is the inter-chain linkage mechanism. The app exists only to demonstrate verified remote state transition and must not dominate the repository.
+The actual research focus is a local simulation of an IBC/light-client-like inter-chain client for two permissioned EVM bank chains. The lending use case is intentionally downstream: Bank B accepts a voucher as collateral only after Bank B's client has verified Bank A's certified state and packet proof.
+
+The contribution is the inter-chain linkage mechanism. The app exists to demonstrate verified remote state transition and must not dominate the repository.
 
 ## Included
 
@@ -18,16 +20,17 @@ The contribution is the inter-chain linkage mechanism. The app exists only to de
 - freeze on conflicting certified updates
 - explicit recovery through a certified successor epoch
 - minimal lock/mint and burn/unescrow app flow
+- minimal voucher-backed lending use case after successful proof execution
 
 ## Excluded
 
-- lending business logic
 - advanced lending positions
 - liquidation
 - price oracles
 - swap routing
 - fee markets
 - product route/risk controls
+- lending behavior that can run without the verified cross-chain voucher path
 - mainnet deployment
 - paid RPCs
 - paid proof systems

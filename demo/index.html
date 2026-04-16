@@ -79,13 +79,18 @@
           <strong>Proof execution</strong>
           <small id="routeProofText">waiting</small>
         </article>
-        <article id="routeReverse">
+        <article id="routeLending">
           <span>05</span>
+          <strong>Lending use case</strong>
+          <small id="routeLendingText">waiting</small>
+        </article>
+        <article id="routeReverse">
+          <span>06</span>
           <strong>Reverse packet</strong>
           <small id="routeReverseText">waiting</small>
         </article>
         <article id="routeSafety">
-          <span>06</span>
+          <span>07</span>
           <strong>Freeze / recovery</strong>
           <small id="routeSafetyText">available</small>
         </article>
@@ -121,6 +126,17 @@
 
           <div class="action-group" data-phase="02">
             <div>
+              <h3>Lending use case: proven voucher collateral</h3>
+              <p>The lending pool accepts the voucher only after Bank B has verified Bank A state through the client.</p>
+            </div>
+            <button class="button-primary" data-action="depositCollateral" type="button">Deposit Voucher</button>
+            <button class="button-run" data-action="borrow" type="button">Borrow bCASH</button>
+            <button class="button-secondary" data-action="repay" type="button">Repay bCASH</button>
+            <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw Voucher</button>
+          </div>
+
+          <div class="action-group" data-phase="03">
+            <div>
               <h3>Reverse path: burn, prove, unlock</h3>
               <p>Bank A releases escrow only after the reverse packet is committed, trusted, and proven.</p>
             </div>
@@ -130,7 +146,7 @@
             <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock</button>
           </div>
 
-          <div class="action-group" data-phase="03">
+          <div class="action-group" data-phase="04">
             <div>
               <h3>Safety path: misbehaviour and recovery</h3>
               <p>A conflicting certified update freezes the client; replay and absence checks are explicit.</p>
@@ -160,6 +176,22 @@
             <div>
               <dt>Bank B voucher</dt>
               <dd id="voucherBalance">-</dd>
+            </div>
+            <div>
+              <dt>Bank B borrowed cash</dt>
+              <dd id="bankBBalance">-</dd>
+            </div>
+            <div>
+              <dt>Lending collateral</dt>
+              <dd id="poolCollateral">-</dd>
+            </div>
+            <div>
+              <dt>Lending debt</dt>
+              <dd id="poolDebt">-</dd>
+            </div>
+            <div>
+              <dt>Pool liquidity</dt>
+              <dd id="poolLiquidity">-</dd>
             </div>
             <div>
               <dt>A checkpoints</dt>

@@ -1,6 +1,8 @@
-# IBC-Lite Bank Chain Client Simulation
+# A Lending System for Multi-Blockchain Ecosystems
 
-This repository is a local simulation of an IBC/light-client-like inter-chain client for two permissioned EVM bank chains.
+This repository is a local thesis prototype for cross-chain lending between two permissioned EVM bank chains.
+
+The lending system is the use case. The research center is the inter-chain client model: how Bank B can trust a state transition from Bank A without trusting a relayer, a bridge owner, or Bank A as an administrator on Bank B.
 
 The thesis contribution is the linkage layer:
 
@@ -13,8 +15,8 @@ The thesis contribution is the linkage layer:
 - freeze and explicit recovery on conflicting certified updates
 
 The application layer is intentionally small: a verified source packet locks a canonical asset on
-Bank A, mints a voucher on Bank B, burns the voucher on the reverse path, and unescrows the
-canonical asset on Bank A.
+Bank A, mints a voucher on Bank B, lets the voucher collateralize a minimal Bank B lending pool,
+then burns the voucher on the reverse path and unescrows the canonical asset on Bank A.
 
 No mainnet RPC, paid prover, cloud service, subscription API, or external infrastructure is required.
 
@@ -29,7 +31,7 @@ contracts/
   core/       IBC client interfaces, proof verifier, packet handler, misbehaviour evidence
   clients/    BankChainClient and bank-chain client state/message/consensus types
   source/     source validator epochs, packet commitments, source checkpoints
-  apps/       minimal transfer app, escrow vault, voucher token, local bank token
+  apps/       minimal transfer app, escrow vault, voucher token, bank token, small lending pool
   libs/       Merkle, packet, commitment, and domain hash helpers
 ```
 
@@ -46,7 +48,9 @@ The trust anchor is `BankChainClient`, not a bridge router. A destination chain 
 7. A relayer submits the packet plus path/value Merkle proof to `IBCPacketHandler.recvPacket`.
 8. The handler verifies the packet commitment path/value against the trusted remote state root, consumes the packet id once, and calls the destination app.
 9. Bank B mints `VoucherToken`.
-10. The reverse path burns the voucher on Bank B, commits a reverse packet, updates Bank A's remote client, proves membership, and unescrows from Bank A.
+10. The Bank B lending pool accepts the verified voucher as collateral and lends local `bCASH`.
+11. The user repays `bCASH` and withdraws the voucher.
+12. The reverse path burns the voucher on Bank B, commits a reverse packet, updates Bank A's remote client, proves membership, and unescrows from Bank A.
 
 ## Local Commands
 
@@ -65,6 +69,7 @@ The UI has direct operation buttons instead of a passive diagram:
 
 - `Deploy + Seed`: deploy the two-chain IBC-lite stack and seed demo balances.
 - Lock/mint path: `Lock aBANK`, `Commit A Checkpoint`, `Update B Client`, `Prove + Mint Voucher`.
+- Lending use case: `Deposit Voucher`, `Borrow bCASH`, `Repay bCASH`, `Withdraw Voucher`.
 - Burn/unlock path: `Burn Voucher`, `Commit B Checkpoint`, `Update A Client`, `Prove + Unlock aBANK`.
 - Safety path: `Submit Conflict`, `Recover Client`, `Replay Forward`, `Check Non-Membership`.
 - `Run Full Flow`: execute the whole sequence from escrow to unescrow.
@@ -77,8 +82,9 @@ The contract-backed flow writes the latest proof trace to `demo/latest-run.js` a
 4. Bank B updates its `BankChainClient` from a validator-certified artifact.
 5. Bank B verifies packet membership proof and executes the packet once.
 6. Bank B mints `vA`.
-7. Bank B burns `vA`, writes a reverse packet, Bank A updates its client, verifies proof, and unescrows `aBANK`.
-8. A conflicting certified update can freeze the remote client; recovery requires an explicit successor validator epoch.
+7. Bank B accepts verified `vA` as collateral and lends `bCASH`.
+8. The user repays, withdraws `vA`, burns it, writes a reverse packet, Bank A updates its client, verifies proof, and unescrows `aBANK`.
+9. A conflicting certified update can freeze the remote client; recovery requires an explicit successor validator epoch.
 
 Start the UI controller:
 
@@ -135,12 +141,15 @@ The Solidity tests cover:
 - replay rejection
 - trusted remote state as a precondition for packet execution
 - escrow -> voucher mint
+- verified voucher -> Bank B lending collateral
+- collateral borrow/repay/withdraw before reverse burn
 - burn -> unescrow
 
 ## Documentation
 
 - `docs/IBC_LIGHT_CLIENT_SCOPE.md`
 - `docs/HARD_RESET_DECISION.md`
+- `docs/THESIS_POSITIONING.md`
 - `docs/CLIENT_STATE_MACHINE.md`
 - `docs/PACKET_FLOW.md`
 - `docs/TRUST_ASSUMPTIONS.md`

@@ -30,10 +30,15 @@ They cannot:
 - bypass membership proof verification
 - bypass non-membership proof verification
 - replay consumed packets
+- make the lending pool accept collateral that was not minted through the verified packet path
 
 ## Source Artifacts
 
 The source chain is authoritative for packet commitments, checkpoint progression, and the local packet commitment state root. Destination chains advance their remote view only through source-certified artifacts.
+
+## Lending Assumption
+
+The lending pool trusts only local Bank B tokens. Its cross-chain collateral is the local voucher token minted by the verified transfer app. The pool does not inspect remote Bank A state directly and does not replace the client/proof layer.
 
 ## Not Modeled
 

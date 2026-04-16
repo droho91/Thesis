@@ -34,6 +34,14 @@ npm run seed:ibc-lite
 9. Bank B `IBCPacketHandler` verifies membership and consumes the packet.
 10. Bank B `MinimalTransferApp` mints the voucher.
 
+## Expected Lending Use Case
+
+1. User deposits the verified Bank A voucher into `CrossChainLendingPool` on Bank B.
+2. User borrows local Bank B liquidity `bCASH` within the fixed collateral factor.
+3. User repays `bCASH`.
+4. User withdraws the voucher collateral.
+5. The voucher is now available for the reverse burn path.
+
 ## Expected Burn To Unescrow
 
 1. User calls Bank B `MinimalTransferApp.burnAndRelease`.

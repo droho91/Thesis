@@ -61,6 +61,7 @@ function renderRoadmap(status) {
     setRoute("routeCheckpoint", "", "waiting");
     setRoute("routeClient", "", "waiting");
     setRoute("routeProof", "", "waiting");
+    setRoute("routeLending", "", "waiting");
     setRoute("routeReverse", "", "waiting");
     setRoute("routeSafety", "", "available");
     return;
@@ -73,6 +74,13 @@ function renderRoadmap(status) {
   const checkpointed = positive(progress.checkpointSequenceA);
   const trusted = positive(progress.trustedAOnB);
   const proven = Boolean(trace.forward?.packetId) || positive(balances.voucher);
+  const lending = trace.lending || {};
+  const lendingStarted =
+    Boolean(lending.collateralDeposited || lending.borrowed || lending.repaid || lending.collateralWithdrawn || lending.completed) ||
+    positive(balances.poolCollateral) ||
+    positive(balances.poolDebt) ||
+    positive(balances.bankB);
+  const lendingComplete = Boolean(lending.completed || lending.collateralWithdrawn);
   const reverseWritten = positive(progress.packetSequenceB);
   const reverseTrusted = positive(progress.trustedBOnA);
   const unlocked = Boolean(trace.reverse?.packetId);
@@ -84,6 +92,21 @@ function renderRoadmap(status) {
   setRoute("routeCheckpoint", checkpointed ? "done" : escrowed ? "active" : "", checkpointed ? "source certified" : "waiting");
   setRoute("routeClient", trusted ? "done" : checkpointed ? "active" : "", trusted ? "trusted remote" : "waiting");
   setRoute("routeProof", proven ? "done" : trusted ? "active" : "", proven ? "executed once" : "waiting");
+  setRoute(
+    "routeLending",
+    lendingComplete ? "done" : lendingStarted ? "active" : proven ? "active" : "",
+    lendingComplete
+      ? "collateral released"
+      : lending.repaid
+        ? "debt repaid"
+        : lending.borrowed
+          ? "borrowed"
+          : lendingStarted
+            ? "collateralized"
+            : proven
+              ? "ready"
+              : "waiting"
+  );
   setRoute(
     "routeReverse",
     unlocked ? "done" : reverseTrusted || reverseWritten ? "active" : "",
@@ -112,6 +135,10 @@ function renderStatus(status) {
   setText("bankABalance", `${status.balances.bankA} aBANK`);
   setText("escrowBalance", `${status.balances.escrow} aBANK`);
   setText("voucherBalance", `${status.balances.voucher} vA`);
+  setText("bankBBalance", `${status.balances.bankB} bCASH`);
+  setText("poolCollateral", `${status.balances.poolCollateral} vA`);
+  setText("poolDebt", `${status.balances.poolDebt} bCASH`);
+  setText("poolLiquidity", `${status.balances.poolLiquidity} bCASH`);
   setText("statusAOnB", statusName(status.progress.statusAOnB));
   setText("statusBOnA", statusName(status.progress.statusBOnA));
 

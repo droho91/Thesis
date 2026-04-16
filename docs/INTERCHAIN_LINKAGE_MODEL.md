@@ -2,7 +2,7 @@
 
 The repository now models a local IBC/light-client-like inter-chain client for two permissioned EVM bank chains.
 
-The linkage layer is the thesis object. The application path is deliberately minimal: escrow a source asset, mint a voucher after proof verification, burn the voucher, then unescrow through the reverse packet path.
+The linkage layer is the thesis object. The application path is deliberately minimal: escrow a source asset, mint a voucher after proof verification, use that verified voucher as lending collateral, burn the voucher, then unescrow through the reverse packet path.
 
 ## Layer Separation
 
@@ -29,6 +29,7 @@ Application layer:
 - `EscrowVault`
 - `VoucherToken`
 - `BankToken` for local demo assets
+- `CrossChainLendingPool` as a small proof-backed lending use case
 
 The destination chain does not rely on a bridge router or route policy as its trust anchor. It relies on a remote client state that advances only through source-certified artifacts.
 
@@ -91,6 +92,12 @@ The packet execution path is:
 Invalid proofs fail before application logic runs.
 
 `verifyNonMembership` is implemented for local packet commitment absence. It can verify that a future sequence is not present in the trusted checkpoint snapshot, or that a different value is proven at the same packet commitment path.
+
+## Lending Use Case Boundary
+
+The lending pool is intentionally downstream from the client/proof path. It never decides whether Bank A state is true. It only accepts the `VoucherToken` that Bank B minted after `IBCPacketHandler` verified packet membership and consumed the packet id.
+
+That keeps the thesis aligned with its title while preserving the research focus: lending is the bank application, but cross-chain client verification is the protocol contribution.
 
 ## Misbehaviour
 

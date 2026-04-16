@@ -20,6 +20,8 @@ const ACTION_BURN_UNLOCK = 2;
 const PACKET_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.Packet.v1"));
 const PACKET_LEAF_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.PacketLeaf.v1"));
 const TRANSFER_AMOUNT = ethers.parseUnits(process.env.DEMO_AMOUNT || "100", 18);
+const BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW_AMOUNT || "50", 18);
+const POOL_LIQUIDITY = ethers.parseUnits(process.env.POOL_LIQUIDITY || "10000", 18);
 const TRACE_JSON_PATH = resolve(process.cwd(), "demo", "latest-run.json");
 const TRACE_JS_PATH = resolve(process.cwd(), "demo", "latest-run.js");
 const CONFIG_PATH = resolve(process.cwd(), ".ibc-lite.local.json");
@@ -90,6 +92,7 @@ async function loadArtifacts() {
     app: await loadArtifact("apps/MinimalTransferApp.sol", "MinimalTransferApp"),
     bankToken: await loadArtifact("apps/BankToken.sol", "BankToken"),
     voucher: await loadArtifact("apps/VoucherToken.sol", "VoucherToken"),
+    lendingPool: await loadArtifact("apps/CrossChainLendingPool.sol", "CrossChainLendingPool"),
     escrow: await loadArtifact("apps/EscrowVault.sol", "EscrowVault"),
     packetStore: await loadArtifact("source/SourcePacketCommitment.sol", "SourcePacketCommitment"),
     validatorRegistry: await loadArtifact("source/SourceValidatorEpochRegistry.sol", "SourceValidatorEpochRegistry"),
@@ -105,9 +108,10 @@ async function context() {
   const cfg = health.cfg;
   const artifacts = await loadArtifacts();
   const ownerA = await signerFor(cfg, "A", 0);
+  const ownerB = await signerFor(cfg, "B", 0);
   const userA = await signerFor(cfg, "A", Number(process.env.USER_INDEX || 1));
   const userB = await signerFor(cfg, "B", Number(process.env.USER_INDEX || 1));
-  return { cfg, artifacts, ownerA, userA, userB };
+  return { cfg, artifacts, ownerA, ownerB, userA, userB };
 }
 
 function units(value) {
@@ -228,12 +232,18 @@ function validatorEpochObject(epoch) {
 }
 
 async function ensureSeed(ctx) {
-  const { cfg, artifacts, ownerA, userA } = ctx;
+  const { cfg, artifacts, ownerA, ownerB, userA } = ctx;
   const canonical = new ethers.Contract(cfg.chains.A.canonicalToken, artifacts.bankToken.abi, ownerA);
+  const debtToken = cfg.chains.B.debtToken
+    ? new ethers.Contract(cfg.chains.B.debtToken, artifacts.bankToken.abi, ownerB)
+    : null;
   const userAAddress = await userA.getAddress();
 
   if ((await canonical.balanceOf(userAAddress)) < TRANSFER_AMOUNT) {
     await (await canonical.mint(userAAddress, TRANSFER_AMOUNT * 5n)).wait();
+  }
+  if (debtToken && (await debtToken.balanceOf(cfg.chains.B.lendingPool)) < BORROW_AMOUNT) {
+    await (await debtToken.mint(cfg.chains.B.lendingPool, POOL_LIQUIDITY)).wait();
   }
 
   await (await canonical.connect(userA).approve(cfg.chains.A.escrowVault, ethers.MaxUint256)).wait();
@@ -394,7 +404,22 @@ async function writeTracePatch(patch) {
   } catch {
     trace = {};
   }
-  trace = { ...trace, generatedAt: new Date().toISOString(), ...patch };
+  trace = { ...trace, generatedAt: new Date().toISOString() };
+  for (const [key, value] of Object.entries(patch)) {
+    const existing = trace[key];
+    if (
+      existing &&
+      typeof existing === "object" &&
+      !Array.isArray(existing) &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      trace[key] = { ...existing, ...value };
+    } else {
+      trace[key] = value;
+    }
+  }
   await writeFile(TRACE_JSON_PATH, `${JSON.stringify(trace, null, 2)}\n`);
   await writeFile(TRACE_JS_PATH, `window.IBCLiteLatestRun = ${JSON.stringify(trace, null, 2)};\n`);
   return trace;
@@ -438,6 +463,62 @@ async function recoverBankBClientForA(ctx) {
   return { epochId: nextEpochId.toString(), epochHash: epoch.epochHash };
 }
 
+async function lendingContracts(ctx) {
+  const { cfg, artifacts, userB } = ctx;
+  if (!cfg.chains.B.lendingPool || !cfg.chains.B.debtToken) {
+    throw new Error("Bank B lending pool is not deployed. Redeploy + Seed the latest stack.");
+  }
+  return {
+    voucher: new ethers.Contract(cfg.chains.B.voucherToken, artifacts.voucher.abi, userB),
+    debtToken: new ethers.Contract(cfg.chains.B.debtToken, artifacts.bankToken.abi, userB),
+    pool: new ethers.Contract(cfg.chains.B.lendingPool, artifacts.lendingPool.abi, userB),
+  };
+}
+
+async function depositVerifiedCollateral(ctx) {
+  const { voucher, pool } = await lendingContracts(ctx);
+  const userBAddress = await ctx.userB.getAddress();
+  const voucherBalance = await voucher.balanceOf(userBAddress);
+  if (voucherBalance < TRANSFER_AMOUNT) {
+    throw new Error("Bank B user needs verified voucher collateral before depositing into lending.");
+  }
+  const currentCollateral = await pool.collateralBalance(userBAddress);
+  if (currentCollateral >= TRANSFER_AMOUNT) {
+    return { collateral: currentCollateral.toString() };
+  }
+  await (await voucher.approve(await pool.getAddress(), TRANSFER_AMOUNT)).wait();
+  await (await pool.depositCollateral(TRANSFER_AMOUNT)).wait();
+  return { collateral: TRANSFER_AMOUNT.toString() };
+}
+
+async function borrowBankBLiquidity(ctx) {
+  const { pool } = await lendingContracts(ctx);
+  const userBAddress = await ctx.userB.getAddress();
+  const currentDebt = await pool.debtBalance(userBAddress);
+  if (currentDebt >= BORROW_AMOUNT) return { debt: currentDebt.toString() };
+  await (await pool.borrow(BORROW_AMOUNT - currentDebt)).wait();
+  return { debt: BORROW_AMOUNT.toString() };
+}
+
+async function repayBankBLiquidity(ctx) {
+  const { debtToken, pool } = await lendingContracts(ctx);
+  const userBAddress = await ctx.userB.getAddress();
+  const currentDebt = await pool.debtBalance(userBAddress);
+  if (currentDebt === 0n) return { debt: "0" };
+  await (await debtToken.approve(await pool.getAddress(), currentDebt)).wait();
+  await (await pool.repay(currentDebt)).wait();
+  return { debt: "0" };
+}
+
+async function withdrawVerifiedCollateral(ctx) {
+  const { pool } = await lendingContracts(ctx);
+  const userBAddress = await ctx.userB.getAddress();
+  const currentCollateral = await pool.collateralBalance(userBAddress);
+  if (currentCollateral === 0n) return { collateral: "0" };
+  await (await pool.withdrawCollateral(currentCollateral)).wait();
+  return { collateral: "0" };
+}
+
 export async function readDemoStatus() {
   const health = await localHealth();
   if (!health.ready) return health;
@@ -449,6 +530,12 @@ export async function readDemoStatus() {
   const canonical = new ethers.Contract(cfg.chains.A.canonicalToken, artifacts.bankToken.abi, providerFor(cfg, "A"));
   const escrow = new ethers.Contract(cfg.chains.A.escrowVault, artifacts.escrow.abi, providerFor(cfg, "A"));
   const voucher = new ethers.Contract(cfg.chains.B.voucherToken, artifacts.voucher.abi, providerFor(cfg, "B"));
+  const debtToken = cfg.chains.B.debtToken
+    ? new ethers.Contract(cfg.chains.B.debtToken, artifacts.bankToken.abi, providerFor(cfg, "B"))
+    : null;
+  const lendingPool = cfg.chains.B.lendingPool
+    ? new ethers.Contract(cfg.chains.B.lendingPool, artifacts.lendingPool.abi, providerFor(cfg, "B"))
+    : null;
   const packetA = new ethers.Contract(cfg.chains.A.packetStore, artifacts.packetStore.abi, providerFor(cfg, "A"));
   const packetB = new ethers.Contract(cfg.chains.B.packetStore, artifacts.packetStore.abi, providerFor(cfg, "B"));
   const checkpointA = new ethers.Contract(
@@ -477,6 +564,10 @@ export async function readDemoStatus() {
     bankABalance,
     escrowTotal,
     voucherBalance,
+    bankBBalance,
+    poolCollateral,
+    poolDebt,
+    poolLiquidity,
     packetSequenceA,
     packetSequenceB,
     checkpointSequenceA,
@@ -495,6 +586,10 @@ export async function readDemoStatus() {
     canonical.balanceOf(userAAddress),
     escrow.totalEscrowed(),
     voucher.balanceOf(userBAddress),
+    debtToken ? debtToken.balanceOf(userBAddress) : 0n,
+    lendingPool ? lendingPool.collateralBalance(userBAddress) : 0n,
+    lendingPool ? lendingPool.debtBalance(userBAddress) : 0n,
+    debtToken && lendingPool ? debtToken.balanceOf(cfg.chains.B.lendingPool) : 0n,
     packetA.packetSequence(),
     packetB.packetSequence(),
     checkpointA.checkpointSequence(),
@@ -527,6 +622,10 @@ export async function readDemoStatus() {
       bankA: units(bankABalance),
       escrow: units(escrowTotal),
       voucher: units(voucherBalance),
+      bankB: units(bankBBalance),
+      poolCollateral: units(poolCollateral),
+      poolDebt: units(poolDebt),
+      poolLiquidity: units(poolLiquidity),
     },
     progress: {
       packetSequenceA: packetSequenceA.toString(),
@@ -610,6 +709,43 @@ export async function runDemoAction(action) {
       },
     });
     message = `Verified packet membership on Bank B and minted voucher ${short(proof.packetId)}.`;
+  } else if (action === "depositCollateral") {
+    const result = await depositVerifiedCollateral(ctx);
+    trace = await writeTracePatch({
+      lending: {
+        collateralDeposited: true,
+        collateral: result.collateral,
+      },
+    });
+    message = `Deposited verified voucher collateral into Bank B lending pool.`;
+  } else if (action === "borrow") {
+    const result = await borrowBankBLiquidity(ctx);
+    trace = await writeTracePatch({
+      lending: {
+        borrowed: true,
+        debt: result.debt,
+      },
+    });
+    message = `Borrowed ${units(BORROW_AMOUNT)} bCASH from Bank B against verified cross-chain collateral.`;
+  } else if (action === "repay") {
+    const result = await repayBankBLiquidity(ctx);
+    trace = await writeTracePatch({
+      lending: {
+        repaid: true,
+        debt: result.debt,
+      },
+    });
+    message = "Repaid Bank B lending debt.";
+  } else if (action === "withdrawCollateral") {
+    const result = await withdrawVerifiedCollateral(ctx);
+    trace = await writeTracePatch({
+      lending: {
+        collateralWithdrawn: true,
+        completed: true,
+        collateral: result.collateral,
+      },
+    });
+    message = "Withdrew voucher collateral so it can be burned for the reverse proof path.";
   } else if (action === "replayForward") {
     try {
       await relayPacket("A", "B", ACTION_LOCK_MINT, ctx);
@@ -624,6 +760,10 @@ export async function runDemoAction(action) {
     trace = await writeTracePatch({ security: { nonMembership: absence } });
     message = `Verified non-membership for future Bank A packet sequence #${absence.absentSequence}.`;
   } else if (action === "burn") {
+    const voucher = new ethers.Contract(cfg.chains.B.voucherToken, artifacts.voucher.abi, providerFor(cfg, "B"));
+    if ((await voucher.balanceOf(await userB.getAddress())) < TRANSFER_AMOUNT) {
+      throw new Error("Bank B user needs a free voucher balance before burn. Repay and withdraw lending collateral first.");
+    }
     const appB = new ethers.Contract(cfg.chains.B.transferApp, artifacts.app.abi, userB);
     await (await appB.burnAndRelease(cfg.chains.A.chainId, await userA.getAddress(), TRANSFER_AMOUNT)).wait();
     message = `Burned voucher on Bank B and wrote a reverse packet commitment.`;
@@ -678,6 +818,10 @@ export async function runDemoAction(action) {
       "checkpointForward",
       "updateForwardClient",
       "proveForwardMint",
+      "depositCollateral",
+      "borrow",
+      "repay",
+      "withdrawCollateral",
       "burn",
       "checkpointReverse",
       "updateReverseClient",
@@ -685,7 +829,7 @@ export async function runDemoAction(action) {
     ]) {
       await runDemoAction(step);
     }
-    message = "Completed the full lock/mint/burn/unescrow proof flow.";
+    message = "Completed the full proof-backed lending flow and reverse unescrow path.";
   } else {
     throw new Error(`Unknown demo action: ${action}`);
   }

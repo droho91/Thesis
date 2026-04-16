@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {BankToken} from "../../contracts/apps/BankToken.sol";
+import {CrossChainLendingPool} from "../../contracts/apps/CrossChainLendingPool.sol";
 import {EscrowVault} from "../../contracts/apps/EscrowVault.sol";
 import {MinimalTransferApp} from "../../contracts/apps/MinimalTransferApp.sol";
 import {VoucherToken} from "../../contracts/apps/VoucherToken.sol";
@@ -44,6 +45,8 @@ abstract contract IBCLocalSimulationBase is Test {
     BankToken internal canonicalA;
     EscrowVault internal escrowA;
     VoucherToken internal voucherB;
+    BankToken internal bankLiquidityB;
+    CrossChainLendingPool internal lendingPoolB;
     MinimalTransferApp internal appA;
     MinimalTransferApp internal appB;
 
@@ -89,6 +92,8 @@ abstract contract IBCLocalSimulationBase is Test {
         canonicalA = new BankToken("Bank A Deposit Token", "aBANK");
         escrowA = new EscrowVault(address(canonicalA));
         voucherB = new VoucherToken("Voucher for Bank A Deposit", "vA");
+        bankLiquidityB = new BankToken("Bank B Credit Token", "bCASH");
+        lendingPoolB = new CrossChainLendingPool(address(voucherB), address(bankLiquidityB), 5_000);
         appA = new MinimalTransferApp(CHAIN_A, address(packetsA), address(handlerA), address(escrowA), address(0));
         appB = new MinimalTransferApp(CHAIN_B, address(packetsB), address(handlerB), address(0), address(voucherB));
 
@@ -100,6 +105,7 @@ abstract contract IBCLocalSimulationBase is Test {
         appB.configureRemoteApp(CHAIN_A, address(appA));
 
         canonicalA.mint(user, 1_000 ether);
+        bankLiquidityB.mint(address(lendingPoolB), 10_000 ether);
         vm.prank(user);
         canonicalA.approve(address(escrowA), type(uint256).max);
     }

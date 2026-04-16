@@ -15,6 +15,19 @@
 11. The handler consumes the packet id.
 12. `MinimalTransferApp` mints `VoucherToken` to the recipient.
 
+## Lending Use Case After Proof
+
+The lending path is deliberately placed after packet proof execution.
+
+1. Bank B user receives `VoucherToken` only after Bank B verifies Bank A's packet commitment under a trusted consensus state.
+2. The user deposits the verified voucher into `CrossChainLendingPool`.
+3. Bank B lends local `bCASH` up to a fixed collateral factor.
+4. The user repays `bCASH`.
+5. The user withdraws the voucher.
+6. Only then can the voucher be burned to start the reverse cross-chain packet.
+
+This keeps the thesis story clear: the lending system is possible because the two bank chains can verify cross-chain state, not because a bridge router or relayer is trusted.
+
 ## Packet Absence
 
 `BankChainClient.verifyNonMembership` is available for packet commitment absence claims in the trusted snapshot.

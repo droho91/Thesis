@@ -17,6 +17,8 @@ import {
 const ACTION_LOCK_MINT = 1;
 const ACTION_BURN_UNLOCK = 2;
 const TRANSFER_AMOUNT = ethers.parseUnits(process.env.DEMO_AMOUNT || "100", 18);
+const BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW_AMOUNT || "50", 18);
+const POOL_LIQUIDITY = ethers.parseUnits(process.env.POOL_LIQUIDITY || "10000", 18);
 const UI_TRACE_PATH = resolve(process.cwd(), "demo", "latest-run.js");
 const UI_TRACE_JSON_PATH = resolve(process.cwd(), "demo", "latest-run.json");
 
@@ -25,6 +27,7 @@ async function loadArtifacts() {
     app: await loadArtifact("apps/MinimalTransferApp.sol", "MinimalTransferApp"),
     bankToken: await loadArtifact("apps/BankToken.sol", "BankToken"),
     voucher: await loadArtifact("apps/VoucherToken.sol", "VoucherToken"),
+    lendingPool: await loadArtifact("apps/CrossChainLendingPool.sol", "CrossChainLendingPool"),
     escrow: await loadArtifact("apps/EscrowVault.sol", "EscrowVault"),
     packetStore: await loadArtifact("source/SourcePacketCommitment.sol", "SourcePacketCommitment"),
     checkpointRegistry: await loadArtifact("source/SourceCheckpointRegistry.sol", "SourceCheckpointRegistry"),
@@ -60,14 +63,19 @@ function packetTuple({
   };
 }
 
-async function ensureSeed({ cfg, artifacts, ownerA, userA }) {
+async function ensureSeed({ cfg, artifacts, ownerA, ownerB, userA }) {
   const canonical = new ethers.Contract(cfg.chains.A.canonicalToken, artifacts.bankToken.abi, ownerA);
+  const debtToken = new ethers.Contract(cfg.chains.B.debtToken, artifacts.bankToken.abi, ownerB);
   const canonicalBalance = await canonical.balanceOf(await userA.getAddress());
 
   if (canonicalBalance < TRANSFER_AMOUNT) {
     const mintAmount = TRANSFER_AMOUNT * 5n;
     await (await canonical.mint(await userA.getAddress(), mintAmount)).wait();
     console.log(`[seed] minted ${ethers.formatUnits(mintAmount, 18)} aBANK to Bank A user`);
+  }
+  if ((await debtToken.balanceOf(cfg.chains.B.lendingPool)) < BORROW_AMOUNT) {
+    await (await debtToken.mint(cfg.chains.B.lendingPool, POOL_LIQUIDITY)).wait();
+    console.log(`[seed] funded Bank B lending pool with ${ethers.formatUnits(POOL_LIQUIDITY, 18)} bCASH`);
   }
 
   await (await canonical.connect(userA).approve(cfg.chains.A.escrowVault, ethers.MaxUint256)).wait();
@@ -139,14 +147,17 @@ async function main() {
   const cfg = await loadConfig();
   const artifacts = await loadArtifacts();
   const ownerA = await signerFor(cfg, "A", 0);
+  const ownerB = await signerFor(cfg, "B", 0);
   const userA = await signerFor(cfg, "A", Number(process.env.USER_INDEX || 1));
   const userB = await signerFor(cfg, "B", Number(process.env.USER_INDEX || 1));
 
-  await ensureSeed({ cfg, artifacts, ownerA, userA });
+  await ensureSeed({ cfg, artifacts, ownerA, ownerB, userA });
 
   const appA = new ethers.Contract(cfg.chains.A.transferApp, artifacts.app.abi, userA);
   const appB = new ethers.Contract(cfg.chains.B.transferApp, artifacts.app.abi, userB);
   const voucher = new ethers.Contract(cfg.chains.B.voucherToken, artifacts.voucher.abi, userB);
+  const debtToken = new ethers.Contract(cfg.chains.B.debtToken, artifacts.bankToken.abi, userB);
+  const lendingPool = new ethers.Contract(cfg.chains.B.lendingPool, artifacts.lendingPool.abi, userB);
   const escrow = new ethers.Contract(cfg.chains.A.escrowVault, artifacts.escrow.abi, ownerA);
 
   console.log("\n=== Forward path: Bank A escrow -> Bank B voucher ===");
@@ -168,6 +179,16 @@ async function main() {
   const consensusA = await updateRemoteClient("A", "B", checkpointA, cfg, artifacts);
   const lockProof = await relayPacket("A", "B", forwardPacket, checkpointA, consensusA, cfg, artifacts);
   console.log(`[B] voucher balance=${ethers.formatUnits(await voucher.balanceOf(await userB.getAddress()), 18)} vA`);
+
+  console.log("\n=== Lending use case: verified voucher -> Bank B credit ===");
+  await (await voucher.approve(await lendingPool.getAddress(), TRANSFER_AMOUNT)).wait();
+  await (await lendingPool.depositCollateral(TRANSFER_AMOUNT)).wait();
+  await (await lendingPool.borrow(BORROW_AMOUNT)).wait();
+  console.log(`[B] borrowed=${ethers.formatUnits(BORROW_AMOUNT, 18)} bCASH against proven cross-chain voucher`);
+  await (await debtToken.approve(await lendingPool.getAddress(), BORROW_AMOUNT)).wait();
+  await (await lendingPool.repay(BORROW_AMOUNT)).wait();
+  await (await lendingPool.withdrawCollateral(TRANSFER_AMOUNT)).wait();
+  console.log(`[B] loan repaid; voucher collateral withdrawn for reverse burn path`);
 
   console.log("\n=== Reverse path: Bank B burn -> Bank A unescrow ===");
   await (await appB.burnAndRelease(cfg.chains.A.chainId, await userA.getAddress(), TRANSFER_AMOUNT)).wait();
@@ -194,6 +215,13 @@ async function main() {
     amount: ethers.formatUnits(TRANSFER_AMOUNT, 18),
     userA: await userA.getAddress(),
     userB: await userB.getAddress(),
+    lending: {
+      collateralAmount: ethers.formatUnits(TRANSFER_AMOUNT, 18),
+      borrowedAmount: ethers.formatUnits(BORROW_AMOUNT, 18),
+      debtToken: cfg.chains.B.debtToken,
+      lendingPool: cfg.chains.B.lendingPool,
+      completed: true,
+    },
     forward: {
       packetId: lockProof.packetId,
       packetRoot: lockProof.packetRoot,
