@@ -8,6 +8,7 @@ The thesis contribution is the linkage layer:
 - source-certified checkpoint artifacts
 - remote client state progression
 - packet membership verification against trusted remote state
+- packet non-membership verification for absent packet commitments in the trusted snapshot
 - one-time packet execution
 - freeze and explicit recovery on conflicting certified updates
 
@@ -65,7 +66,7 @@ The UI has direct operation buttons instead of a passive diagram:
 - `Deploy + Seed`: deploy the two-chain IBC-lite stack and seed demo balances.
 - Lock/mint path: `Lock aBANK`, `Commit A Checkpoint`, `Update B Client`, `Prove + Mint Voucher`.
 - Burn/unlock path: `Burn Voucher`, `Commit B Checkpoint`, `Update A Client`, `Prove + Unlock aBANK`.
-- Safety path: `Submit Conflict`, `Recover Client`.
+- Safety path: `Submit Conflict`, `Recover Client`, `Replay Forward`, `Check Non-Membership`.
 - `Run Full Flow`: execute the whole sequence from escrow to unescrow.
 
 The contract-backed flow writes the latest proof trace to `demo/latest-run.js` and `demo/latest-run.json` so the UI can display the real packet ids and hashes.
@@ -127,8 +128,10 @@ The Solidity tests cover:
 - valid and invalid client updates
 - duplicate update rejection
 - validator epoch rotation through source-certified artifacts
+- delayed checkpoint relay across validator epoch boundaries
 - misbehaviour freeze and explicit recovery
 - valid and invalid membership proofs
+- valid and invalid non-membership proofs
 - replay rejection
 - trusted remote state as a precondition for packet execution
 - escrow -> voucher mint
@@ -146,4 +149,4 @@ The Solidity tests cover:
 
 ## Local Simulation Boundaries
 
-The model uses local ECDSA validator signatures over source checkpoint hashes, local EVM block anchors, and source-chain registries as the finalized artifact source. It does not implement production header verification, slashing, validator operations, governance hardening, or non-membership proofs.
+The model uses local ECDSA validator signatures over source checkpoint hashes, local EVM block anchors, and source-chain registries as the finalized artifact source. It implements packet non-membership for this local packet commitment snapshot, but it does not implement production header verification, slashing, validator operations, governance hardening, or a full IBC state-store proof system.

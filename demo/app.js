@@ -4,7 +4,7 @@ const deploySeedButton = document.getElementById("deploySeed");
 const refreshButton = document.getElementById("refreshState");
 const deploymentStatus = document.getElementById("deploymentStatus");
 
-const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Expired", "Recovering"];
+const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Recovering"];
 
 function setText(id, value) {
   const node = document.getElementById(id);
@@ -77,6 +77,7 @@ function renderRoadmap(status) {
   const reverseTrusted = positive(progress.trustedBOnA);
   const unlocked = Boolean(trace.reverse?.packetId);
   const frozen = Number(progress.statusAOnB) === 2;
+  const recovering = Number(progress.statusAOnB) === 3;
   const recovered = Boolean(trace.misbehaviour?.recovered);
 
   setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? "packet written" : "ready");
@@ -88,7 +89,11 @@ function renderRoadmap(status) {
     unlocked ? "done" : reverseTrusted || reverseWritten ? "active" : "",
     unlocked ? "unescrowed" : reverseTrusted ? "trusted" : reverseWritten ? "packet written" : "waiting"
   );
-  setRoute("routeSafety", frozen ? "active" : recovered ? "done" : "", frozen ? "frozen" : recovered ? "recovered" : "available");
+  setRoute(
+    "routeSafety",
+    frozen || recovering ? "active" : recovered ? "done" : "",
+    frozen ? "frozen" : recovering ? "recovering" : recovered ? "recovered" : "available"
+  );
 }
 
 function renderStatus(status) {
@@ -113,15 +118,40 @@ function renderStatus(status) {
   const forward = status.trace?.forward || {};
   const reverse = status.trace?.reverse || {};
   const misbehaviour = status.trace?.misbehaviour || {};
-  setText("replayState", forward.packetId || reverse.packetId ? "consumed" : "pending");
+  const trustedA = status.trust?.aOnB || {};
+  const security = status.security || {};
+  const safetyState = security.frozen
+    ? "Frozen"
+    : security.recovering
+      ? "Recovering"
+      : `${statusName(status.progress.statusAOnB)} / ${statusName(status.progress.statusBOnA)}`;
+
   setText("packetSequenceA", status.progress.packetSequenceA);
   setText("checkpointSequenceA", status.progress.checkpointSequenceA);
   setText("trustedAOnB", status.progress.trustedAOnB);
+  setText("trustedEpochAOnB", trustedA.validatorEpochId || status.progress.activeEpochAOnB);
+  setText("trustedPacketRootA", compact(trustedA.packetRoot));
+  setText("trustedConsensusAOnB", compact(trustedA.consensusHash));
+  setText(
+    "trustedSourceBlockAOnB",
+    trustedA.sourceBlockNumber ? `${trustedA.sourceBlockNumber} / ${compact(trustedA.sourceBlockHash)}` : "-"
+  );
+  setText("trustedPacketRangeA", trustedA.packetRange || "-");
   setText("packetSequenceB", status.progress.packetSequenceB);
   setText("checkpointSequenceB", status.progress.checkpointSequenceB);
   setText("trustedBOnA", status.progress.trustedBOnA);
+  setText("forwardConsumedState", security.forwardConsumed ? "yes" : "no");
+  setText("replayBlockedState", security.replayBlocked ? "blocked" : "pending");
+  setText(
+    "nonMembershipState",
+    security.nonMembership
+      ? `seq ${security.nonMembership.absentSequence}`
+      : security.nonMembershipImplemented
+        ? "ready"
+        : "-"
+  );
+  setText("safetyState", safetyState);
   setText("forwardPacketId", compact(forward.packetId));
-  setText("forwardRoot", compact(forward.packetRoot));
   setText("reversePacketId", compact(reverse.packetId));
   setText(
     "misbehaviourState",

@@ -6,6 +6,7 @@ import {IBCClient} from "../core/IBCClient.sol";
 import {IBCClientStore} from "../core/IBCClientStore.sol";
 import {IBCClientTypes} from "../core/IBCClientTypes.sol";
 import {IBCMisbehaviour} from "../core/IBCMisbehaviour.sol";
+import {IBCPathLib} from "../core/IBCPathLib.sol";
 import {BankChainClientMessage} from "./BankChainClientMessage.sol";
 import {BankChainClientState} from "./BankChainClientState.sol";
 import {BankChainClientVerifier} from "./BankChainClientVerifier.sol";
@@ -171,11 +172,7 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
 
         BankChainClientState.ValidatorEpoch storage epoch =
             validatorEpochs[checkpoint.sourceChainId][checkpoint.validatorEpochId];
-        require(epoch.active, "VALIDATOR_EPOCH_INACTIVE");
-        require(
-            activeValidatorEpochId[checkpoint.sourceChainId] == checkpoint.validatorEpochId,
-            "VALIDATOR_EPOCH_NOT_CURRENT"
-        );
+        require(epoch.epochHash != bytes32(0), "VALIDATOR_EPOCH_UNKNOWN");
         require(epoch.epochHash == checkpoint.validatorEpochHash, "VALIDATOR_EPOCH_HASH_MISMATCH");
         require(epoch.sourceValidatorSetRegistry == checkpoint.sourceValidatorSetRegistry, "VALIDATOR_REGISTRY_MISMATCH");
 
@@ -274,12 +271,43 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
     }
 
     function verifyNonMembership(
-        uint256,
-        bytes32,
-        bytes32,
-        bytes calldata
-    ) external pure override returns (bool) {
-        return false;
+        uint256 sourceChainId,
+        bytes32 consensusStateHash,
+        bytes32 path,
+        bytes calldata proof
+    ) external view override returns (bool) {
+        if (clientStatuses[sourceChainId] != IBCClientTypes.Status.Active) return false;
+        BankChainConsensusState.ConsensusState storage consensus =
+            consensusStates[sourceChainId][consensusStateHash];
+        if (!consensus.exists) return false;
+
+        IBCClientTypes.NonMembershipProof memory absence =
+            abi.decode(proof, (IBCClientTypes.NonMembershipProof));
+        if (absence.sequence == 0 || absence.sourcePort == address(0) || absence.absentLeaf == bytes32(0)) {
+            return false;
+        }
+        if (
+            path
+                != IBCPathLib.packetAbsencePath(
+                    sourceChainId,
+                    absence.sourcePort,
+                    absence.sequence,
+                    absence.absentLeaf
+                )
+        ) {
+            return false;
+        }
+
+        if (absence.sequence > consensus.lastPacketSequence) {
+            return absence.witnessedLeaf == bytes32(0) && absence.siblings.length == 0;
+        }
+        if (absence.sequence < consensus.firstPacketSequence) return false;
+
+        uint256 leafIndex = absence.sequence - consensus.firstPacketSequence;
+        if (absence.witnessedLeaf == bytes32(0) || absence.witnessedLeaf == absence.absentLeaf) {
+            return false;
+        }
+        return MerkleLib.verify(consensus.packetRoot, absence.witnessedLeaf, leafIndex, absence.siblings);
     }
 
     function isConsensusStateVerified(uint256 sourceChainId, bytes32 consensusStateHash)
@@ -471,6 +499,16 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
                     "SOURCE_BLOCK_HASH_MISMATCH"
                 );
             }
+
+            BankChainConsensusState.ConsensusState storage previousConsensus =
+                consensusStates[checkpoint.sourceChainId][latestConsensusStateHash[checkpoint.sourceChainId]];
+            require(checkpoint.timestamp >= previousConsensus.timestamp, "TIMESTAMP_REGRESSION");
+        }
+
+        BankChainClientState.ValidatorEpoch storage successor =
+            validatorEpochs[checkpoint.sourceChainId][epoch.epochId + 1];
+        if (successor.epochHash != bytes32(0)) {
+            require(checkpoint.sourceBlockNumber < successor.activationBlockNumber, "CHECKPOINT_AFTER_EPOCH_SUPERSEDED");
         }
     }
 

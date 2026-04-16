@@ -27,34 +27,34 @@
 
       <section class="balances" aria-label="Live state">
         <article class="metric metric-source">
-          <span>Bank A user aBANK</span>
-          <strong id="bankABalance">-</strong>
-          <small>canonical source asset</small>
-        </article>
-        <article class="metric metric-escrow">
-          <span>Bank A escrow</span>
-          <strong id="escrowBalance">-</strong>
-          <small>locked by source app</small>
-        </article>
-        <article class="metric metric-voucher">
-          <span>Bank B voucher</span>
-          <strong id="voucherBalance">-</strong>
-          <small>minted after proof</small>
+          <span>Bank A packet state</span>
+          <strong id="packetSequenceA">-</strong>
+          <small>canonical source commitments</small>
         </article>
         <article class="metric metric-client">
-          <span>B client for A</span>
-          <strong id="statusAOnB">-</strong>
-          <small>remote trust anchor</small>
+          <span>B trusts A epoch</span>
+          <strong id="trustedEpochAOnB">-</strong>
+          <small>validator set anchor</small>
         </article>
         <article class="metric metric-client">
-          <span>A client for B</span>
-          <strong id="statusBOnA">-</strong>
-          <small>reverse trust anchor</small>
+          <span>B trusts A checkpoint</span>
+          <strong id="trustedAOnB">-</strong>
+          <small>consensus state sequence</small>
+        </article>
+        <article class="metric metric-client">
+          <span>A packet root on B</span>
+          <strong id="trustedPacketRootA">-</strong>
+          <small>proof root in trusted state</small>
         </article>
         <article class="metric metric-proof">
-          <span>Replay gate</span>
-          <strong id="replayState">-</strong>
+          <span>Forward consumed</span>
+          <strong id="forwardConsumedState">-</strong>
           <small>consumed packet ids</small>
+        </article>
+        <article class="metric metric-safety">
+          <span>Client safety</span>
+          <strong id="safetyState">-</strong>
+          <small>active, frozen, recovering</small>
         </article>
       </section>
 
@@ -133,10 +133,12 @@
           <div class="action-group" data-phase="03">
             <div>
               <h3>Safety path: misbehaviour and recovery</h3>
-              <p>A conflicting certified update freezes the client; recovery requires an explicit successor epoch.</p>
+              <p>A conflicting certified update freezes the client; replay and absence checks are explicit.</p>
             </div>
             <button class="button-danger" data-action="freezeClient" type="button">Submit Conflict</button>
             <button class="button-run" data-action="recoverClient" type="button">Recover Client</button>
+            <button class="button-danger" data-action="replayForward" type="button">Replay Forward</button>
+            <button class="button-secondary" data-action="checkNonMembership" type="button">Check Non-Membership</button>
           </div>
         </section>
 
@@ -148,24 +150,52 @@
 
           <dl class="receipt-list">
             <div>
-              <dt>A packets written</dt>
-              <dd id="packetSequenceA">-</dd>
+              <dt>Bank A user balance</dt>
+              <dd id="bankABalance">-</dd>
+            </div>
+            <div>
+              <dt>Bank A escrow</dt>
+              <dd id="escrowBalance">-</dd>
+            </div>
+            <div>
+              <dt>Bank B voucher</dt>
+              <dd id="voucherBalance">-</dd>
             </div>
             <div>
               <dt>A checkpoints</dt>
               <dd id="checkpointSequenceA">-</dd>
             </div>
             <div>
-              <dt>B trusts A through checkpoint</dt>
-              <dd id="trustedAOnB">-</dd>
+              <dt>B client for A status</dt>
+              <dd id="statusAOnB">-</dd>
+            </div>
+            <div>
+              <dt>A client for B status</dt>
+              <dd id="statusBOnA">-</dd>
+            </div>
+            <div>
+              <dt>B trusted A consensus hash</dt>
+              <dd id="trustedConsensusAOnB">-</dd>
+            </div>
+            <div>
+              <dt>B trusted A source block</dt>
+              <dd id="trustedSourceBlockAOnB">-</dd>
+            </div>
+            <div>
+              <dt>B trusted A packet range</dt>
+              <dd id="trustedPacketRangeA">-</dd>
             </div>
             <div>
               <dt>Forward packet id</dt>
               <dd id="forwardPacketId">-</dd>
             </div>
             <div>
-              <dt>Forward proof root</dt>
-              <dd id="forwardRoot">-</dd>
+              <dt>Replay blocked</dt>
+              <dd id="replayBlockedState">-</dd>
+            </div>
+            <div>
+              <dt>Non-membership proof</dt>
+              <dd id="nonMembershipState">-</dd>
             </div>
             <div>
               <dt>B packets written</dt>

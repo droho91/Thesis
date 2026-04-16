@@ -20,6 +20,7 @@ Relayers are untrusted. They can transport:
 - source checkpoints
 - validator signatures
 - packet Merkle proofs
+- packet non-membership proofs
 
 They cannot:
 
@@ -27,6 +28,7 @@ They cannot:
 - create trusted packet state without source validator signatures
 - bypass client freeze
 - bypass membership proof verification
+- bypass non-membership proof verification
 - replay consumed packets
 
 ## Source Artifacts
@@ -40,4 +42,4 @@ The source chain is authoritative for packet commitments and checkpoint progress
 - public light-client fraud proofs
 - production governance
 - cross-chain fee markets
-- non-membership proofs
+- generalized IBC state-store non-membership proofs

@@ -28,4 +28,13 @@ abstract contract IBCProofVerifier {
             proof.siblings
         );
     }
+
+    function _verifyPacketNonMembership(
+        uint256 sourceChainId,
+        bytes32 consensusStateHash,
+        bytes32 path,
+        bytes calldata proof
+    ) internal view returns (bool) {
+        return ibcClient.verifyNonMembership(sourceChainId, consensusStateHash, path, proof);
+    }
 }

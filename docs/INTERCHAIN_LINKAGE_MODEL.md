@@ -63,14 +63,17 @@ The relayer transports the artifact. It does not define the artifact.
 `BankChainClient.updateState` accepts a `ClientMessage` only when:
 
 - the client is active
-- the checkpoint names the currently trusted source validator epoch
+- the checkpoint names a known trusted source validator epoch
 - the source commitment hash recomputes correctly
 - signatures cover at least two thirds of trusted validator voting power
 - checkpoint sequence and parent linkage are correct
 - packet ranges are contiguous
 - source block anchors do not regress
+- if the epoch has a known successor, the checkpoint source block must be before the successor activation anchor
 
 Validator rotation is also source-certified. A successor epoch must parent-link to the current trusted epoch and be signed by the current trusted validator set.
+
+Historical epochs remain usable for delayed relay of checkpoints that were finalized before the successor activation anchor. They cannot sign new post-rotation checkpoints.
 
 ## Packet Execution
 
@@ -84,6 +87,8 @@ The packet execution path is:
 6. destination app executes
 
 Invalid proofs fail before application logic runs.
+
+`verifyNonMembership` is implemented for local packet commitment absence. It can verify that a future sequence is not present in the trusted checkpoint snapshot, or that a different packet leaf occupies the claimed sequence.
 
 ## Misbehaviour
 

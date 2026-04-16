@@ -291,6 +291,10 @@ dt {
   --metric-color: var(--coral);
 }
 
+.metric-safety {
+  --metric-color: var(--graphite);
+}
+
 .protocol-roadmap {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));

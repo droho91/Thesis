@@ -16,4 +16,12 @@ library IBCClientTypes {
         uint256 leafIndex;
         bytes32[] siblings;
     }
+
+    struct NonMembershipProof {
+        uint256 sequence;
+        address sourcePort;
+        bytes32 absentLeaf;
+        bytes32 witnessedLeaf;
+        bytes32[] siblings;
+    }
 }

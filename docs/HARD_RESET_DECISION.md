@@ -11,7 +11,7 @@ This repository continues from Thesis(7), but it no longer preserves the old pro
 - Replay protection through packet consumption and app-level packet maps.
 - Freeze and recovery groundwork in the bank-chain client.
 - Minimal lock/mint and burn/unescrow transfer app.
-- Tests that validate client updates, checkpoint progression, membership proofs, replay rejection, misbehaviour, and recovery.
+- Tests that validate client updates, checkpoint progression, membership and non-membership proofs, replay rejection, misbehaviour, historical epoch relay, and recovery.
 
 ## Declared Disposable
 
@@ -53,6 +53,7 @@ The trust anchor is `BankChainClient`. Packet execution is valid only after:
 - Local deterministic ECDSA accounts represent permissioned bank validators.
 - Source block anchors are local EVM block references, not full production header verification.
 - Source checkpoints are created by local registry transactions.
-- Non-membership verification remains staged through the interface and currently returns `false`.
+- Non-membership verification is implemented for the local packet commitment snapshot: a proof can show that a future packet sequence is outside the trusted packet range, or that a different packet leaf occupies the claimed sequence.
 - Recovery is role-gated and demonstrated with a successor validator epoch in the local model.
+- The trusted root is still a source-certified packet/checkpoint artifact, not a production IBC state-store root backed by full header verification.
 - The demo is zero-cost and uses only local chains, local scripts, and local browser UI.

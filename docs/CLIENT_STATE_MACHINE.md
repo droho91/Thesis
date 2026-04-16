@@ -14,6 +14,7 @@
 - client accepts valid source-certified validator epoch updates
 - client accepts valid source-certified checkpoint updates
 - packet membership verification can succeed
+- packet non-membership verification can succeed for absence claims bound to trusted packet state
 
 `Frozen`:
 
@@ -30,7 +31,18 @@
 
 ## Client Messages
 
-The implemented `ClientMessage` carries a source checkpoint. It is accepted only if it is signed by the currently trusted source validator epoch.
+The implemented `ClientMessage` carries a source checkpoint. It is accepted only if it is signed by a known trusted source validator epoch.
+
+The active epoch remains the head of the validator-set chain. Historical epochs remain usable for delayed checkpoint relay when the checkpoint source block is before the successor epoch activation anchor. A checkpoint signed by a superseded epoch after the successor activation is rejected.
+
+## Membership And Non-Membership
+
+`verifyMembership` proves that a packet leaf exists in the trusted packet root.
+
+`verifyNonMembership` proves packet absence in the local snapshot in two cases:
+
+- the claimed packet sequence is greater than the trusted checkpoint's last packet sequence
+- the claimed sequence is inside the trusted range, but a different packet leaf is proven at that index
 
 ## Misbehaviour Evidence
 

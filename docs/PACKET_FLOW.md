@@ -15,6 +15,17 @@
 11. The handler consumes the packet id.
 12. `MinimalTransferApp` mints `VoucherToken` to the recipient.
 
+## Packet Absence
+
+`BankChainClient.verifyNonMembership` is available for packet commitment absence claims in the trusted snapshot.
+
+The local proof supports two cases:
+
+- a future sequence greater than the trusted checkpoint's last packet sequence
+- a claimed packet body that is absent because another packet leaf occupies the same sequence
+
+This is useful for demonstrating timeout-like and missing-commitment reasoning, while still remaining a local packet-root model rather than a full IBC state-store proof.
+
 ## Burn And Unescrow
 
 1. A user calls `MinimalTransferApp.burnAndRelease` on Bank B.

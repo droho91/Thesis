@@ -15,6 +15,11 @@ import {
 
 const ACTION_LOCK_MINT = 1;
 const ACTION_BURN_UNLOCK = 2;
+const PACKET_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.Packet.v1"));
+const PACKET_LEAF_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.PacketLeaf.v1"));
+const PACKET_ABSENCE_PATH_TYPEHASH = ethers.keccak256(
+  ethers.toUtf8Bytes("IBCLite.PacketCommitmentAbsencePath.v1")
+);
 const TRANSFER_AMOUNT = ethers.parseUnits(process.env.DEMO_AMOUNT || "100", 18);
 const TRACE_JSON_PATH = resolve(process.cwd(), "demo", "latest-run.json");
 const TRACE_JS_PATH = resolve(process.cwd(), "demo", "latest-run.js");
@@ -115,6 +120,26 @@ function short(value) {
   return `${value.slice(0, 10)}...${value.slice(-6)}`;
 }
 
+function zeroHash(value) {
+  return !value || value === ethers.ZeroHash;
+}
+
+async function consensusSummary(client, sourceChainId, consensusHash) {
+  if (zeroHash(consensusHash)) return null;
+  const state = await client.consensusState(sourceChainId, consensusHash);
+  return {
+    consensusHash,
+    validatorEpochId: state.validatorEpochId.toString(),
+    validatorEpochHash: state.validatorEpochHash,
+    checkpointSequence: state.sequence.toString(),
+    packetRoot: state.packetRoot,
+    packetRange: `${state.firstPacketSequence.toString()}-${state.lastPacketSequence.toString()}`,
+    packetCount: state.packetCount.toString(),
+    sourceBlockNumber: state.sourceBlockNumber.toString(),
+    sourceBlockHash: state.sourceBlockHash,
+  };
+}
+
 function packetTuple({
   sequence,
   sourceChainId,
@@ -140,6 +165,56 @@ function packetTuple({
     action,
     memo: ethers.ZeroHash,
   };
+}
+
+function packetId(packet) {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      [
+        "bytes32",
+        "uint256",
+        "uint256",
+        "uint256",
+        "address",
+        "address",
+        "address",
+        "address",
+        "address",
+        "uint256",
+        "uint8",
+        "bytes32",
+      ],
+      [
+        PACKET_TYPEHASH,
+        packet.sequence,
+        packet.sourceChainId,
+        packet.destinationChainId,
+        packet.sourcePort,
+        packet.destinationPort,
+        packet.sender,
+        packet.recipient,
+        packet.asset,
+        packet.amount,
+        packet.action,
+        packet.memo,
+      ]
+    )
+  );
+}
+
+function packetLeaf(packet) {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(["bytes32", "bytes32"], [PACKET_LEAF_TYPEHASH, packetId(packet)])
+  );
+}
+
+function packetAbsencePath(sourceChainId, sourcePort, sequence, absentLeaf) {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bytes32", "uint256", "address", "uint256", "bytes32"],
+      [PACKET_ABSENCE_PATH_TYPEHASH, sourceChainId, sourcePort, sequence, absentLeaf]
+    )
+  );
 }
 
 function validatorEpochObject(epoch) {
@@ -281,11 +356,42 @@ async function relayPacket(sourceKey, destinationKey, action, ctx) {
   const leafIndex = Number(packet.sequence - checkpoint.firstPacketSequence);
   const packetId = await packetStore.packetIdAt(packet.sequence);
 
-  if (!(await handler.consumedPackets(packetId))) {
-    await (await handler.recvPacket(packet, [consensusHash, leafIndex, buildMerkleProof(leaves, leafIndex)])).wait();
-  }
+  await (await handler.recvPacket(packet, [consensusHash, leafIndex, buildMerkleProof(leaves, leafIndex)])).wait();
 
   return { packetId, leafIndex, checkpoint, packetRoot: root, consensusHash };
+}
+
+function isReplayRejection(error) {
+  const text = [error?.shortMessage, error?.reason, error?.message].filter(Boolean).join("\n");
+  return text.includes("PACKET_ALREADY_CONSUMED");
+}
+
+async function verifyForwardNonMembership(ctx) {
+  const { cfg, artifacts } = ctx;
+  const checkpoint = await latestCheckpoint("A", ctx);
+  const client = new ethers.Contract(cfg.chains.B.client, artifacts.client.abi, providerFor(cfg, "B"));
+  const consensusHash = await client.consensusStateHashBySequence(cfg.chains.A.chainId, checkpoint.sequence);
+  if (consensusHash === ethers.ZeroHash) {
+    throw new Error("[B] Bank B client has not trusted the Bank A checkpoint yet.");
+  }
+
+  const absentSequence = checkpoint.lastPacketSequence + 1n;
+  const absentPacket = await packetFor("A", "B", ACTION_LOCK_MINT, ctx, absentSequence);
+  const absentLeaf = packetLeaf(absentPacket);
+  const path = packetAbsencePath(cfg.chains.A.chainId, cfg.chains.A.transferApp, absentSequence, absentLeaf);
+  const proof = ethers.AbiCoder.defaultAbiCoder().encode(
+    ["tuple(uint256 sequence,address sourcePort,bytes32 absentLeaf,bytes32 witnessedLeaf,bytes32[] siblings)"],
+    [[absentSequence, cfg.chains.A.transferApp, absentLeaf, ethers.ZeroHash, []]]
+  );
+  const verified = await client.verifyNonMembership(cfg.chains.A.chainId, consensusHash, path, proof);
+  if (!verified) throw new Error("Bank B client rejected the non-membership proof.");
+
+  return {
+    consensusHash,
+    absentSequence: absentSequence.toString(),
+    absentLeaf,
+    path,
+  };
 }
 
 async function writeTracePatch(patch) {
@@ -363,6 +469,15 @@ export async function readDemoStatus() {
   );
   const clientA = new ethers.Contract(cfg.chains.A.client, artifacts.client.abi, providerFor(cfg, "A"));
   const clientB = new ethers.Contract(cfg.chains.B.client, artifacts.client.abi, providerFor(cfg, "B"));
+  const handlerA = new ethers.Contract(cfg.chains.A.packetHandler, artifacts.handler.abi, providerFor(cfg, "A"));
+  const handlerB = new ethers.Contract(cfg.chains.B.packetHandler, artifacts.handler.abi, providerFor(cfg, "B"));
+
+  let trace = null;
+  try {
+    trace = JSON.parse(await readFile(TRACE_JSON_PATH, "utf8"));
+  } catch {
+    trace = null;
+  }
 
   const [
     bankABalance,
@@ -376,6 +491,12 @@ export async function readDemoStatus() {
     trustedBOnA,
     statusAOnB,
     statusBOnA,
+    activeEpochAOnB,
+    activeEpochBOnA,
+    consensusHashAOnB,
+    consensusHashBOnA,
+    sourceBlockAOnB,
+    sourceBlockBOnA,
   ] = await Promise.all([
     canonical.balanceOf(userAAddress),
     escrow.totalEscrowed(),
@@ -388,14 +509,20 @@ export async function readDemoStatus() {
     clientA.latestConsensusStateSequence(cfg.chains.B.chainId),
     clientB.status(cfg.chains.A.chainId),
     clientA.status(cfg.chains.B.chainId),
+    clientB.activeValidatorEpochId(cfg.chains.A.chainId),
+    clientA.activeValidatorEpochId(cfg.chains.B.chainId),
+    clientB.latestConsensusStateHash(cfg.chains.A.chainId),
+    clientA.latestConsensusStateHash(cfg.chains.B.chainId),
+    clientB.latestSourceBlockNumber(cfg.chains.A.chainId),
+    clientA.latestSourceBlockNumber(cfg.chains.B.chainId),
   ]);
 
-  let trace = null;
-  try {
-    trace = JSON.parse(await readFile(TRACE_JSON_PATH, "utf8"));
-  } catch {
-    trace = null;
-  }
+  const [trustedAOnBSummary, trustedBOnASummary, forwardConsumed, reverseConsumed] = await Promise.all([
+    consensusSummary(clientB, cfg.chains.A.chainId, consensusHashAOnB),
+    consensusSummary(clientA, cfg.chains.B.chainId, consensusHashBOnA),
+    trace?.forward?.packetId ? handlerB.consumedPackets(trace.forward.packetId) : false,
+    trace?.reverse?.packetId ? handlerA.consumedPackets(trace.reverse.packetId) : false,
+  ]);
 
   return {
     deployed: true,
@@ -416,6 +543,25 @@ export async function readDemoStatus() {
       trustedBOnA: trustedBOnA.toString(),
       statusAOnB: Number(statusAOnB),
       statusBOnA: Number(statusBOnA),
+      activeEpochAOnB: activeEpochAOnB.toString(),
+      activeEpochBOnA: activeEpochBOnA.toString(),
+      consensusHashAOnB,
+      consensusHashBOnA,
+      sourceBlockAOnB: sourceBlockAOnB.toString(),
+      sourceBlockBOnA: sourceBlockBOnA.toString(),
+    },
+    trust: {
+      aOnB: trustedAOnBSummary,
+      bOnA: trustedBOnASummary,
+    },
+    security: {
+      forwardConsumed,
+      reverseConsumed,
+      replayBlocked: Boolean(forwardConsumed || trace?.security?.replayBlocked),
+      nonMembershipImplemented: true,
+      nonMembership: trace?.security?.nonMembership || null,
+      frozen: Number(statusAOnB) === 2 || Number(statusBOnA) === 2,
+      recovering: Number(statusAOnB) === 3 || Number(statusBOnA) === 3,
     },
     trace,
   };
@@ -467,6 +613,19 @@ export async function runDemoAction(action) {
       },
     });
     message = `Verified packet membership on Bank B and minted voucher ${short(proof.packetId)}.`;
+  } else if (action === "replayForward") {
+    try {
+      await relayPacket("A", "B", ACTION_LOCK_MINT, ctx);
+      throw new Error("Replay was unexpectedly accepted by the packet handler.");
+    } catch (error) {
+      if (!isReplayRejection(error)) throw error;
+    }
+    trace = await writeTracePatch({ security: { replayBlocked: true, replayCheckedAt: new Date().toISOString() } });
+    message = "Replay attempt rejected by consumed packet state.";
+  } else if (action === "checkNonMembership") {
+    const absence = await verifyForwardNonMembership(ctx);
+    trace = await writeTracePatch({ security: { nonMembership: absence } });
+    message = `Verified non-membership for future Bank A packet sequence #${absence.absentSequence}.`;
   } else if (action === "burn") {
     const appB = new ethers.Contract(cfg.chains.B.transferApp, artifacts.app.abi, userB);
     await (await appB.burnAndRelease(cfg.chains.A.chainId, await userA.getAddress(), TRANSFER_AMOUNT)).wait();

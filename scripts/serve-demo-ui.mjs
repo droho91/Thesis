@@ -87,33 +87,24 @@ async function deployAndSeed() {
   return `${deploy}\n${seed}`;
 }
 
-async function runFlowWithRecovery() {
+async function runFlowStrict() {
   let output = "";
 
   if (!(await hasDeploymentConfig())) {
-    output += "[controller] No .ibc-lite.local.json found. Deploying and seeding first.\n";
-    output += await deployAndSeed();
-    output += "\n";
+    return {
+      ok: false,
+      output: "[controller] No .ibc-lite.local.json found. Press Deploy + Seed before running the flow.\n",
+      error: "No local deployment config.",
+    };
   }
 
   try {
     output += await runCommand(npm, ["run", "demo:flow"]);
     return { ok: true, output };
-  } catch (firstError) {
-    output += "\n[controller] First flow attempt failed.\n";
-    output += `${firstError.message}\n`;
-    output += "\n[controller] Redeploying a fresh local IBC-lite stack, seeding balances, and retrying once.\n";
-
-    try {
-      output += await deployAndSeed();
-      output += "\n";
-      output += await runCommand(npm, ["run", "demo:flow"]);
-      return { ok: true, output, recovered: true };
-    } catch (secondError) {
-      output += "\n[controller] Retry failed.\n";
-      output += secondError.message;
-      return { ok: false, output, error: "Contract flow failed after automatic redeploy + seed retry." };
-    }
+  } catch (error) {
+    output += "\n[controller] Flow failed. No automatic redeploy or retry was performed.\n";
+    output += error.message;
+    return { ok: false, output, error: "Contract flow failed. Inspect the failed path, then redeploy/seed manually if needed." };
   }
 }
 
@@ -149,7 +140,7 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === "POST" && url.pathname === "/api/run-flow") {
-      const result = await runFlowWithRecovery();
+      const result = await runFlowStrict();
       return sendJson(res, result.ok ? 200 : 500, { ...result, trace: await readTrace() });
     }
 

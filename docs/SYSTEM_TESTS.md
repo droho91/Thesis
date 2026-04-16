@@ -56,3 +56,10 @@ Expected result:
 - status becomes `Frozen`
 - packet membership verification returns false
 - packet execution is blocked until explicit recovery plus a certified successor epoch
+
+## Absence And Replay
+
+From the browser UI:
+
+- `Check Non-Membership` verifies that the next Bank A packet sequence is absent from Bank B's trusted Bank A snapshot.
+- `Replay Forward` attempts to execute the already consumed forward packet again and should be rejected by `IBCPacketHandler.consumedPackets`.

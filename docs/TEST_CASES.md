@@ -9,9 +9,13 @@
 - invalid client update fails
 - duplicate update is safely rejected
 - source-certified validator rotation is required before rotated checkpoints are accepted
+- delayed checkpoints signed by a historical epoch can still be accepted after rotation
+- a superseded epoch cannot certify a post-rotation checkpoint
 - relayer-defined truth cannot advance the client
 - conflicting certified updates freeze the client
 - recovery requires explicit recovery plus a certified successor epoch
+- valid packet non-membership succeeds for future sequences and occupied-by-different-leaf cases
+- invalid non-membership for an existing packet fails
 
 ## Packet Proofs
 
