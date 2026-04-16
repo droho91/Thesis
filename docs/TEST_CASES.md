@@ -23,6 +23,7 @@
 
 - valid packet membership proof succeeds
 - invalid membership proof fails
+- packet membership is verified against the trusted remote state root
 - replayed packet fails
 - packet execution cannot happen before trusted remote state exists
 

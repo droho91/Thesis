@@ -50,6 +50,7 @@ The source checkpoint binds:
 - monotonic checkpoint sequence
 - parent checkpoint hash
 - packet Merkle root
+- state root over packet commitment path/value leaves
 - packet sequence range
 - packet accumulator
 - source block number and hash anchor
@@ -68,6 +69,7 @@ The relayer transports the artifact. It does not define the artifact.
 - signatures cover at least two thirds of trusted validator voting power
 - checkpoint sequence and parent linkage are correct
 - packet ranges are contiguous
+- the checkpoint carries a nonzero trusted remote state root
 - source block anchors do not regress
 - if the epoch has a known successor, the checkpoint source block must be before the successor activation anchor
 
@@ -80,15 +82,15 @@ Historical epochs remain usable for delayed relay of checkpoints that were final
 The packet execution path is:
 
 1. source app writes packet commitment
-2. source checkpoint commits the packet root
+2. source checkpoint commits the packet commitment path/value state root
 3. remote client accepts the certified checkpoint
-4. packet handler verifies packet membership against the accepted consensus state
+4. packet handler verifies packet membership against the accepted consensus state root
 5. packet handler consumes the packet id exactly once
 6. destination app executes
 
 Invalid proofs fail before application logic runs.
 
-`verifyNonMembership` is implemented for local packet commitment absence. It can verify that a future sequence is not present in the trusted checkpoint snapshot, or that a different packet leaf occupies the claimed sequence.
+`verifyNonMembership` is implemented for local packet commitment absence. It can verify that a future sequence is not present in the trusted checkpoint snapshot, or that a different value is proven at the same packet commitment path.
 
 ## Misbehaviour
 

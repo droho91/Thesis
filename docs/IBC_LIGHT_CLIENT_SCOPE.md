@@ -12,7 +12,7 @@ The contribution is the inter-chain linkage mechanism. The app exists only to de
 - source-side finalized packet checkpoints
 - remote client state and consensus state storage
 - client messages signed by source validators
-- membership verification for packet commitments
+- membership verification for packet commitment path/value pairs under a trusted state root
 - non-membership verification for absent packet commitments in a trusted snapshot
 - one-time packet execution
 - freeze on conflicting certified updates
@@ -38,5 +38,6 @@ The contribution is the inter-chain linkage mechanism. The app exists only to de
 - Local ECDSA accounts represent bank validators.
 - Source block hashes are local anchors, not full header verification.
 - Checkpoints are produced by a source registry transaction.
-- Non-membership is implemented for packet commitment absence, but not for a generalized IBC state store.
+- The trusted state root is a local Merkle root over packet commitment path/value leaves, not a production consensus-derived app hash.
+- Non-membership is implemented for packet commitment absence, but not for a generalized production IBC state store.
 - Recovery is role-gated for the local simulation.

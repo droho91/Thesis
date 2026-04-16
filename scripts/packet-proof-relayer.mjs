@@ -9,6 +9,7 @@ import {
   pretty,
   providerFor,
   signerFor,
+  stateLeaf,
 } from "./ibc-lite-common.mjs";
 
 function packetFromEvent(event) {
@@ -57,9 +58,11 @@ async function relayPackets(sourceKey, config, artifacts) {
 
       const leaves = [];
       for (let s = checkpoint.firstPacketSequence; s <= checkpoint.lastPacketSequence; s++) {
-        leaves.push(await packetStore.packetLeafAt(s));
+        const path = await packetStore.packetPathAt(s);
+        const leaf = await packetStore.packetLeafAt(s);
+        leaves.push(stateLeaf(path, leaf));
       }
-      if (merkleRoot(leaves) !== checkpoint.packetRoot) continue;
+      if (merkleRoot(leaves) !== checkpoint.stateRoot) continue;
 
       const leafIndex = Number(messageSequence - checkpoint.firstPacketSequence);
       const proof = [consensusHash, leafIndex, buildMerkleProof(leaves, leafIndex)];

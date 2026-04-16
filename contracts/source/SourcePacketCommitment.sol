@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {IBCPathLib} from "../core/IBCPathLib.sol";
 import {PacketLib} from "../libs/PacketLib.sol";
 
 /// @title SourcePacketCommitment
@@ -13,6 +14,7 @@ contract SourcePacketCommitment is AccessControl {
     uint256 public packetSequence;
 
     mapping(uint256 => bytes32) public packetLeafAt;
+    mapping(uint256 => bytes32) public packetPathAt;
     mapping(uint256 => bytes32) public packetIdAt;
     mapping(uint256 => bytes32) public packetAccumulatorAt;
     mapping(bytes32 => bool) public committedPacket;
@@ -66,11 +68,13 @@ contract SourcePacketCommitment is AccessControl {
         require(!committedPacket[packetId], "PACKET_EXISTS");
 
         bytes32 leaf = PacketLib.leafHashCalldata(packet);
+        bytes32 path = IBCPathLib.packetCommitmentPath(packet.sourceChainId, packet.sourcePort, packet.sequence);
         bytes32 previousAccumulator = packetAccumulatorAt[packetSequence];
         packetSequence = packet.sequence;
         bytes32 accumulator = keccak256(abi.encodePacked(previousAccumulator, packet.sequence, leaf));
 
         packetLeafAt[packet.sequence] = leaf;
+        packetPathAt[packet.sequence] = path;
         packetIdAt[packet.sequence] = packetId;
         packetAccumulatorAt[packet.sequence] = accumulator;
         committedPacket[packetId] = true;

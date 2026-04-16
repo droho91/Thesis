@@ -16,6 +16,7 @@ library BankChainClientMessage {
         uint256 sequence;
         bytes32 parentCheckpointHash;
         bytes32 packetRoot;
+        bytes32 stateRoot;
         uint256 firstPacketSequence;
         uint256 lastPacketSequence;
         uint256 packetCount;
@@ -42,6 +43,7 @@ library BankChainClientMessage {
         bytes32 packetRangeHash = keccak256(
             abi.encode(
                 checkpoint.packetRoot,
+                checkpoint.stateRoot,
                 checkpoint.firstPacketSequence,
                 checkpoint.lastPacketSequence,
                 checkpoint.packetCount,
@@ -77,6 +79,7 @@ library BankChainClientMessage {
         bytes32 packetRangeHash = keccak256(
             abi.encode(
                 checkpoint.packetRoot,
+                checkpoint.stateRoot,
                 checkpoint.firstPacketSequence,
                 checkpoint.lastPacketSequence,
                 checkpoint.packetCount,

@@ -33,7 +33,7 @@ They cannot:
 
 ## Source Artifacts
 
-The source chain is authoritative for packet commitments and checkpoint progression. Destination chains advance their remote view only through source-certified artifacts.
+The source chain is authoritative for packet commitments, checkpoint progression, and the local packet commitment state root. Destination chains advance their remote view only through source-certified artifacts.
 
 ## Not Modeled
 

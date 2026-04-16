@@ -7,9 +7,11 @@ import {
   loadArtifact,
   loadConfig,
   merkleRoot,
+  packetCommitmentPath,
   providerFor,
   signaturesFor,
   signerFor,
+  stateLeaf,
   validatorAddresses,
 } from "./ibc-lite-common.mjs";
 
@@ -17,9 +19,6 @@ const ACTION_LOCK_MINT = 1;
 const ACTION_BURN_UNLOCK = 2;
 const PACKET_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.Packet.v1"));
 const PACKET_LEAF_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.PacketLeaf.v1"));
-const PACKET_ABSENCE_PATH_TYPEHASH = ethers.keccak256(
-  ethers.toUtf8Bytes("IBCLite.PacketCommitmentAbsencePath.v1")
-);
 const TRANSFER_AMOUNT = ethers.parseUnits(process.env.DEMO_AMOUNT || "100", 18);
 const TRACE_JSON_PATH = resolve(process.cwd(), "demo", "latest-run.json");
 const TRACE_JS_PATH = resolve(process.cwd(), "demo", "latest-run.js");
@@ -133,6 +132,7 @@ async function consensusSummary(client, sourceChainId, consensusHash) {
     validatorEpochHash: state.validatorEpochHash,
     checkpointSequence: state.sequence.toString(),
     packetRoot: state.packetRoot,
+    stateRoot: state.stateRoot,
     packetRange: `${state.firstPacketSequence.toString()}-${state.lastPacketSequence.toString()}`,
     packetCount: state.packetCount.toString(),
     sourceBlockNumber: state.sourceBlockNumber.toString(),
@@ -205,15 +205,6 @@ function packetId(packet) {
 function packetLeaf(packet) {
   return ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(["bytes32", "bytes32"], [PACKET_LEAF_TYPEHASH, packetId(packet)])
-  );
-}
-
-function packetAbsencePath(sourceChainId, sourcePort, sequence, absentLeaf) {
-  return ethers.keccak256(
-    ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "uint256", "address", "uint256", "bytes32"],
-      [PACKET_ABSENCE_PATH_TYPEHASH, sourceChainId, sourcePort, sequence, absentLeaf]
-    )
   );
 }
 
@@ -347,18 +338,20 @@ async function relayPacket(sourceKey, destinationKey, action, ctx) {
 
   const leaves = [];
   for (let sequence = checkpoint.firstPacketSequence; sequence <= checkpoint.lastPacketSequence; sequence++) {
-    leaves.push(await packetStore.packetLeafAt(sequence));
+    const path = await packetStore.packetPathAt(sequence);
+    const leaf = await packetStore.packetLeafAt(sequence);
+    leaves.push(stateLeaf(path, leaf));
   }
 
   const root = merkleRoot(leaves);
-  if (root !== checkpoint.packetRoot) throw new Error(`[${sourceKey}] Packet root mismatch.`);
+  if (root !== checkpoint.stateRoot) throw new Error(`[${sourceKey}] State root mismatch.`);
   const packet = await packetFor(sourceKey, destinationKey, action, ctx, checkpoint.lastPacketSequence);
   const leafIndex = Number(packet.sequence - checkpoint.firstPacketSequence);
   const packetId = await packetStore.packetIdAt(packet.sequence);
 
   await (await handler.recvPacket(packet, [consensusHash, leafIndex, buildMerkleProof(leaves, leafIndex)])).wait();
 
-  return { packetId, leafIndex, checkpoint, packetRoot: root, consensusHash };
+  return { packetId, leafIndex, checkpoint, packetRoot: checkpoint.packetRoot, stateRoot: root, consensusHash };
 }
 
 function isReplayRejection(error) {
@@ -378,12 +371,12 @@ async function verifyForwardNonMembership(ctx) {
   const absentSequence = checkpoint.lastPacketSequence + 1n;
   const absentPacket = await packetFor("A", "B", ACTION_LOCK_MINT, ctx, absentSequence);
   const absentLeaf = packetLeaf(absentPacket);
-  const path = packetAbsencePath(cfg.chains.A.chainId, cfg.chains.A.transferApp, absentSequence, absentLeaf);
+  const path = packetCommitmentPath(cfg.chains.A.chainId, cfg.chains.A.transferApp, absentSequence);
   const proof = ethers.AbiCoder.defaultAbiCoder().encode(
-    ["tuple(uint256 sequence,address sourcePort,bytes32 absentLeaf,bytes32 witnessedLeaf,bytes32[] siblings)"],
-    [[absentSequence, cfg.chains.A.transferApp, absentLeaf, ethers.ZeroHash, []]]
+    ["tuple(uint256 sequence,uint256 leafIndex,bytes32 witnessedValue,bytes32[] siblings)"],
+    [[absentSequence, 0n, ethers.ZeroHash, []]]
   );
-  const verified = await client.verifyNonMembership(cfg.chains.A.chainId, consensusHash, path, proof);
+  const verified = await client.verifyNonMembership(cfg.chains.A.chainId, consensusHash, path, absentLeaf, proof);
   if (!verified) throw new Error("Bank B client rejected the non-membership proof.");
 
   return {
@@ -417,6 +410,7 @@ async function submitConflict(ctx) {
   if (existing === ethers.ZeroHash) throw new Error("Bank B must trust an A checkpoint before conflict evidence can freeze it.");
 
   checkpoint.packetRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict:A:${Date.now()}`));
+  checkpoint.stateRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict-state:A:${Date.now()}`));
   checkpoint.sourceCommitmentHash = await client.hashSourceCommitment(checkpoint);
   const conflictHash = await client.hashConsensusState(checkpoint);
   const signatures = await signaturesFor(sourceProvider, conflictHash);
@@ -586,6 +580,7 @@ export async function runDemoAction(action) {
         checkpointSequence: checkpoint.sequence.toString(),
         checkpointHash: checkpoint.sourceCommitmentHash,
         packetRoot: checkpoint.packetRoot,
+        stateRoot: checkpoint.stateRoot,
       },
     });
     message = `Committed Bank A checkpoint #${checkpoint.sequence}.`;
@@ -596,6 +591,7 @@ export async function runDemoAction(action) {
         checkpointSequence: checkpoint.sequence.toString(),
         checkpointHash: checkpoint.sourceCommitmentHash,
         packetRoot: checkpoint.packetRoot,
+        stateRoot: checkpoint.stateRoot,
         consensusHash,
       },
     });
@@ -607,6 +603,7 @@ export async function runDemoAction(action) {
         packetId: proof.packetId,
         leafIndex: String(proof.leafIndex),
         packetRoot: proof.packetRoot,
+        stateRoot: proof.stateRoot,
         checkpointSequence: proof.checkpoint.sequence.toString(),
         checkpointHash: proof.checkpoint.sourceCommitmentHash,
         consensusHash: proof.consensusHash,
@@ -637,6 +634,7 @@ export async function runDemoAction(action) {
         checkpointSequence: checkpoint.sequence.toString(),
         checkpointHash: checkpoint.sourceCommitmentHash,
         packetRoot: checkpoint.packetRoot,
+        stateRoot: checkpoint.stateRoot,
       },
     });
     message = `Committed Bank B checkpoint #${checkpoint.sequence}.`;
@@ -647,6 +645,7 @@ export async function runDemoAction(action) {
         checkpointSequence: checkpoint.sequence.toString(),
         checkpointHash: checkpoint.sourceCommitmentHash,
         packetRoot: checkpoint.packetRoot,
+        stateRoot: checkpoint.stateRoot,
         consensusHash,
       },
     });
@@ -658,6 +657,7 @@ export async function runDemoAction(action) {
         packetId: proof.packetId,
         leafIndex: String(proof.leafIndex),
         packetRoot: proof.packetRoot,
+        stateRoot: proof.stateRoot,
         checkpointSequence: proof.checkpoint.sequence.toString(),
         checkpointHash: proof.checkpoint.sourceCommitmentHash,
         consensusHash: proof.consensusHash,

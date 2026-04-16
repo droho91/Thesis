@@ -11,6 +11,7 @@ import {
   providerFor,
   signaturesFor,
   signerFor,
+  stateLeaf,
 } from "./ibc-lite-common.mjs";
 
 const ACTION_LOCK_MINT = 1;
@@ -84,7 +85,7 @@ async function commitSourceCheckpoint(chainKey, cfg, artifacts) {
   }
   await (await checkpointRegistry.commitCheckpoint(packetSequence)).wait();
   const checkpoint = checkpointObject(await checkpointRegistry.checkpointsBySequence(await checkpointRegistry.checkpointSequence()));
-  console.log(`[${chainKey}] source checkpoint ${checkpoint.sequence} committed root=${pretty(checkpoint.packetRoot)}`);
+  console.log(`[${chainKey}] source checkpoint ${checkpoint.sequence} committed stateRoot=${pretty(checkpoint.stateRoot)}`);
   return checkpoint;
 }
 
@@ -111,10 +112,12 @@ async function relayPacket(sourceKey, destinationKey, packet, checkpoint, consen
   const handler = new ethers.Contract(destination.packetHandler, artifacts.handler.abi, destinationSigner);
   const leaves = [];
   for (let sequence = checkpoint.firstPacketSequence; sequence <= checkpoint.lastPacketSequence; sequence++) {
-    leaves.push(await packetStore.packetLeafAt(sequence));
+    const path = await packetStore.packetPathAt(sequence);
+    const leaf = await packetStore.packetLeafAt(sequence);
+    leaves.push(stateLeaf(path, leaf));
   }
   const root = merkleRoot(leaves);
-  if (root !== checkpoint.packetRoot) throw new Error(`[${sourceKey}] packet root mismatch`);
+  if (root !== checkpoint.stateRoot) throw new Error(`[${sourceKey}] state root mismatch`);
   const leafIndex = Number(packet.sequence - checkpoint.firstPacketSequence);
   const proof = [consensusHash, leafIndex, buildMerkleProof(leaves, leafIndex)];
   const packetId = await packetStore.packetIdAt(packet.sequence);
@@ -122,7 +125,7 @@ async function relayPacket(sourceKey, destinationKey, packet, checkpoint, consen
     await (await handler.recvPacket(packet, proof)).wait();
   }
   console.log(`[${destinationKey}] packet executed packetId=${pretty(packetId)} leafIndex=${leafIndex}`);
-  return { packetId, leafIndex, packetRoot: root };
+  return { packetId, leafIndex, packetRoot: checkpoint.packetRoot, stateRoot: root };
 }
 
 async function writeUiTrace(trace) {
@@ -194,6 +197,7 @@ async function main() {
     forward: {
       packetId: lockProof.packetId,
       packetRoot: lockProof.packetRoot,
+      stateRoot: lockProof.stateRoot,
       leafIndex: String(lockProof.leafIndex),
       checkpointSequence: checkpointA.sequence.toString(),
       checkpointHash: checkpointA.sourceCommitmentHash,
@@ -202,6 +206,7 @@ async function main() {
     reverse: {
       packetId: burnProof.packetId,
       packetRoot: burnProof.packetRoot,
+      stateRoot: burnProof.stateRoot,
       leafIndex: String(burnProof.leafIndex),
       checkpointSequence: checkpointB.sequence.toString(),
       checkpointHash: checkpointB.sourceCommitmentHash,

@@ -130,7 +130,7 @@ function renderStatus(status) {
   setText("checkpointSequenceA", status.progress.checkpointSequenceA);
   setText("trustedAOnB", status.progress.trustedAOnB);
   setText("trustedEpochAOnB", trustedA.validatorEpochId || status.progress.activeEpochAOnB);
-  setText("trustedPacketRootA", compact(trustedA.packetRoot));
+  setText("trustedPacketRootA", compact(trustedA.stateRoot));
   setText("trustedConsensusAOnB", compact(trustedA.consensusHash));
   setText(
     "trustedSourceBlockAOnB",

@@ -11,6 +11,7 @@ import {BankChainClientMessage} from "../../contracts/clients/BankChainClientMes
 import {BankChainClientState} from "../../contracts/clients/BankChainClientState.sol";
 import {IBCClientTypes} from "../../contracts/core/IBCClientTypes.sol";
 import {IBCPacketHandler} from "../../contracts/core/IBCPacketHandler.sol";
+import {IBCPathLib} from "../../contracts/core/IBCPathLib.sol";
 import {PacketLib} from "../../contracts/libs/PacketLib.sol";
 import {SourceCheckpointRegistry} from "../../contracts/source/SourceCheckpointRegistry.sol";
 import {SourcePacketCommitment} from "../../contracts/source/SourcePacketCommitment.sol";
@@ -191,7 +192,7 @@ abstract contract IBCLocalSimulationBase is Test {
         require(packetSequence >= sourceCheckpoint.firstPacketSequence, "PACKET_BEFORE_CHECKPOINT");
         require(packetSequence <= sourceCheckpoint.lastPacketSequence, "PACKET_AFTER_CHECKPOINT");
         uint256 leafIndex = packetSequence - sourceCheckpoint.firstPacketSequence;
-        bytes32[] memory leaves = _leavesFor(packetStore, sourceCheckpoint);
+        bytes32[] memory leaves = _stateLeavesFor(packetStore, sourceCheckpoint);
         bytes32[] memory siblings = _buildMerkleProof(leaves, leafIndex);
         return IBCClientTypes.MembershipProof({
             consensusStateHash: consensusStateHash,
@@ -200,13 +201,14 @@ abstract contract IBCLocalSimulationBase is Test {
         });
     }
 
-    function _leavesFor(
+    function _stateLeavesFor(
         SourcePacketCommitment packetStore,
         SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint
     ) internal view returns (bytes32[] memory leaves) {
         leaves = new bytes32[](sourceCheckpoint.packetCount);
         for (uint256 i = 0; i < sourceCheckpoint.packetCount; i++) {
-            leaves[i] = packetStore.packetLeafAt(sourceCheckpoint.firstPacketSequence + i);
+            uint256 sequence = sourceCheckpoint.firstPacketSequence + i;
+            leaves[i] = IBCPathLib.stateLeaf(packetStore.packetPathAt(sequence), packetStore.packetLeafAt(sequence));
         }
     }
 
@@ -260,6 +262,7 @@ abstract contract IBCLocalSimulationBase is Test {
             sequence: sourceCheckpoint.sequence,
             parentCheckpointHash: sourceCheckpoint.parentCheckpointHash,
             packetRoot: sourceCheckpoint.packetRoot,
+            stateRoot: sourceCheckpoint.stateRoot,
             firstPacketSequence: sourceCheckpoint.firstPacketSequence,
             lastPacketSequence: sourceCheckpoint.lastPacketSequence,
             packetCount: sourceCheckpoint.packetCount,

@@ -14,7 +14,7 @@
 - client accepts valid source-certified validator epoch updates
 - client accepts valid source-certified checkpoint updates
 - packet membership verification can succeed
-- packet non-membership verification can succeed for absence claims bound to trusted packet state
+- packet non-membership verification can succeed for absence claims bound to the trusted remote state root
 
 `Frozen`:
 
@@ -37,12 +37,12 @@ The active epoch remains the head of the validator-set chain. Historical epochs 
 
 ## Membership And Non-Membership
 
-`verifyMembership` proves that a packet leaf exists in the trusted packet root.
+`verifyMembership` proves that a packet commitment path/value exists under the trusted remote `stateRoot` in `ConsensusState`.
 
 `verifyNonMembership` proves packet absence in the local snapshot in two cases:
 
 - the claimed packet sequence is greater than the trusted checkpoint's last packet sequence
-- the claimed sequence is inside the trusted range, but a different packet leaf is proven at that index
+- the claimed sequence is inside the trusted range, but a different value is proven at the same packet commitment path
 
 ## Misbehaviour Evidence
 

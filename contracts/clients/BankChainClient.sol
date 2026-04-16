@@ -60,6 +60,7 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
         uint256 validatorEpochId,
         bytes32 validatorEpochHash,
         bytes32 packetRoot,
+        bytes32 stateRoot,
         uint256 firstPacketSequence,
         uint256 lastPacketSequence,
         bytes32 packetAccumulator,
@@ -211,6 +212,7 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
             sequence: checkpoint.sequence,
             parentCheckpointHash: checkpoint.parentCheckpointHash,
             packetRoot: checkpoint.packetRoot,
+            stateRoot: checkpoint.stateRoot,
             firstPacketSequence: checkpoint.firstPacketSequence,
             lastPacketSequence: checkpoint.lastPacketSequence,
             packetCount: checkpoint.packetCount,
@@ -236,6 +238,7 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
             checkpoint.validatorEpochId,
             checkpoint.validatorEpochHash,
             checkpoint.packetRoot,
+            checkpoint.stateRoot,
             checkpoint.firstPacketSequence,
             checkpoint.lastPacketSequence,
             checkpoint.packetAccumulator,
@@ -259,21 +262,27 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
     function verifyMembership(
         uint256 sourceChainId,
         bytes32 consensusStateHash,
-        bytes32 leaf,
+        bytes32 path,
+        bytes32 value,
+        uint256 sequence,
         uint256 leafIndex,
         bytes32[] calldata siblings
     ) external view override returns (bool) {
         if (clientStatuses[sourceChainId] != IBCClientTypes.Status.Active) return false;
         BankChainConsensusState.ConsensusState storage consensus =
             consensusStates[sourceChainId][consensusStateHash];
-        if (!consensus.exists || leaf == bytes32(0) || leafIndex >= consensus.packetCount) return false;
-        return MerkleLib.verify(consensus.packetRoot, leaf, leafIndex, siblings);
+        if (!consensus.exists || path == bytes32(0) || value == bytes32(0)) return false;
+        if (sequence < consensus.firstPacketSequence || sequence > consensus.lastPacketSequence) return false;
+        if (leafIndex != sequence - consensus.firstPacketSequence) return false;
+        bytes32 stateLeaf = IBCPathLib.stateLeaf(path, value);
+        return MerkleLib.verify(consensus.stateRoot, stateLeaf, leafIndex, siblings);
     }
 
     function verifyNonMembership(
         uint256 sourceChainId,
         bytes32 consensusStateHash,
         bytes32 path,
+        bytes32 value,
         bytes calldata proof
     ) external view override returns (bool) {
         if (clientStatuses[sourceChainId] != IBCClientTypes.Status.Active) return false;
@@ -283,31 +292,26 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
 
         IBCClientTypes.NonMembershipProof memory absence =
             abi.decode(proof, (IBCClientTypes.NonMembershipProof));
-        if (absence.sequence == 0 || absence.sourcePort == address(0) || absence.absentLeaf == bytes32(0)) {
-            return false;
-        }
-        if (
-            path
-                != IBCPathLib.packetAbsencePath(
-                    sourceChainId,
-                    absence.sourcePort,
-                    absence.sequence,
-                    absence.absentLeaf
-                )
-        ) {
+        if (path == bytes32(0) || value == bytes32(0) || absence.sequence == 0) {
             return false;
         }
 
         if (absence.sequence > consensus.lastPacketSequence) {
-            return absence.witnessedLeaf == bytes32(0) && absence.siblings.length == 0;
+            return absence.witnessedValue == bytes32(0) && absence.siblings.length == 0;
         }
         if (absence.sequence < consensus.firstPacketSequence) return false;
 
-        uint256 leafIndex = absence.sequence - consensus.firstPacketSequence;
-        if (absence.witnessedLeaf == bytes32(0) || absence.witnessedLeaf == absence.absentLeaf) {
+        uint256 expectedLeafIndex = absence.sequence - consensus.firstPacketSequence;
+        if (absence.leafIndex != expectedLeafIndex) return false;
+        if (absence.witnessedValue == bytes32(0) || absence.witnessedValue == value) {
             return false;
         }
-        return MerkleLib.verify(consensus.packetRoot, absence.witnessedLeaf, leafIndex, absence.siblings);
+        return MerkleLib.verify(
+            consensus.stateRoot,
+            IBCPathLib.stateLeaf(path, absence.witnessedValue),
+            absence.leafIndex,
+            absence.siblings
+        );
     }
 
     function isConsensusStateVerified(uint256 sourceChainId, bytes32 consensusStateHash)
@@ -458,6 +462,7 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
         require(checkpoint.validatorEpochHash != bytes32(0), "VALIDATOR_EPOCH_HASH_ZERO");
         require(checkpoint.sequence != 0, "SEQUENCE_ZERO");
         require(checkpoint.packetRoot != bytes32(0), "PACKET_ROOT_ZERO");
+        require(checkpoint.stateRoot != bytes32(0), "STATE_ROOT_ZERO");
         require(checkpoint.sourceCommitmentHash != bytes32(0), "SOURCE_COMMITMENT_ZERO");
         require(checkpoint.packetAccumulator != bytes32(0), "PACKET_ACCUMULATOR_ZERO");
         require(checkpoint.packetCount > 0, "PACKET_COUNT_ZERO");

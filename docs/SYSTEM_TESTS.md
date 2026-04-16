@@ -27,9 +27,9 @@ npm run seed:ibc-lite
 2. User calls Bank A `MinimalTransferApp.sendTransfer`.
 3. Bank A `SourcePacketCommitment` records a packet leaf.
 4. Run `npm run worker:source-commit`.
-5. Bank A `SourceCheckpointRegistry` commits the packet root.
+5. Bank A `SourceCheckpointRegistry` commits the packet commitment state root.
 6. Run `npm run worker:client-update`.
-7. Bank B `BankChainClient` accepts the source-certified checkpoint.
+7. Bank B `BankChainClient` accepts the source-certified checkpoint and stores the trusted state root.
 8. Run `npm run worker:packet-proof`.
 9. Bank B `IBCPacketHandler` verifies membership and consumes the packet.
 10. Bank B `MinimalTransferApp` mints the voucher.
@@ -61,5 +61,5 @@ Expected result:
 
 From the browser UI:
 
-- `Check Non-Membership` verifies that the next Bank A packet sequence is absent from Bank B's trusted Bank A snapshot.
+- `Check Non-Membership` verifies that the next Bank A packet sequence is absent from Bank B's trusted Bank A state root snapshot.
 - `Replay Forward` attempts to execute the already consumed forward packet again and should be rejected by `IBCPacketHandler.consumedPackets`.

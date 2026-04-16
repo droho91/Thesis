@@ -14,6 +14,7 @@ library BankChainConsensusState {
         uint256 sequence;
         bytes32 parentCheckpointHash;
         bytes32 packetRoot;
+        bytes32 stateRoot;
         uint256 firstPacketSequence;
         uint256 lastPacketSequence;
         uint256 packetCount;

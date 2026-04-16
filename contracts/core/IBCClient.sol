@@ -11,7 +11,9 @@ interface IBCClient {
     function verifyMembership(
         uint256 sourceChainId,
         bytes32 consensusStateHash,
-        bytes32 leaf,
+        bytes32 path,
+        bytes32 value,
+        uint256 sequence,
         uint256 leafIndex,
         bytes32[] calldata siblings
     ) external view returns (bool);
@@ -20,6 +22,7 @@ interface IBCClient {
         uint256 sourceChainId,
         bytes32 consensusStateHash,
         bytes32 path,
+        bytes32 value,
         bytes calldata proof
     ) external view returns (bool);
 }

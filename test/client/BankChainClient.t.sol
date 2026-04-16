@@ -205,17 +205,16 @@ contract BankChainClientTest is IBCLocalSimulationBase {
         FinalizedPacket memory finalized = _finalizeAtoB(sequence, validatorKeysA, 2);
         packet.sequence = sequence + 1;
         bytes32 absentLeaf = PacketLib.leafHash(packet);
-        bytes32 path = IBCPathLib.packetAbsencePath(CHAIN_A, address(appA), packet.sequence, absentLeaf);
+        bytes32 path = IBCPathLib.packetCommitmentPath(CHAIN_A, address(appA), packet.sequence);
         bytes32[] memory emptySiblings = new bytes32[](0);
         IBCClientTypes.NonMembershipProof memory absence = IBCClientTypes.NonMembershipProof({
             sequence: packet.sequence,
-            sourcePort: address(appA),
-            absentLeaf: absentLeaf,
-            witnessedLeaf: bytes32(0),
+            leafIndex: 0,
+            witnessedValue: bytes32(0),
             siblings: emptySiblings
         });
 
-        assertTrue(clientB.verifyNonMembership(CHAIN_A, finalized.consensusStateHash, path, abi.encode(absence)));
+        assertTrue(clientB.verifyNonMembership(CHAIN_A, finalized.consensusStateHash, path, absentLeaf, abi.encode(absence)));
     }
 
     function testVerifyNonMembershipSucceedsWhenDifferentLeafOccupiesSequence() public {
@@ -228,32 +227,30 @@ contract BankChainClientTest is IBCLocalSimulationBase {
         bytes32 witnessedLeaf = packetsA.packetLeafAt(sequence);
         IBCClientTypes.MembershipProof memory witnessedProof =
             _proofFor(packetsA, finalized.sourceCheckpoint, sequence, finalized.consensusStateHash);
-        bytes32 path = IBCPathLib.packetAbsencePath(CHAIN_A, address(appA), sequence, absentLeaf);
+        bytes32 path = IBCPathLib.packetCommitmentPath(CHAIN_A, address(appA), sequence);
         IBCClientTypes.NonMembershipProof memory absence = IBCClientTypes.NonMembershipProof({
             sequence: sequence,
-            sourcePort: address(appA),
-            absentLeaf: absentLeaf,
-            witnessedLeaf: witnessedLeaf,
+            leafIndex: witnessedProof.leafIndex,
+            witnessedValue: witnessedLeaf,
             siblings: witnessedProof.siblings
         });
 
-        assertTrue(clientB.verifyNonMembership(CHAIN_A, finalized.consensusStateHash, path, abi.encode(absence)));
+        assertTrue(clientB.verifyNonMembership(CHAIN_A, finalized.consensusStateHash, path, absentLeaf, abi.encode(absence)));
     }
 
     function testInvalidNonMembershipProofFailsForExistingPacket() public {
         (, uint256 sequence) = _sendLock(10 ether);
         FinalizedPacket memory finalized = _finalizeAtoB(sequence, validatorKeysA, 2);
         bytes32 packetLeaf = packetsA.packetLeafAt(sequence);
-        bytes32 path = IBCPathLib.packetAbsencePath(CHAIN_A, address(appA), sequence, packetLeaf);
+        bytes32 path = IBCPathLib.packetCommitmentPath(CHAIN_A, address(appA), sequence);
         IBCClientTypes.NonMembershipProof memory absence = IBCClientTypes.NonMembershipProof({
             sequence: sequence,
-            sourcePort: address(appA),
-            absentLeaf: packetLeaf,
-            witnessedLeaf: packetLeaf,
+            leafIndex: finalized.proof.leafIndex,
+            witnessedValue: packetLeaf,
             siblings: finalized.proof.siblings
         });
 
-        assertFalse(clientB.verifyNonMembership(CHAIN_A, finalized.consensusStateHash, path, abi.encode(absence)));
+        assertFalse(clientB.verifyNonMembership(CHAIN_A, finalized.consensusStateHash, path, packetLeaf, abi.encode(absence)));
     }
 
     function testRelayerDefinedTruthCannotAdvanceClient() public {

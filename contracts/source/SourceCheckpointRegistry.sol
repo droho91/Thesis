@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {IBCPathLib} from "../core/IBCPathLib.sol";
 import {CommitmentLib} from "../libs/CommitmentLib.sol";
 import {MerkleLib} from "../libs/MerkleLib.sol";
 import {SourcePacketCommitment} from "./SourcePacketCommitment.sol";
@@ -22,6 +23,7 @@ contract SourceCheckpointRegistry is AccessControl {
         uint256 sequence;
         bytes32 parentCheckpointHash;
         bytes32 packetRoot;
+        bytes32 stateRoot;
         uint256 firstPacketSequence;
         uint256 lastPacketSequence;
         uint256 packetCount;
@@ -44,6 +46,7 @@ contract SourceCheckpointRegistry is AccessControl {
 
     mapping(uint256 => SourceCheckpoint) public checkpointsBySequence;
     mapping(uint256 => bytes32) public packetRootBySequence;
+    mapping(uint256 => bytes32) public stateRootBySequence;
     mapping(uint256 => uint256) public sourceBlockNumberBySequence;
     mapping(uint256 => bytes32) public sourceBlockHashBySequence;
     mapping(bytes32 => bool) public canonicalCheckpointHash;
@@ -54,6 +57,7 @@ contract SourceCheckpointRegistry is AccessControl {
         bytes32 indexed checkpointHash,
         bytes32 parentCheckpointHash,
         bytes32 packetRoot,
+        bytes32 stateRoot,
         uint256 firstPacketSequence,
         uint256 lastPacketSequence,
         uint256 packetCount,
@@ -93,10 +97,15 @@ contract SourceCheckpointRegistry is AccessControl {
 
         uint256 packetCount = uptoPacketSequence - firstPacketSequence + 1;
         bytes32[] memory leaves = new bytes32[](packetCount);
+        bytes32[] memory stateLeaves = new bytes32[](packetCount);
         for (uint256 i = 0; i < packetCount; i++) {
-            bytes32 leaf = packetCommitment.packetLeafAt(firstPacketSequence + i);
+            uint256 packetSequence = firstPacketSequence + i;
+            bytes32 leaf = packetCommitment.packetLeafAt(packetSequence);
+            bytes32 path = packetCommitment.packetPathAt(packetSequence);
             require(leaf != bytes32(0), "PACKET_LEAF_MISSING");
+            require(path != bytes32(0), "PACKET_PATH_MISSING");
             leaves[i] = leaf;
+            stateLeaves[i] = IBCPathLib.stateLeaf(path, leaf);
         }
 
         (
@@ -113,6 +122,7 @@ contract SourceCheckpointRegistry is AccessControl {
         require(quorumNumerator == 2 && quorumDenominator == 3, "UNSUPPORTED_QUORUM");
 
         bytes32 packetRoot = MerkleLib.root(leaves);
+        bytes32 stateRoot = MerkleLib.root(stateLeaves);
         uint256 nextCheckpointSequence = checkpointSequence + 1;
         bytes32 parentCheckpointHash = latestCheckpointHash;
         bytes32 packetAccumulator = packetCommitment.packetAccumulatorAt(uptoPacketSequence);
@@ -142,6 +152,7 @@ contract SourceCheckpointRegistry is AccessControl {
             sequence: nextCheckpointSequence,
             parentCheckpointHash: parentCheckpointHash,
             packetRoot: packetRoot,
+            stateRoot: stateRoot,
             firstPacketSequence: firstPacketSequence,
             lastPacketSequence: uptoPacketSequence,
             packetCount: packetCount,
@@ -161,6 +172,7 @@ contract SourceCheckpointRegistry is AccessControl {
         latestCheckpointHash = checkpoint.checkpointHash;
         checkpointsBySequence[nextCheckpointSequence] = checkpoint;
         packetRootBySequence[nextCheckpointSequence] = packetRoot;
+        stateRootBySequence[nextCheckpointSequence] = stateRoot;
         sourceBlockNumberBySequence[nextCheckpointSequence] = sourceBlockNumber;
         sourceBlockHashBySequence[nextCheckpointSequence] = sourceBlockHash;
         canonicalCheckpointHash[checkpoint.checkpointHash] = true;
@@ -171,6 +183,7 @@ contract SourceCheckpointRegistry is AccessControl {
             checkpoint.checkpointHash,
             parentCheckpointHash,
             packetRoot,
+            stateRoot,
             firstPacketSequence,
             uptoPacketSequence,
             packetCount,
@@ -194,6 +207,7 @@ contract SourceCheckpointRegistry is AccessControl {
         bytes32 packetRangeHash = keccak256(
             abi.encode(
                 checkpoint.packetRoot,
+                checkpoint.stateRoot,
                 checkpoint.firstPacketSequence,
                 checkpoint.lastPacketSequence,
                 checkpoint.packetCount,

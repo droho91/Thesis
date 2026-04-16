@@ -10,6 +10,10 @@ export const LOCAL_CHAIN_MNEMONIC =
 export const VALIDATOR_INDICES = (process.env.VALIDATOR_INDICES || "3,4,5")
   .split(",")
   .map((value) => Number(value.trim()));
+export const STATE_LEAF_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.StateLeaf.v1"));
+export const PACKET_COMMITMENT_PATH_TYPEHASH = ethers.keccak256(
+  ethers.toUtf8Bytes("IBCLite.PacketCommitmentPath.v1")
+);
 
 export function artifactPath(sourcePath, contractName) {
   return resolve(process.cwd(), "artifacts", "contracts", sourcePath, `${contractName}.json`);
@@ -81,6 +85,7 @@ export function checkpointObject(result) {
     sequence: result.sequence,
     parentCheckpointHash: result.parentCheckpointHash,
     packetRoot: result.packetRoot,
+    stateRoot: result.stateRoot,
     firstPacketSequence: result.firstPacketSequence,
     lastPacketSequence: result.lastPacketSequence,
     packetCount: result.packetCount,
@@ -90,6 +95,21 @@ export function checkpointObject(result) {
     timestamp: result.timestamp,
     sourceCommitmentHash: result.sourceCommitmentHash,
   };
+}
+
+export function packetCommitmentPath(sourceChainId, sourcePort, sequence) {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bytes32", "uint256", "address", "uint256"],
+      [PACKET_COMMITMENT_PATH_TYPEHASH, sourceChainId, sourcePort, sequence]
+    )
+  );
+}
+
+export function stateLeaf(path, value) {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(["bytes32", "bytes32", "bytes32"], [STATE_LEAF_TYPEHASH, path, value])
+  );
 }
 
 export function merkleRoot(leaves) {

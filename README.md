@@ -5,9 +5,9 @@ This repository is a local simulation of an IBC/light-client-like inter-chain cl
 The thesis contribution is the linkage layer:
 
 - source-chain packet commitments
-- source-certified checkpoint artifacts
+- source-certified consensus-state artifacts
 - remote client state progression
-- packet membership verification against trusted remote state
+- packet path/value membership verification against a trusted remote state root
 - packet non-membership verification for absent packet commitments in the trusted snapshot
 - one-time packet execution
 - freeze and explicit recovery on conflicting certified updates
@@ -39,12 +39,12 @@ The trust anchor is `BankChainClient`, not a bridge router. A destination chain 
 
 1. `MinimalTransferApp.sendTransfer` locks canonical tokens in `EscrowVault`.
 2. The app writes an IBC-lite packet into `SourcePacketCommitment`.
-3. `SourceCheckpointRegistry` commits a contiguous packet range and packet Merkle root.
+3. `SourceCheckpointRegistry` commits a contiguous packet range, packet Merkle root, and remote state root.
 4. Source validators sign the exact checkpoint hash.
 5. An untrusted relayer submits the checkpoint as a `ClientMessage` to `BankChainClient.updateState`.
-6. The client verifies validator quorum, source commitment binding, parent linkage, sequence, and source anchors.
-7. A relayer submits the packet plus Merkle proof to `IBCPacketHandler.recvPacket`.
-8. The handler verifies membership against the trusted remote client state, consumes the packet id once, and calls the destination app.
+6. The client verifies validator quorum, source commitment binding, parent linkage, sequence, state root, and source anchors.
+7. A relayer submits the packet plus path/value Merkle proof to `IBCPacketHandler.recvPacket`.
+8. The handler verifies the packet commitment path/value against the trusted remote state root, consumes the packet id once, and calls the destination app.
 9. Bank B mints `VoucherToken`.
 10. The reverse path burns the voucher on Bank B, commits a reverse packet, updates Bank A's remote client, proves membership, and unescrows from Bank A.
 
@@ -149,4 +149,4 @@ The Solidity tests cover:
 
 ## Local Simulation Boundaries
 
-The model uses local ECDSA validator signatures over source checkpoint hashes, local EVM block anchors, and source-chain registries as the finalized artifact source. It implements packet non-membership for this local packet commitment snapshot, but it does not implement production header verification, slashing, validator operations, governance hardening, or a full IBC state-store proof system.
+The model uses local ECDSA validator signatures over source checkpoint hashes, local EVM block anchors, source-chain registries, and a local Merkle state root as the finalized artifact source. It now verifies packet commitment path/value membership against the trusted remote state root. It still does not implement production header verification, slashing, validator operations, governance hardening, or a full production IBC client.

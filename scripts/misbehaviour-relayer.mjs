@@ -24,6 +24,7 @@ async function submitConflict(sourceKey, config, artifacts) {
     throw new Error(`source ${sourceKey} checkpoint ${sequence} is empty`);
   }
   checkpoint.packetRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict:${sourceKey}:${Date.now()}`));
+  checkpoint.stateRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict-state:${sourceKey}:${Date.now()}`));
   checkpoint.sourceCommitmentHash = await client.hashSourceCommitment(checkpoint);
   const digest = await client.hashConsensusState(checkpoint);
   const signatures = await signaturesFor(sourceProvider, digest);
