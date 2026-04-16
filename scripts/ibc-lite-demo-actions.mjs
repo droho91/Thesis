@@ -84,6 +84,56 @@ async function localHealth() {
     };
   }
 
+  const required = [
+    ["A", "packetStore"],
+    ["A", "validatorRegistry"],
+    ["A", "checkpointRegistry"],
+    ["A", "client"],
+    ["A", "packetHandler"],
+    ["A", "canonicalToken"],
+    ["A", "escrowVault"],
+    ["A", "transferApp"],
+    ["B", "packetStore"],
+    ["B", "validatorRegistry"],
+    ["B", "checkpointRegistry"],
+    ["B", "client"],
+    ["B", "packetHandler"],
+    ["B", "voucherToken"],
+    ["B", "debtToken"],
+    ["B", "lendingPool"],
+    ["B", "transferApp"],
+  ];
+  const missingFields = required
+    .filter(([chainKey, field]) => !cfg.chains?.[chainKey]?.[field])
+    .map(([chainKey, field]) => `${chainKey}.${field}`);
+  if (missingFields.length > 0) {
+    return {
+      ready: false,
+      deployed: false,
+      label: "Stale deployment",
+      message: `Deployment config is from an older stack and is missing: ${missingFields.join(", ")}. Press Deploy + Seed.`,
+      chains: { A: chainA, B: chainB },
+    };
+  }
+
+  const providerA = providerFor(cfg, "A");
+  const providerB = providerFor(cfg, "B");
+  const codeChecks = await Promise.all([
+    providerA.getCode(cfg.chains.A.escrowVault),
+    providerA.getCode(cfg.chains.A.transferApp),
+    providerB.getCode(cfg.chains.B.voucherToken),
+    providerB.getCode(cfg.chains.B.lendingPool),
+  ]);
+  if (codeChecks.some((code) => code === "0x")) {
+    return {
+      ready: false,
+      deployed: false,
+      label: "Stale deployment",
+      message: "Local chains are running, but configured contract addresses have no code. Press Deploy + Seed after starting fresh local chains.",
+      chains: { A: chainA, B: chainB },
+    };
+  }
+
   return { ready: true, deployed: true, cfg, chains: { A: chainA, B: chainB } };
 }
 
