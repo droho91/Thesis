@@ -9,9 +9,10 @@ import {SourcePacketCommitment} from "./SourcePacketCommitment.sol";
 import {SourceValidatorEpochRegistry} from "./SourceValidatorEpochRegistry.sol";
 
 /// @title SourceCheckpointRegistry
-/// @notice Source-chain producer of finalized packet commitment checkpoints.
+/// @notice Local simulation helper that produces packet-state roots used as QBFT/IBFT-like finalized headers.
 contract SourceCheckpointRegistry is AccessControl {
     bytes32 public constant CHECKPOINT_PRODUCER_ROLE = keccak256("CHECKPOINT_PRODUCER_ROLE");
+    bytes32 public constant FINALIZED_HEADER_PRODUCER_ROLE = CHECKPOINT_PRODUCER_ROLE;
 
     struct SourceCheckpoint {
         uint256 sourceChainId;
@@ -67,6 +68,22 @@ contract SourceCheckpointRegistry is AccessControl {
         bytes32 validatorEpochHash,
         bytes32 sourceCommitmentHash
     );
+    event FinalizedHeaderCommitted(
+        uint256 indexed height,
+        uint256 indexed validatorEpochId,
+        bytes32 indexed headerHash,
+        bytes32 parentHeaderHash,
+        bytes32 packetRoot,
+        bytes32 stateRoot,
+        uint256 firstPacketSequence,
+        uint256 lastPacketSequence,
+        uint256 packetCount,
+        bytes32 packetAccumulator,
+        uint256 sourceBlockNumber,
+        bytes32 sourceBlockHash,
+        bytes32 validatorEpochHash,
+        bytes32 legacySourceCommitmentHash
+    );
 
     constructor(uint256 _sourceChainId, address _packetCommitment, address _validatorSetRegistry) {
         require(_sourceChainId != 0, "CHAIN_ID_ZERO");
@@ -86,11 +103,35 @@ contract SourceCheckpointRegistry is AccessControl {
         _grantRole(CHECKPOINT_PRODUCER_ROLE, msg.sender);
     }
 
+    function headerHeight() external view returns (uint256) {
+        return checkpointSequence;
+    }
+
+    function latestHeaderHash() external view returns (bytes32) {
+        return latestCheckpointHash;
+    }
+
+    function headersByHeight(uint256 height) external view returns (SourceCheckpoint memory) {
+        return checkpointsBySequence[height];
+    }
+
+    function finalizeHeader(uint256 uptoPacketSequence)
+        external
+        onlyRole(FINALIZED_HEADER_PRODUCER_ROLE)
+        returns (SourceCheckpoint memory checkpoint)
+    {
+        return _finalizeHeader(uptoPacketSequence);
+    }
+
     function commitCheckpoint(uint256 uptoPacketSequence)
         external
         onlyRole(CHECKPOINT_PRODUCER_ROLE)
         returns (SourceCheckpoint memory checkpoint)
     {
+        return _finalizeHeader(uptoPacketSequence);
+    }
+
+    function _finalizeHeader(uint256 uptoPacketSequence) internal returns (SourceCheckpoint memory checkpoint) {
         require(uptoPacketSequence <= packetCommitment.packetSequence(), "PACKET_NOT_COMMITTED");
         uint256 firstPacketSequence = lastCommittedPacketSequence + 1;
         require(uptoPacketSequence >= firstPacketSequence, "NO_NEW_PACKETS");
@@ -178,6 +219,22 @@ contract SourceCheckpointRegistry is AccessControl {
         canonicalCheckpointHash[checkpoint.checkpointHash] = true;
 
         emit SourceCheckpointCommitted(
+            nextCheckpointSequence,
+            validatorEpochId,
+            checkpoint.checkpointHash,
+            parentCheckpointHash,
+            packetRoot,
+            stateRoot,
+            firstPacketSequence,
+            uptoPacketSequence,
+            packetCount,
+            packetAccumulator,
+            sourceBlockNumber,
+            sourceBlockHash,
+            validatorEpochHash,
+            checkpoint.sourceCommitmentHash
+        );
+        emit FinalizedHeaderCommitted(
             nextCheckpointSequence,
             validatorEpochId,
             checkpoint.checkpointHash,

@@ -58,7 +58,7 @@ function setRoute(id, state, text) {
 function renderRoadmap(status) {
   if (!status?.deployed) {
     setRoute("routeEscrow", "active", "deploy first");
-    setRoute("routeCheckpoint", "", "waiting");
+    setRoute("routeHeader", "", "waiting");
     setRoute("routeClient", "", "waiting");
     setRoute("routeProof", "", "waiting");
     setRoute("routeLending", "", "waiting");
@@ -70,10 +70,12 @@ function renderRoadmap(status) {
   const progress = status.progress || {};
   const balances = status.balances || {};
   const trace = status.trace || {};
+  const runtime = status.runtime || {};
   const escrowed = positive(balances.escrow) || positive(progress.packetSequenceA);
-  const checkpointed = positive(progress.checkpointSequenceA);
+  const headerFinalized = positive(progress.headerHeightA);
   const trusted = positive(progress.trustedAOnB);
   const proven = Boolean(trace.forward?.packetId) || positive(balances.voucher);
+  const forwardProofMode = trace.forward?.proofMode;
   const lending = trace.lending || {};
   const lendingStarted =
     Boolean(lending.collateralDeposited || lending.borrowed || lending.repaid || lending.collateralWithdrawn || lending.completed) ||
@@ -89,9 +91,21 @@ function renderRoadmap(status) {
   const recovered = Boolean(trace.misbehaviour?.recovered);
 
   setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? "packet written" : "ready");
-  setRoute("routeCheckpoint", checkpointed ? "done" : escrowed ? "active" : "", checkpointed ? "source certified" : "waiting");
-  setRoute("routeClient", trusted ? "done" : checkpointed ? "active" : "", trusted ? "trusted remote" : "waiting");
-  setRoute("routeProof", proven ? "done" : trusted ? "active" : "", proven ? "executed once" : "waiting");
+  setRoute("routeHeader", headerFinalized ? "done" : escrowed ? "active" : "", headerFinalized ? "header sealed" : "waiting");
+  setRoute("routeClient", trusted ? "done" : headerFinalized ? "active" : "", trusted ? "trusted remote" : "waiting");
+  const proofLabel =
+    forwardProofMode === "storage"
+      ? "storage proof"
+      : forwardProofMode === "merkle"
+        ? runtime.besuFirst
+          ? "compatibility path"
+          : "legacy proof"
+        : "executed once";
+  setRoute(
+    "routeProof",
+    proven ? "done" : trusted ? "active" : "",
+    proven ? proofLabel : "waiting"
+  );
   setRoute(
     "routeLending",
     lendingComplete ? "done" : lendingStarted ? "active" : proven ? "active" : "",
@@ -121,17 +135,30 @@ function renderRoadmap(status) {
 
 function renderStatus(status) {
   if (!status?.deployed) {
-    setText("deploymentStatus", status?.label || "Not deployed");
+    const runtime = status?.runtime || {};
+    setText(
+      "deploymentStatus",
+      status?.label || (runtime.besuFirst ? "Besu runtime waiting" : "Legacy runtime waiting")
+    );
     deploymentStatus?.classList.remove("is-live");
     deploymentStatus?.classList.add("is-offline");
-    setText("lastMessage", status?.message || "Start both local chains.");
+    setText(
+      "lastMessage",
+      status?.message || (runtime.besuFirst ? "Start the Besu bank chains." : "Start both local chains.")
+    );
     renderRoadmap();
     return;
   }
 
   deploymentStatus?.classList.add("is-live");
   deploymentStatus?.classList.remove("is-offline");
-  setText("deploymentStatus", "Local stack active");
+  const runtime = status.runtime || {};
+  setText(
+    "deploymentStatus",
+    runtime.besuFirst
+      ? `Besu runtime active${runtime.proofPolicy === "storage-required" ? " / storage proof required" : ""}`
+      : "Legacy dev runtime active"
+  );
   setText("bankABalance", `${status.balances.bankA} aBANK`);
   setText("escrowBalance", `${status.balances.escrow} aBANK`);
   setText("voucherBalance", `${status.balances.voucher} vA`);
@@ -154,10 +181,10 @@ function renderStatus(status) {
       : `${statusName(status.progress.statusAOnB)} / ${statusName(status.progress.statusBOnA)}`;
 
   setText("packetSequenceA", status.progress.packetSequenceA);
-  setText("checkpointSequenceA", status.progress.checkpointSequenceA);
+  setText("headerHeightA", status.progress.headerHeightA);
   setText("trustedAOnB", status.progress.trustedAOnB);
   setText("trustedEpochAOnB", trustedA.validatorEpochId || status.progress.activeEpochAOnB);
-  setText("trustedPacketRootA", compact(trustedA.stateRoot));
+  setText("trustedPacketRootA", compact(trustedA.executionStateRoot && trustedA.executionStateRoot !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? trustedA.executionStateRoot : trustedA.stateRoot));
   setText("trustedConsensusAOnB", compact(trustedA.consensusHash));
   setText(
     "trustedSourceBlockAOnB",
@@ -165,7 +192,7 @@ function renderStatus(status) {
   );
   setText("trustedPacketRangeA", trustedA.packetRange || "-");
   setText("packetSequenceB", status.progress.packetSequenceB);
-  setText("checkpointSequenceB", status.progress.checkpointSequenceB);
+  setText("headerHeightB", status.progress.headerHeightB);
   setText("trustedBOnA", status.progress.trustedBOnA);
   setText("forwardConsumedState", security.forwardConsumed ? "yes" : "no");
   setText("replayBlockedState", security.replayBlocked ? "blocked" : "pending");

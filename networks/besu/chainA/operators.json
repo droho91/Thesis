@@ -1,0 +1,17 @@
+[
+  {
+    "label": "deployer",
+    "address": "0x704A9856FD81eC195930b3Bc5e93eCeF2B691e86",
+    "privateKey": "0x47d8c8b541c10444600110b34426f6ac614fd4d364074a011df2808ed71c09b4"
+  },
+  {
+    "label": "user",
+    "address": "0xdb1CF16DC3DeD9B7A64243e84459A68865F573f1",
+    "privateKey": "0xe74eccc65ff06c43860b66144cae5d4bd2254d09f4a0bc78bb6afdb248002e10"
+  },
+  {
+    "label": "relayer",
+    "address": "0x621c89A646218895035C80DdBD73C9847d07ca40",
+    "privateKey": "0x16281fa147bbcedf640771fa5765fb2953b2ab2f44e9896166f5616f9ed04396"
+  }
+]

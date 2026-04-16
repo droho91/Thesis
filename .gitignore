@@ -25,3 +25,7 @@
 /demo/latest-run.js
 /demo/latest-run.json
 /.ibc-lite.local.json
+
+# Generated Besu runtime state
+/networks/besu/**/data
+/proofs

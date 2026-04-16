@@ -8,9 +8,9 @@
 - valid client update succeeds
 - invalid client update fails
 - duplicate update is safely rejected
-- source-certified validator rotation is required before rotated checkpoints are accepted
-- delayed checkpoints signed by a historical epoch can still be accepted after rotation
-- a superseded epoch cannot certify a post-rotation checkpoint
+- source-certified validator rotation is required before rotated-header commit seals are accepted
+- delayed headers signed by a historical epoch can still be accepted after rotation
+- a superseded epoch cannot certify a post-rotation header
 - relayer-defined truth cannot advance the client
 - conflicting certified updates freeze the client
 - recovery requires explicit recovery plus a certified successor epoch

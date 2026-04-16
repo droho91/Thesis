@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {IBCEVMTypes} from "./IBCEVMTypes.sol";
 import {IBCClientTypes} from "./IBCClientTypes.sol";
 import {IBCProofVerifier} from "./IBCProofVerifier.sol";
 import {PacketLib} from "../libs/PacketLib.sol";
@@ -36,11 +37,30 @@ contract IBCPacketHandler is IBCProofVerifier {
         require(packet.destinationPort != address(0), "DESTINATION_PORT_ZERO");
         require(_verifyPacketMembership(packet, proof), "INVALID_PACKET_PROOF");
 
+        return _consumeAndExecute(packet, proof.consensusStateHash);
+    }
+
+    function recvPacketFromStorageProof(
+        PacketLib.Packet calldata packet,
+        IBCEVMTypes.StorageProof calldata leafProof,
+        IBCEVMTypes.StorageProof calldata pathProof
+    ) external returns (bytes32 packetId) {
+        require(packet.destinationChainId == localChainId, "WRONG_DESTINATION_CHAIN");
+        require(packet.destinationPort != address(0), "DESTINATION_PORT_ZERO");
+        require(_verifyPacketStorageMembership(packet, leafProof, pathProof), "INVALID_PACKET_STORAGE_PROOF");
+
+        return _consumeAndExecute(packet, leafProof.consensusStateHash);
+    }
+
+    function _consumeAndExecute(PacketLib.Packet calldata packet, bytes32 consensusStateHash)
+        internal
+        returns (bytes32 packetId)
+    {
         packetId = PacketLib.packetIdCalldata(packet);
         require(!consumedPackets[packetId], "PACKET_ALREADY_CONSUMED");
         consumedPackets[packetId] = true;
 
-        emit PacketMembershipVerified(packetId, packet.sourceChainId, proof.consensusStateHash, msg.sender);
+        emit PacketMembershipVerified(packetId, packet.sourceChainId, consensusStateHash, msg.sender);
         IBCPacketReceiver(packet.destinationPort).onRecvPacket(packet, packetId);
         emit PacketExecuted(packetId, packet.destinationPort);
     }

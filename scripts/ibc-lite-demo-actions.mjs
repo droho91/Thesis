@@ -3,12 +3,19 @@ import { resolve } from "node:path";
 import { ethers } from "ethers";
 import {
   buildMerkleProof,
-  checkpointObject,
+  ethGetProof,
+  finalizedHeaderObject,
+  headerProducerAddress,
+  hydrateExecutionStateRoot,
   loadArtifact,
   loadConfig,
   merkleRoot,
+  normalizeRuntime,
+  packetLeafStorageSlot,
+  packetPathStorageSlot,
   packetCommitmentPath,
   providerFor,
+  rlpEncodeWord,
   signaturesFor,
   signerFor,
   stateLeaf,
@@ -25,7 +32,9 @@ const POOL_LIQUIDITY = ethers.parseUnits(process.env.POOL_LIQUIDITY || "10000", 
 const TRACE_JSON_PATH = resolve(process.cwd(), "demo", "latest-run.json");
 const TRACE_JS_PATH = resolve(process.cwd(), "demo", "latest-run.js");
 const CONFIG_PATH = resolve(process.cwd(), ".ibc-lite.local.json");
-const RECOVERY_VALIDATOR_INDICES = (process.env.RECOVERY_VALIDATOR_INDICES || "6,7,8")
+const RECOVERY_VALIDATOR_INDICES = (
+  process.env.RECOVERY_VALIDATOR_INDICES || (process.env.USE_BESU_KEYS === "true" ? "1,2,3" : "6,7,8")
+)
   .split(",")
   .map((value) => Number(value.trim()));
 
@@ -59,16 +68,21 @@ async function probeRpc(rpc) {
 }
 
 async function localHealth() {
+  const runtime = normalizeRuntime();
   if (!(await configExists())) {
     return {
       ready: false,
       deployed: false,
       label: "No deployment",
-      message: "Start both local chains, then press Deploy + Seed.",
+      runtime,
+      message: runtime.besuFirst
+        ? "Start the Besu bank chains with npm run besu:generate and npm run besu:up, then press Deploy + Seed."
+        : "Start both local chains, then press Deploy + Seed.",
     };
   }
 
   const cfg = await loadConfig();
+  const cfgRuntime = cfg.runtime || runtime;
   const [chainA, chainB] = await Promise.all([probeRpc(cfg.chains.A.rpc), probeRpc(cfg.chains.B.rpc)]);
   const missing = [];
   if (!chainA.ok) missing.push(`Bank A ${cfg.chains.A.rpc}`);
@@ -79,7 +93,10 @@ async function localHealth() {
       ready: false,
       deployed: false,
       label: "Chains offline",
-      message: `Local chain RPC not reachable: ${missing.join(", ")}. Start npm run node:chainA and npm run node:chainB.`,
+      runtime: cfgRuntime,
+      message: cfgRuntime.besuFirst
+        ? `Besu bank-chain RPC not reachable: ${missing.join(", ")}. Start npm run besu:generate and npm run besu:up.`
+        : `Local chain RPC not reachable: ${missing.join(", ")}. Start npm run node:chainA and npm run node:chainB.`,
       chains: { A: chainA, B: chainB },
     };
   }
@@ -87,7 +104,7 @@ async function localHealth() {
   const required = [
     ["A", "packetStore"],
     ["A", "validatorRegistry"],
-    ["A", "checkpointRegistry"],
+    ["A", "headerProducer"],
     ["A", "client"],
     ["A", "packetHandler"],
     ["A", "canonicalToken"],
@@ -95,7 +112,7 @@ async function localHealth() {
     ["A", "transferApp"],
     ["B", "packetStore"],
     ["B", "validatorRegistry"],
-    ["B", "checkpointRegistry"],
+    ["B", "headerProducer"],
     ["B", "client"],
     ["B", "packetHandler"],
     ["B", "voucherToken"],
@@ -111,6 +128,7 @@ async function localHealth() {
       ready: false,
       deployed: false,
       label: "Stale deployment",
+      runtime: cfgRuntime,
       message: `Deployment config is from an older stack and is missing: ${missingFields.join(", ")}. Press Deploy + Seed.`,
       chains: { A: chainA, B: chainB },
     };
@@ -129,12 +147,13 @@ async function localHealth() {
       ready: false,
       deployed: false,
       label: "Stale deployment",
+      runtime: cfgRuntime,
       message: "Local chains are running, but configured contract addresses have no code. Press Deploy + Seed after starting fresh local chains.",
       chains: { A: chainA, B: chainB },
     };
   }
 
-  return { ready: true, deployed: true, cfg, chains: { A: chainA, B: chainB } };
+  return { ready: true, deployed: true, cfg, runtime: cfgRuntime, chains: { A: chainA, B: chainB } };
 }
 
 async function loadArtifacts() {
@@ -177,6 +196,34 @@ function zeroHash(value) {
   return !value || value === ethers.ZeroHash;
 }
 
+function normalizeFlowTrace(flow) {
+  if (!flow || typeof flow !== "object" || Array.isArray(flow)) return flow;
+  return {
+    ...flow,
+    headerHeight: flow.headerHeight ?? flow.checkpointSequence,
+    headerHash: flow.headerHash ?? flow.checkpointHash,
+  };
+}
+
+function normalizeTrace(trace) {
+  if (!trace || typeof trace !== "object" || Array.isArray(trace)) return trace;
+
+  const misbehaviour =
+    trace.misbehaviour && typeof trace.misbehaviour === "object" && !Array.isArray(trace.misbehaviour)
+      ? {
+          ...trace.misbehaviour,
+          height: trace.misbehaviour.height ?? trace.misbehaviour.sequence,
+        }
+      : trace.misbehaviour;
+
+  return {
+    ...trace,
+    forward: normalizeFlowTrace(trace.forward),
+    reverse: normalizeFlowTrace(trace.reverse),
+    misbehaviour,
+  };
+}
+
 async function consensusSummary(client, sourceChainId, consensusHash) {
   if (zeroHash(consensusHash)) return null;
   const state = await client.consensusState(sourceChainId, consensusHash);
@@ -184,14 +231,21 @@ async function consensusSummary(client, sourceChainId, consensusHash) {
     consensusHash,
     validatorEpochId: state.validatorEpochId.toString(),
     validatorEpochHash: state.validatorEpochHash,
-    checkpointSequence: state.sequence.toString(),
+    headerHeight: state.height.toString(),
+    blockHash: state.blockHash,
     packetRoot: state.packetRoot,
     stateRoot: state.stateRoot,
+    executionStateRoot: state.executionStateRoot,
     packetRange: `${state.firstPacketSequence.toString()}-${state.lastPacketSequence.toString()}`,
     packetCount: state.packetCount.toString(),
     sourceBlockNumber: state.sourceBlockNumber.toString(),
     sourceBlockHash: state.sourceBlockHash,
   };
+}
+
+async function bindHeaderHash(client, header) {
+  header.blockHash = await client.hashHeader(header);
+  return header;
 }
 
 function packetTuple({
@@ -299,50 +353,55 @@ async function ensureSeed(ctx) {
   await (await canonical.connect(userA).approve(cfg.chains.A.escrowVault, ethers.MaxUint256)).wait();
 }
 
-async function latestCheckpoint(chainKey, ctx) {
+async function latestFinalizedHeader(chainKey, ctx) {
   const { cfg, artifacts } = ctx;
-  const registry = new ethers.Contract(
-    cfg.chains[chainKey].checkpointRegistry,
+  const headerProducer = new ethers.Contract(
+    headerProducerAddress(cfg.chains[chainKey]),
     artifacts.checkpointRegistry.abi,
     providerFor(cfg, chainKey)
   );
-  const sequence = await registry.checkpointSequence();
-  if (sequence === 0n) throw new Error(`[${chainKey}] No checkpoint exists yet.`);
-  return checkpointObject(await registry.checkpointsBySequence(sequence));
+  const height = await headerProducer.headerHeight();
+  if (height === 0n) throw new Error(`[${chainKey}] No finalized header exists yet.`);
+  return finalizedHeaderObject(await headerProducer.headersByHeight(height));
 }
 
-async function commitCheckpoint(chainKey, ctx) {
+async function finalizeHeader(chainKey, ctx) {
   const { cfg, artifacts } = ctx;
   const signer = await signerFor(cfg, chainKey, 0);
   const chain = cfg.chains[chainKey];
   const packetStore = new ethers.Contract(chain.packetStore, artifacts.packetStore.abi, signer);
-  const registry = new ethers.Contract(chain.checkpointRegistry, artifacts.checkpointRegistry.abi, signer);
+  const headerProducer = new ethers.Contract(headerProducerAddress(chain), artifacts.checkpointRegistry.abi, signer);
   const packetSequence = await packetStore.packetSequence();
-  const committed = await registry.lastCommittedPacketSequence();
+  const committed = await headerProducer.lastCommittedPacketSequence();
 
   if (packetSequence === 0n) throw new Error(`[${chainKey}] No packet has been written yet.`);
   if (packetSequence > committed) {
-    await (await registry.commitCheckpoint(packetSequence)).wait();
+    await (await headerProducer.finalizeHeader(packetSequence)).wait();
   }
 
-  return latestCheckpoint(chainKey, ctx);
+  return latestFinalizedHeader(chainKey, ctx);
 }
 
 async function updateRemoteClient(sourceKey, destinationKey, ctx) {
   const { cfg, artifacts } = ctx;
-  const checkpoint = await latestCheckpoint(sourceKey, ctx);
+  const runtime = cfg.runtime || normalizeRuntime(cfg);
+  const header = await hydrateExecutionStateRoot(cfg, sourceKey, await latestFinalizedHeader(sourceKey, ctx), {
+    strict: runtime.proofPolicy === "storage-required",
+  });
   const sourceProvider = providerFor(cfg, sourceKey);
   const destinationSigner = await signerFor(cfg, destinationKey, 0);
   const client = new ethers.Contract(cfg.chains[destinationKey].client, artifacts.client.abi, destinationSigner);
-  const consensusHash = await client.hashConsensusState(checkpoint);
-  const already = await client.consensusStateHashBySequence(cfg.chains[sourceKey].chainId, checkpoint.sequence);
+  const finalizedHeader = await bindHeaderHash(client, header);
+  const consensusHash = await client.hashConsensusState(finalizedHeader);
+  const commitDigest = await client.hashCommitment(finalizedHeader);
+  const already = await client.consensusStateHashBySequence(cfg.chains[sourceKey].chainId, finalizedHeader.height);
 
   if (already === ethers.ZeroHash) {
-    const signatures = await signaturesFor(sourceProvider, consensusHash);
-    await (await client.updateState([checkpoint], signatures)).wait();
+    const signatures = await signaturesFor(sourceKey, sourceProvider, commitDigest);
+    await (await client.updateState([finalizedHeader], signatures)).wait();
   }
 
-  return { checkpoint, consensusHash };
+  return { header: finalizedHeader, consensusHash };
 }
 
 async function packetFor(sourceKey, destinationKey, action, ctx, sequence) {
@@ -383,7 +442,10 @@ async function packetFor(sourceKey, destinationKey, action, ctx, sequence) {
 
 async function relayPacket(sourceKey, destinationKey, action, ctx) {
   const { cfg, artifacts } = ctx;
-  const checkpoint = await latestCheckpoint(sourceKey, ctx);
+  const runtime = cfg.runtime || normalizeRuntime(cfg);
+  const header = await hydrateExecutionStateRoot(cfg, sourceKey, await latestFinalizedHeader(sourceKey, ctx), {
+    strict: runtime.proofPolicy === "storage-required",
+  });
   const destinationSigner = await signerFor(cfg, destinationKey, 0);
   const sourceProvider = providerFor(cfg, sourceKey);
   const source = cfg.chains[sourceKey];
@@ -391,27 +453,106 @@ async function relayPacket(sourceKey, destinationKey, action, ctx) {
   const client = new ethers.Contract(destination.client, artifacts.client.abi, destinationSigner);
   const packetStore = new ethers.Contract(source.packetStore, artifacts.packetStore.abi, sourceProvider);
   const handler = new ethers.Contract(destination.packetHandler, artifacts.handler.abi, destinationSigner);
-  const consensusHash = await client.consensusStateHashBySequence(source.chainId, checkpoint.sequence);
+  const consensusHash = await client.consensusStateHashBySequence(source.chainId, header.height);
   if (consensusHash === ethers.ZeroHash) {
-    throw new Error(`[${destinationKey}] Remote client has not trusted checkpoint #${checkpoint.sequence}.`);
+    throw new Error(`[${destinationKey}] Remote client has not trusted header #${header.height}.`);
+  }
+  const trustedRoot = await client.trustedStateRoot(source.chainId, consensusHash);
+  const packet = await packetFor(sourceKey, destinationKey, action, ctx, header.lastPacketSequence);
+  const packetId = await packetStore.packetIdAt(packet.sequence);
+  const packetLeaf = await packetStore.packetLeafAt(packet.sequence);
+  const packetPath = await packetStore.packetPathAt(packet.sequence);
+
+  if (header.executionStateRoot !== ethers.ZeroHash && trustedRoot === header.executionStateRoot) {
+    try {
+      const proof = await ethGetProof(
+        sourceProvider,
+        source.packetStore,
+        [packetLeafStorageSlot(packet.sequence), packetPathStorageSlot(packet.sequence)],
+        header.sourceBlockNumber
+      );
+      const leafWitness = proof.storageProof.find(
+        (entry) => entry.key.toLowerCase() === packetLeafStorageSlot(packet.sequence).toLowerCase()
+      );
+      const pathWitness = proof.storageProof.find(
+        (entry) => entry.key.toLowerCase() === packetPathStorageSlot(packet.sequence).toLowerCase()
+      );
+      if (!leafWitness || !pathWitness) throw new Error("missing storage proof witness");
+
+      const leafProof = {
+        sourceChainId: BigInt(source.chainId),
+        consensusStateHash: consensusHash,
+        stateRoot: trustedRoot,
+        account: source.packetStore,
+        storageKey: packetLeafStorageSlot(packet.sequence),
+        expectedValue: rlpEncodeWord(packetLeaf),
+        accountProof: proof.accountProof,
+        storageProof: leafWitness.proof,
+      };
+      const pathProof = {
+        sourceChainId: BigInt(source.chainId),
+        consensusStateHash: consensusHash,
+        stateRoot: trustedRoot,
+        account: source.packetStore,
+        storageKey: packetPathStorageSlot(packet.sequence),
+        expectedValue: rlpEncodeWord(packetPath),
+        accountProof: proof.accountProof,
+        storageProof: pathWitness.proof,
+      };
+
+      await (await handler.recvPacketFromStorageProof(packet, leafProof, pathProof)).wait();
+
+      return {
+        packetId,
+        leafIndex: null,
+        header,
+        packetRoot: header.packetRoot,
+        stateRoot: header.stateRoot,
+        executionStateRoot: trustedRoot,
+        consensusHash,
+        proofMode: "storage",
+      };
+    } catch (error) {
+      if (!runtime.allowMerkleFallback) {
+        throw new Error(
+          `[${destinationKey}] Storage proof is required in ${runtime.mode} runtime, but proof execution failed: ${error.message}`
+        );
+      }
+      console.warn(
+        `[${destinationKey}] storage proof unavailable for ${sourceKey} packet ${short(packetId)}; falling back to packet-state Merkle proof`
+      );
+    }
+  }
+
+  if (!runtime.allowMerkleFallback) {
+    throw new Error(
+      `[${destinationKey}] Storage proof is required in ${runtime.mode} runtime, but the trusted execution state root was unavailable.`
+    );
   }
 
   const leaves = [];
-  for (let sequence = checkpoint.firstPacketSequence; sequence <= checkpoint.lastPacketSequence; sequence++) {
+  for (let sequence = header.firstPacketSequence; sequence <= header.lastPacketSequence; sequence++) {
     const path = await packetStore.packetPathAt(sequence);
     const leaf = await packetStore.packetLeafAt(sequence);
     leaves.push(stateLeaf(path, leaf));
   }
 
   const root = merkleRoot(leaves);
-  if (root !== checkpoint.stateRoot) throw new Error(`[${sourceKey}] State root mismatch.`);
-  const packet = await packetFor(sourceKey, destinationKey, action, ctx, checkpoint.lastPacketSequence);
-  const leafIndex = Number(packet.sequence - checkpoint.firstPacketSequence);
-  const packetId = await packetStore.packetIdAt(packet.sequence);
+  if (root !== header.stateRoot) throw new Error(`[${sourceKey}] State root mismatch.`);
+  const leafIndex = Number(packet.sequence - header.firstPacketSequence);
 
   await (await handler.recvPacket(packet, [consensusHash, leafIndex, buildMerkleProof(leaves, leafIndex)])).wait();
 
-  return { packetId, leafIndex, checkpoint, packetRoot: checkpoint.packetRoot, stateRoot: root, consensusHash };
+  return {
+    packetId,
+    leafIndex,
+    header,
+    packetRoot: header.packetRoot,
+    stateRoot: root,
+    executionStateRoot: trustedRoot !== header.stateRoot ? trustedRoot : ethers.ZeroHash,
+    consensusHash,
+    proofMode: "merkle",
+  };
 }
 
 function isReplayRejection(error) {
@@ -421,14 +562,14 @@ function isReplayRejection(error) {
 
 async function verifyForwardNonMembership(ctx) {
   const { cfg, artifacts } = ctx;
-  const checkpoint = await latestCheckpoint("A", ctx);
+  const header = await latestFinalizedHeader("A", ctx);
   const client = new ethers.Contract(cfg.chains.B.client, artifacts.client.abi, providerFor(cfg, "B"));
-  const consensusHash = await client.consensusStateHashBySequence(cfg.chains.A.chainId, checkpoint.sequence);
+  const consensusHash = await client.consensusStateHashBySequence(cfg.chains.A.chainId, header.height);
   if (consensusHash === ethers.ZeroHash) {
-    throw new Error("[B] Bank B client has not trusted the Bank A checkpoint yet.");
+    throw new Error("[B] Bank B client has not trusted the Bank A header yet.");
   }
 
-  const absentSequence = checkpoint.lastPacketSequence + 1n;
+  const absentSequence = header.lastPacketSequence + 1n;
   const absentPacket = await packetFor("A", "B", ACTION_LOCK_MINT, ctx, absentSequence);
   const absentLeaf = packetLeaf(absentPacket);
   const path = packetCommitmentPath(cfg.chains.A.chainId, cfg.chains.A.transferApp, absentSequence);
@@ -450,7 +591,7 @@ async function verifyForwardNonMembership(ctx) {
 async function writeTracePatch(patch) {
   let trace = {};
   try {
-    trace = JSON.parse(await readFile(TRACE_JSON_PATH, "utf8"));
+    trace = normalizeTrace(JSON.parse(await readFile(TRACE_JSON_PATH, "utf8")));
   } catch {
     trace = {};
   }
@@ -470,6 +611,7 @@ async function writeTracePatch(patch) {
       trace[key] = value;
     }
   }
+  trace = normalizeTrace(trace);
   await writeFile(TRACE_JSON_PATH, `${JSON.stringify(trace, null, 2)}\n`);
   await writeFile(TRACE_JS_PATH, `window.IBCLiteLatestRun = ${JSON.stringify(trace, null, 2)};\n`);
   return trace;
@@ -480,17 +622,18 @@ async function submitConflict(ctx) {
   const sourceProvider = providerFor(cfg, "A");
   const destinationSigner = await signerFor(cfg, "B", 0);
   const client = new ethers.Contract(cfg.chains.B.client, artifacts.client.abi, destinationSigner);
-  const checkpoint = await latestCheckpoint("A", ctx);
-  const existing = await client.consensusStateHashBySequence(cfg.chains.A.chainId, checkpoint.sequence);
-  if (existing === ethers.ZeroHash) throw new Error("Bank B must trust an A checkpoint before conflict evidence can freeze it.");
+  const header = await latestFinalizedHeader("A", ctx);
+  const existing = await client.consensusStateHashBySequence(cfg.chains.A.chainId, header.height);
+  if (existing === ethers.ZeroHash) throw new Error("Bank B must trust an A header before conflict evidence can freeze it.");
 
-  checkpoint.packetRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict:A:${Date.now()}`));
-  checkpoint.stateRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict-state:A:${Date.now()}`));
-  checkpoint.sourceCommitmentHash = await client.hashSourceCommitment(checkpoint);
-  const conflictHash = await client.hashConsensusState(checkpoint);
-  const signatures = await signaturesFor(sourceProvider, conflictHash);
-  await (await client.updateState([checkpoint], signatures)).wait();
-  return { conflictHash, sequence: checkpoint.sequence.toString() };
+  header.packetRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict:A:${Date.now()}`));
+  header.stateRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict-state:A:${Date.now()}`));
+  header.blockHash = await client.hashHeader(header);
+  const conflictHash = await client.hashConsensusState(header);
+  const commitDigest = await client.hashCommitment(header);
+  const signatures = await signaturesFor("A", sourceProvider, commitDigest);
+  await (await client.updateState([header], signatures)).wait();
+  return { conflictHash, height: header.height.toString() };
 }
 
 async function recoverBankBClientForA(ctx) {
@@ -502,13 +645,13 @@ async function recoverBankBClientForA(ctx) {
   const client = new ethers.Contract(cfg.chains.B.client, artifacts.client.abi, ownerB);
   const currentEpochId = await validatorRegistry.activeValidatorEpochId();
   const nextEpochId = currentEpochId + 1n;
-  const validators = await validatorAddresses(sourceProvider, RECOVERY_VALIDATOR_INDICES);
+  const validators = await validatorAddresses("A", sourceProvider, RECOVERY_VALIDATOR_INDICES);
   const powers = validators.map(() => 1n);
 
   await (await client.beginRecovery(cfg.chains.A.chainId)).wait();
   await (await validatorRegistry.commitValidatorEpoch(nextEpochId, validators, powers)).wait();
   const epoch = validatorEpochObject(await validatorRegistry.validatorEpoch(nextEpochId));
-  const signatures = await signaturesFor(sourceProvider, epoch.epochHash);
+  const signatures = await signaturesFor("A", sourceProvider, epoch.epochHash);
   await (await client.updateValidatorEpoch(epoch, signatures)).wait();
   return { epochId: nextEpochId.toString(), epochHash: epoch.epochHash };
 }
@@ -588,13 +731,13 @@ export async function readDemoStatus() {
     : null;
   const packetA = new ethers.Contract(cfg.chains.A.packetStore, artifacts.packetStore.abi, providerFor(cfg, "A"));
   const packetB = new ethers.Contract(cfg.chains.B.packetStore, artifacts.packetStore.abi, providerFor(cfg, "B"));
-  const checkpointA = new ethers.Contract(
-    cfg.chains.A.checkpointRegistry,
+  const headerProducerA = new ethers.Contract(
+    headerProducerAddress(cfg.chains.A),
     artifacts.checkpointRegistry.abi,
     providerFor(cfg, "A")
   );
-  const checkpointB = new ethers.Contract(
-    cfg.chains.B.checkpointRegistry,
+  const headerProducerB = new ethers.Contract(
+    headerProducerAddress(cfg.chains.B),
     artifacts.checkpointRegistry.abi,
     providerFor(cfg, "B")
   );
@@ -605,7 +748,7 @@ export async function readDemoStatus() {
 
   let trace = null;
   try {
-    trace = JSON.parse(await readFile(TRACE_JSON_PATH, "utf8"));
+    trace = normalizeTrace(JSON.parse(await readFile(TRACE_JSON_PATH, "utf8")));
   } catch {
     trace = null;
   }
@@ -620,8 +763,8 @@ export async function readDemoStatus() {
     poolLiquidity,
     packetSequenceA,
     packetSequenceB,
-    checkpointSequenceA,
-    checkpointSequenceB,
+    headerHeightA,
+    headerHeightB,
     trustedAOnB,
     trustedBOnA,
     statusAOnB,
@@ -642,8 +785,8 @@ export async function readDemoStatus() {
     debtToken && lendingPool ? debtToken.balanceOf(cfg.chains.B.lendingPool) : 0n,
     packetA.packetSequence(),
     packetB.packetSequence(),
-    checkpointA.checkpointSequence(),
-    checkpointB.checkpointSequence(),
+    headerProducerA.headerHeight(),
+    headerProducerB.headerHeight(),
     clientB.latestConsensusStateSequence(cfg.chains.A.chainId),
     clientA.latestConsensusStateSequence(cfg.chains.B.chainId),
     clientB.status(cfg.chains.A.chainId),
@@ -665,6 +808,7 @@ export async function readDemoStatus() {
 
   return {
     deployed: true,
+    runtime: health.runtime || cfg.runtime || normalizeRuntime(cfg),
     userA: userAAddress,
     userB: userBAddress,
     amount: units(TRANSFER_AMOUNT),
@@ -680,8 +824,8 @@ export async function readDemoStatus() {
     progress: {
       packetSequenceA: packetSequenceA.toString(),
       packetSequenceB: packetSequenceB.toString(),
-      checkpointSequenceA: checkpointSequenceA.toString(),
-      checkpointSequenceB: checkpointSequenceB.toString(),
+      headerHeightA: headerHeightA.toString(),
+      headerHeightB: headerHeightB.toString(),
       trustedAOnB: trustedAOnB.toString(),
       trustedBOnA: trustedBOnA.toString(),
       statusAOnB: Number(statusAOnB),
@@ -722,40 +866,44 @@ export async function runDemoAction(action) {
     const appA = new ethers.Contract(cfg.chains.A.transferApp, artifacts.app.abi, userA);
     await (await appA.sendTransfer(cfg.chains.B.chainId, await userB.getAddress(), TRANSFER_AMOUNT)).wait();
     message = `Locked ${units(TRANSFER_AMOUNT)} aBANK on Bank A and wrote a packet commitment.`;
-  } else if (action === "checkpointForward") {
-    const checkpoint = await commitCheckpoint("A", ctx);
+  } else if (action === "finalizeForwardHeader") {
+    const header = await finalizeHeader("A", ctx);
     trace = await writeTracePatch({
       forward: {
-        checkpointSequence: checkpoint.sequence.toString(),
-        checkpointHash: checkpoint.sourceCommitmentHash,
-        packetRoot: checkpoint.packetRoot,
-        stateRoot: checkpoint.stateRoot,
+        headerHeight: header.height.toString(),
+        headerHash: header.blockHash,
+        packetRoot: header.packetRoot,
+        stateRoot: header.stateRoot,
+        executionStateRoot: header.executionStateRoot,
       },
     });
-    message = `Committed Bank A checkpoint #${checkpoint.sequence}.`;
+    message = `Finalized Bank A header #${header.height}.`;
   } else if (action === "updateForwardClient") {
-    const { checkpoint, consensusHash } = await updateRemoteClient("A", "B", ctx);
+    const { header, consensusHash } = await updateRemoteClient("A", "B", ctx);
     trace = await writeTracePatch({
       forward: {
-        checkpointSequence: checkpoint.sequence.toString(),
-        checkpointHash: checkpoint.sourceCommitmentHash,
-        packetRoot: checkpoint.packetRoot,
-        stateRoot: checkpoint.stateRoot,
+        headerHeight: header.height.toString(),
+        headerHash: header.blockHash,
+        packetRoot: header.packetRoot,
+        stateRoot: header.stateRoot,
+        executionStateRoot: header.executionStateRoot,
         consensusHash,
       },
     });
-    message = `Updated Bank B client with Bank A checkpoint #${checkpoint.sequence}.`;
+    message = `Updated Bank B client with Bank A finalized header #${header.height}.`;
   } else if (action === "proveForwardMint") {
     const proof = await relayPacket("A", "B", ACTION_LOCK_MINT, ctx);
     trace = await writeTracePatch({
       forward: {
         packetId: proof.packetId,
-        leafIndex: String(proof.leafIndex),
+        leafIndex: proof.leafIndex == null ? null : String(proof.leafIndex),
         packetRoot: proof.packetRoot,
         stateRoot: proof.stateRoot,
-        checkpointSequence: proof.checkpoint.sequence.toString(),
-        checkpointHash: proof.checkpoint.sourceCommitmentHash,
+        executionStateRoot: proof.executionStateRoot,
+        headerHeight: proof.header.height.toString(),
+        headerHash: proof.header.blockHash,
         consensusHash: proof.consensusHash,
+        proofMode: proof.proofMode,
       },
     });
     message = `Verified packet membership on Bank B and minted voucher ${short(proof.packetId)}.`;
@@ -817,47 +965,51 @@ export async function runDemoAction(action) {
     const appB = new ethers.Contract(cfg.chains.B.transferApp, artifacts.app.abi, userB);
     await (await appB.burnAndRelease(cfg.chains.A.chainId, await userA.getAddress(), TRANSFER_AMOUNT)).wait();
     message = `Burned voucher on Bank B and wrote a reverse packet commitment.`;
-  } else if (action === "checkpointReverse") {
-    const checkpoint = await commitCheckpoint("B", ctx);
+  } else if (action === "finalizeReverseHeader") {
+    const header = await finalizeHeader("B", ctx);
     trace = await writeTracePatch({
       reverse: {
-        checkpointSequence: checkpoint.sequence.toString(),
-        checkpointHash: checkpoint.sourceCommitmentHash,
-        packetRoot: checkpoint.packetRoot,
-        stateRoot: checkpoint.stateRoot,
+        headerHeight: header.height.toString(),
+        headerHash: header.blockHash,
+        packetRoot: header.packetRoot,
+        stateRoot: header.stateRoot,
+        executionStateRoot: header.executionStateRoot,
       },
     });
-    message = `Committed Bank B checkpoint #${checkpoint.sequence}.`;
+    message = `Finalized Bank B header #${header.height}.`;
   } else if (action === "updateReverseClient") {
-    const { checkpoint, consensusHash } = await updateRemoteClient("B", "A", ctx);
+    const { header, consensusHash } = await updateRemoteClient("B", "A", ctx);
     trace = await writeTracePatch({
       reverse: {
-        checkpointSequence: checkpoint.sequence.toString(),
-        checkpointHash: checkpoint.sourceCommitmentHash,
-        packetRoot: checkpoint.packetRoot,
-        stateRoot: checkpoint.stateRoot,
+        headerHeight: header.height.toString(),
+        headerHash: header.blockHash,
+        packetRoot: header.packetRoot,
+        stateRoot: header.stateRoot,
+        executionStateRoot: header.executionStateRoot,
         consensusHash,
       },
     });
-    message = `Updated Bank A client with Bank B checkpoint #${checkpoint.sequence}.`;
+    message = `Updated Bank A client with Bank B finalized header #${header.height}.`;
   } else if (action === "proveReverseUnlock") {
     const proof = await relayPacket("B", "A", ACTION_BURN_UNLOCK, ctx);
     trace = await writeTracePatch({
       reverse: {
         packetId: proof.packetId,
-        leafIndex: String(proof.leafIndex),
+        leafIndex: proof.leafIndex == null ? null : String(proof.leafIndex),
         packetRoot: proof.packetRoot,
         stateRoot: proof.stateRoot,
-        checkpointSequence: proof.checkpoint.sequence.toString(),
-        checkpointHash: proof.checkpoint.sourceCommitmentHash,
+        executionStateRoot: proof.executionStateRoot,
+        headerHeight: proof.header.height.toString(),
+        headerHash: proof.header.blockHash,
         consensusHash: proof.consensusHash,
+        proofMode: proof.proofMode,
       },
     });
     message = `Verified reverse packet on Bank A and unescrowed aBANK ${short(proof.packetId)}.`;
   } else if (action === "freezeClient") {
     const conflict = await submitConflict(ctx);
     trace = await writeTracePatch({ misbehaviour: { frozen: true, ...conflict } });
-    message = `Submitted conflicting checkpoint evidence. Bank B client for Bank A is frozen at sequence ${conflict.sequence}.`;
+    message = `Submitted conflicting finalized-header evidence. Bank B client for Bank A is frozen at height ${conflict.height}.`;
   } else if (action === "recoverClient") {
     const recovery = await recoverBankBClientForA(ctx);
     trace = await writeTracePatch({ misbehaviour: { frozen: false, recovered: true, ...recovery } });
@@ -865,7 +1017,7 @@ export async function runDemoAction(action) {
   } else if (action === "fullFlow") {
     for (const step of [
       "lock",
-      "checkpointForward",
+      "finalizeForwardHeader",
       "updateForwardClient",
       "proveForwardMint",
       "depositCollateral",
@@ -873,7 +1025,7 @@ export async function runDemoAction(action) {
       "repay",
       "withdrawCollateral",
       "burn",
-      "checkpointReverse",
+      "finalizeReverseHeader",
       "updateReverseClient",
       "proveReverseUnlock",
     ]) {

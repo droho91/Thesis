@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { readDemoStatus, runDemoAction } from "./ibc-lite-demo-actions.mjs";
+import { normalizeRuntime } from "./ibc-lite-common.mjs";
 
 const root = resolve(process.cwd(), "demo");
 const port = Number(process.env.DEMO_UI_PORT || 5173);
@@ -81,9 +82,31 @@ async function hasDeploymentConfig() {
   }
 }
 
+async function runtimeScripts() {
+  const defaults = normalizeRuntime();
+  if (!(await hasDeploymentConfig())) {
+    return defaults.besuFirst
+      ? { deploy: "deploy:ibc-lite", seed: "seed:ibc-lite", flow: "demo:flow", runtime: defaults }
+      : { deploy: "legacy:deploy:ibc-lite", seed: "legacy:seed:ibc-lite", flow: "legacy:demo:flow", runtime: defaults };
+  }
+
+  try {
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    const runtime = normalizeRuntime(config);
+    return runtime.besuFirst
+      ? { deploy: "deploy:ibc-lite", seed: "seed:ibc-lite", flow: "demo:flow", runtime }
+      : { deploy: "legacy:deploy:ibc-lite", seed: "legacy:seed:ibc-lite", flow: "legacy:demo:flow", runtime };
+  } catch {
+    return defaults.besuFirst
+      ? { deploy: "deploy:ibc-lite", seed: "seed:ibc-lite", flow: "demo:flow", runtime: defaults }
+      : { deploy: "legacy:deploy:ibc-lite", seed: "legacy:seed:ibc-lite", flow: "legacy:demo:flow", runtime: defaults };
+  }
+}
+
 async function deployAndSeed() {
-  const deploy = await runCommand(npm, ["run", "deploy:ibc-lite"]);
-  const seed = await runCommand(npm, ["run", "seed:ibc-lite"]);
+  const scripts = await runtimeScripts();
+  const deploy = await runCommand(npm, ["run", scripts.deploy]);
+  const seed = await runCommand(npm, ["run", scripts.seed]);
   return `${deploy}\n${seed}`;
 }
 
@@ -99,7 +122,8 @@ async function runFlowStrict() {
   }
 
   try {
-    output += await runCommand(npm, ["run", "demo:flow"]);
+    const scripts = await runtimeScripts();
+    output += await runCommand(npm, ["run", scripts.flow]);
     return { ok: true, output };
   } catch (error) {
     output += "\n[controller] Flow failed. No automatic redeploy or retry was performed.\n";
@@ -111,10 +135,12 @@ async function runFlowStrict() {
 async function handleApi(req, res, url) {
   try {
     if (req.method === "GET" && url.pathname === "/api/health") {
+      const scripts = await runtimeScripts();
       return sendJson(res, 200, {
         ok: true,
         platform: process.platform,
         cwd: process.cwd(),
+        runtime: scripts.runtime,
         hasDeploymentConfig: await hasDeploymentConfig(),
         trace: await readTrace(),
       });

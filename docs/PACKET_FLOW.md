@@ -6,12 +6,12 @@
 2. `EscrowVault` transfers canonical tokens from the user into escrow.
 3. `MinimalTransferApp` builds a packet with action `ACTION_LOCK_MINT`.
 4. `SourcePacketCommitment` appends the packet leaf to canonical source state.
-5. `SourceCheckpointRegistry` commits a packet range, packet Merkle root, and Merkle state root.
-6. Bank A validators sign the exact checkpoint hash.
-7. A relayer submits the checkpoint as a `ClientMessage` to Bank B's `BankChainClient`.
+5. The local header producer finalizes a packet range, packet Merkle root, and Merkle state root.
+6. Bank A validators sign the QBFT/IBFT-like commit digest for the finalized header hash.
+7. A relayer submits the header and commit seals as a `ClientMessage` to Bank B's `BankChainClient`.
 8. Bank B's client stores a trusted consensus state.
-9. A relayer submits the packet and Merkle proof to `IBCPacketHandler`.
-10. The handler verifies the packet commitment path/value against the trusted Bank A state root.
+9. In the Besu-first runtime, a relayer submits `eth_getProof` witnesses for the `packetLeafAt` and `packetPathAt` storage slots to `IBCPacketHandler.recvPacketFromStorageProof`.
+10. The handler verifies the packet commitment against the trusted Bank A execution state root.
 11. The handler consumes the packet id.
 12. `MinimalTransferApp` mints `VoucherToken` to the recipient.
 
@@ -34,19 +34,19 @@ This keeps the thesis story clear: the lending system is possible because the tw
 
 The local proof supports two cases:
 
-- a future sequence greater than the trusted checkpoint's last packet sequence
+- a future sequence greater than the trusted header's last packet sequence
 - a claimed packet body that is absent because another packet leaf occupies the same sequence
 
-This is useful for demonstrating timeout-like and missing-commitment reasoning while moving the verifier to state-root path/value semantics.
+This is useful for demonstrating timeout-like and missing-commitment reasoning while moving the verifier to execution-state-root semantics.
 
 ## Burn And Unescrow
 
 1. A user calls `MinimalTransferApp.burnAndRelease` on Bank B.
 2. `VoucherToken` burns the voucher.
 3. Bank B writes a reverse packet commitment.
-4. Bank B checkpoint progression creates a source-certified state root.
-5. Bank A's remote client accepts the certified Bank B checkpoint.
-6. Bank A's packet handler verifies the reverse packet membership proof.
+4. Bank B finalized-header progression creates a certified state root.
+5. Bank A's remote client accepts the certified Bank B header and commit seals.
+6. Bank A's packet handler verifies the reverse packet proof against the trusted Bank B execution state root.
 7. The packet id is consumed.
 8. `EscrowVault` unescrows the canonical asset.
 

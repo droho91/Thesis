@@ -8,6 +8,10 @@ import {IBCClientTypes} from "./IBCClientTypes.sol";
 interface IBCClient {
     function status(uint256 sourceChainId) external view returns (IBCClientTypes.Status);
 
+    function trustedStateRoot(uint256 sourceChainId, bytes32 consensusStateHash) external view returns (bytes32);
+
+    function trustedPacketCommitment(uint256 sourceChainId, bytes32 consensusStateHash) external view returns (address);
+
     function verifyMembership(
         uint256 sourceChainId,
         bytes32 consensusStateHash,

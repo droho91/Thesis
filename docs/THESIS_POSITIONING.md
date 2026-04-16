@@ -11,7 +11,7 @@ If two banks each operate their own permissioned EVM chain, and neither bank wan
 This repository answers that question with a local IBC/light-client-like model:
 
 - each bank chain writes canonical packet commitments on its own source chain,
-- source validators certify finalized checkpoint artifacts,
+- source validators certify finalized QBFT/IBFT-like header artifacts,
 - the counterparty chain stores a remote client state,
 - packet execution requires membership verification against trusted remote state,
 - replay is blocked by consumed packet ids,
@@ -40,7 +40,7 @@ The lending part is intentionally small:
 
 1. Bank A escrows `aBANK`.
 2. Bank A writes a packet commitment.
-3. Bank B updates its Bank A client from a certified checkpoint.
+3. Bank B updates its Bank A client from a certified finalized header and commit seals.
 4. Bank B verifies the packet proof and mints `vA`.
 5. Bank B lending pool accepts `vA` as collateral.
 6. The user borrows local Bank B liquidity `bCASH`.
@@ -60,3 +60,16 @@ This is not a production IBC implementation. It does not include:
 - mainnet RPC or paid proving infrastructure.
 
 Those are intentionally outside the local zero-cost thesis prototype. The implemented model is enough to demonstrate the key bank-chain question: cross-chain application state should be accepted only through a remote client and proof verification path, not through trusted relayers or product-admin shortcuts.
+
+## Direction-1 Transition
+
+The next technically honest step for this thesis is not to relabel the current helper contracts as if they were production IBC or production QBFT.
+
+It is to move the local bank chains onto a real permissioned-EVM client stack such as Besu QBFT, and then:
+
+- fetch real finalized EVM headers,
+- fetch real EVM account/storage proofs with `eth_getProof`,
+- verify those artifacts through the remote client path,
+- add minimal connection/channel/ack/timeout semantics on top of that proof path.
+
+The repository now includes the first scaffolding for that move in `docs/EVM_BESU_DIRECTION.md`, `scripts/generate-besu-qbft-networks.mjs`, `scripts/fetch-besu-header.mjs`, and `scripts/fetch-eth-proof.mjs`.

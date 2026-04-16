@@ -4,110 +4,134 @@ pragma solidity ^0.8.28;
 import {CommitmentLib} from "../libs/CommitmentLib.sol";
 
 /// @title BankChainClientMessage
-/// @notice Source-certified client update messages accepted by the bank-chain client.
+/// @notice QBFT/IBFT-like finalized header messages accepted by the bank-chain client.
 library BankChainClientMessage {
-    struct Checkpoint {
+    struct Header {
         uint256 sourceChainId;
-        address sourceCheckpointRegistry;
+        address sourceHeaderProducer;
         address sourcePacketCommitment;
         address sourceValidatorSetRegistry;
         uint256 validatorEpochId;
         bytes32 validatorEpochHash;
-        uint256 sequence;
-        bytes32 parentCheckpointHash;
+        uint256 height;
+        bytes32 parentHash;
         bytes32 packetRoot;
         bytes32 stateRoot;
+        bytes32 executionStateRoot;
         uint256 firstPacketSequence;
         uint256 lastPacketSequence;
         uint256 packetCount;
         bytes32 packetAccumulator;
         uint256 sourceBlockNumber;
         bytes32 sourceBlockHash;
+        uint64 round;
         uint256 timestamp;
-        bytes32 sourceCommitmentHash;
+        bytes32 blockHash;
     }
 
     struct ClientMessage {
-        Checkpoint checkpoint;
+        Header header;
     }
 
-    function sourceCommitmentHash(Checkpoint memory checkpoint) internal pure returns (bytes32) {
+    function headerHash(Header memory header) internal pure returns (bytes32) {
         bytes32 endpointHash = keccak256(
             abi.encode(
-                checkpoint.sourceChainId,
-                checkpoint.sourceCheckpointRegistry,
-                checkpoint.sourcePacketCommitment,
-                checkpoint.sourceValidatorSetRegistry
+                header.sourceChainId,
+                header.sourceHeaderProducer,
+                header.sourcePacketCommitment,
+                header.sourceValidatorSetRegistry
             )
         );
-        bytes32 packetRangeHash = keccak256(
+        bytes32 validatorHash =
+            keccak256(abi.encode(header.validatorEpochId, header.validatorEpochHash));
+        bytes32 packetHash = keccak256(
             abi.encode(
-                checkpoint.packetRoot,
-                checkpoint.stateRoot,
-                checkpoint.firstPacketSequence,
-                checkpoint.lastPacketSequence,
-                checkpoint.packetCount,
-                checkpoint.packetAccumulator
+                header.packetRoot,
+                header.stateRoot,
+                header.executionStateRoot,
+                header.firstPacketSequence,
+                header.lastPacketSequence,
+                header.packetCount,
+                header.packetAccumulator
             )
         );
-        bytes32 sourceAnchorHash = keccak256(
-            abi.encode(checkpoint.sourceBlockNumber, checkpoint.sourceBlockHash, checkpoint.timestamp)
-        );
+        bytes32 anchorHash =
+            keccak256(abi.encode(header.sourceBlockNumber, header.sourceBlockHash, header.round, header.timestamp));
         return keccak256(
             abi.encode(
-                CommitmentLib.SOURCE_COMMITMENT_TYPEHASH,
+                CommitmentLib.QBFT_HEADER_TYPEHASH,
                 endpointHash,
-                checkpoint.validatorEpochId,
-                checkpoint.validatorEpochHash,
-                checkpoint.sequence,
-                checkpoint.parentCheckpointHash,
-                packetRangeHash,
-                sourceAnchorHash
+                validatorHash,
+                header.height,
+                header.parentHash,
+                packetHash,
+                anchorHash
             )
         );
     }
 
-    function sourceCommitmentHashCalldata(Checkpoint calldata checkpoint) internal pure returns (bytes32) {
+    function headerHashCalldata(Header calldata header) internal pure returns (bytes32) {
         bytes32 endpointHash = keccak256(
             abi.encode(
-                checkpoint.sourceChainId,
-                checkpoint.sourceCheckpointRegistry,
-                checkpoint.sourcePacketCommitment,
-                checkpoint.sourceValidatorSetRegistry
+                header.sourceChainId,
+                header.sourceHeaderProducer,
+                header.sourcePacketCommitment,
+                header.sourceValidatorSetRegistry
             )
         );
-        bytes32 packetRangeHash = keccak256(
+        bytes32 validatorHash =
+            keccak256(abi.encode(header.validatorEpochId, header.validatorEpochHash));
+        bytes32 packetHash = keccak256(
             abi.encode(
-                checkpoint.packetRoot,
-                checkpoint.stateRoot,
-                checkpoint.firstPacketSequence,
-                checkpoint.lastPacketSequence,
-                checkpoint.packetCount,
-                checkpoint.packetAccumulator
+                header.packetRoot,
+                header.stateRoot,
+                header.executionStateRoot,
+                header.firstPacketSequence,
+                header.lastPacketSequence,
+                header.packetCount,
+                header.packetAccumulator
             )
         );
-        bytes32 sourceAnchorHash = keccak256(
-            abi.encode(checkpoint.sourceBlockNumber, checkpoint.sourceBlockHash, checkpoint.timestamp)
-        );
+        bytes32 anchorHash =
+            keccak256(abi.encode(header.sourceBlockNumber, header.sourceBlockHash, header.round, header.timestamp));
         return keccak256(
             abi.encode(
-                CommitmentLib.SOURCE_COMMITMENT_TYPEHASH,
+                CommitmentLib.QBFT_HEADER_TYPEHASH,
                 endpointHash,
-                checkpoint.validatorEpochId,
-                checkpoint.validatorEpochHash,
-                checkpoint.sequence,
-                checkpoint.parentCheckpointHash,
-                packetRangeHash,
-                sourceAnchorHash
+                validatorHash,
+                header.height,
+                header.parentHash,
+                packetHash,
+                anchorHash
             )
         );
     }
 
-    function checkpointHash(Checkpoint memory checkpoint) internal pure returns (bytes32) {
-        return keccak256(abi.encode(CommitmentLib.CHECKPOINT_TYPEHASH, checkpoint.sourceCommitmentHash));
+    function commitDigest(Header memory header) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                CommitmentLib.QBFT_COMMIT_TYPEHASH,
+                header.sourceChainId,
+                header.height,
+                header.blockHash,
+                header.round,
+                header.validatorEpochId,
+                header.validatorEpochHash
+            )
+        );
     }
 
-    function checkpointHashCalldata(Checkpoint calldata checkpoint) internal pure returns (bytes32) {
-        return keccak256(abi.encode(CommitmentLib.CHECKPOINT_TYPEHASH, checkpoint.sourceCommitmentHash));
+    function commitDigestCalldata(Header calldata header) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                CommitmentLib.QBFT_COMMIT_TYPEHASH,
+                header.sourceChainId,
+                header.height,
+                header.blockHash,
+                header.round,
+                header.validatorEpochId,
+                header.validatorEpochHash
+            )
+        );
     }
 }

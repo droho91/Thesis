@@ -30,7 +30,7 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
     mapping(uint256 => uint256) public latestPacketSequence;
     mapping(uint256 => uint256) public latestSourceBlockNumber;
     mapping(uint256 => bytes32) public latestSourceBlockHash;
-    mapping(uint256 => address) public sourceCheckpointRegistryForChain;
+    mapping(uint256 => address) public sourceHeaderProducerForChain;
     mapping(uint256 => address) public sourcePacketCommitmentForChain;
     mapping(uint256 => address) public sourceValidatorSetRegistryForChain;
     mapping(uint256 => IBCMisbehaviour.Evidence) public frozenEvidence;
@@ -55,18 +55,19 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
     );
     event ClientUpdated(
         uint256 indexed sourceChainId,
-        uint256 indexed sequence,
+        uint256 indexed height,
         bytes32 indexed consensusStateHash,
         uint256 validatorEpochId,
         bytes32 validatorEpochHash,
+        bytes32 blockHash,
         bytes32 packetRoot,
         bytes32 stateRoot,
+        bytes32 executionStateRoot,
         uint256 firstPacketSequence,
         uint256 lastPacketSequence,
         bytes32 packetAccumulator,
         uint256 sourceBlockNumber,
         bytes32 sourceBlockHash,
-        bytes32 sourceCommitmentHash,
         address relayer
     );
     event MisbehaviourDetected(
@@ -167,84 +168,85 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
         external
         returns (bytes32 consensusStateHash)
     {
-        BankChainClientMessage.Checkpoint calldata checkpoint = clientMessage.checkpoint;
-        _validateCheckpointShape(checkpoint);
-        require(clientStatuses[checkpoint.sourceChainId] == IBCClientTypes.Status.Active, "CLIENT_NOT_ACTIVE");
+        BankChainClientMessage.Header calldata header = clientMessage.header;
+        _validateHeaderShape(header);
+        require(clientStatuses[header.sourceChainId] == IBCClientTypes.Status.Active, "CLIENT_NOT_ACTIVE");
 
         BankChainClientState.ValidatorEpoch storage epoch =
-            validatorEpochs[checkpoint.sourceChainId][checkpoint.validatorEpochId];
+            validatorEpochs[header.sourceChainId][header.validatorEpochId];
         require(epoch.epochHash != bytes32(0), "VALIDATOR_EPOCH_UNKNOWN");
-        require(epoch.epochHash == checkpoint.validatorEpochHash, "VALIDATOR_EPOCH_HASH_MISMATCH");
-        require(epoch.sourceValidatorSetRegistry == checkpoint.sourceValidatorSetRegistry, "VALIDATOR_REGISTRY_MISMATCH");
+        require(epoch.epochHash == header.validatorEpochHash, "VALIDATOR_EPOCH_HASH_MISMATCH");
+        require(epoch.sourceValidatorSetRegistry == header.sourceValidatorSetRegistry, "VALIDATOR_REGISTRY_MISMATCH");
 
-        consensusStateHash = BankChainClientMessage.checkpointHashCalldata(checkpoint);
-        require(
-            BankChainClientMessage.sourceCommitmentHashCalldata(checkpoint) == checkpoint.sourceCommitmentHash,
-            "SOURCE_COMMITMENT_MISMATCH"
-        );
+        consensusStateHash = BankChainClientMessage.headerHashCalldata(header);
+        require(consensusStateHash == header.blockHash, "HEADER_HASH_MISMATCH");
+        bytes32 commitDigest = BankChainClientMessage.commitDigestCalldata(header);
         _requireQuorum(
-            checkpoint.sourceChainId,
-            checkpoint.validatorEpochId,
+            header.sourceChainId,
+            header.validatorEpochId,
             epoch.totalVotingPower,
             epoch.quorumNumerator,
             epoch.quorumDenominator,
-            consensusStateHash,
+            commitDigest,
             signatures
         );
 
-        bytes32 existingHash = consensusStateHashBySequence[checkpoint.sourceChainId][checkpoint.sequence];
+        bytes32 existingHash = consensusStateHashBySequence[header.sourceChainId][header.height];
         if (existingHash != bytes32(0)) {
             if (existingHash == consensusStateHash) revert("CONSENSUS_STATE_EXISTS");
-            _freezeForMisbehaviour(checkpoint.sourceChainId, checkpoint.sequence, existingHash, consensusStateHash);
+            _freezeForMisbehaviour(header.sourceChainId, header.height, existingHash, consensusStateHash);
             return consensusStateHash;
         }
 
-        _validateProgression(checkpoint, epoch);
-        _bindSourceEndpoints(checkpoint);
+        _validateProgression(header, epoch);
+        _bindSourceEndpoints(header);
 
-        consensusStates[checkpoint.sourceChainId][consensusStateHash] = BankChainConsensusState.ConsensusState({
-            sourceChainId: checkpoint.sourceChainId,
-            sourceCheckpointRegistry: checkpoint.sourceCheckpointRegistry,
-            sourcePacketCommitment: checkpoint.sourcePacketCommitment,
-            sourceValidatorSetRegistry: checkpoint.sourceValidatorSetRegistry,
-            validatorEpochId: checkpoint.validatorEpochId,
-            validatorEpochHash: checkpoint.validatorEpochHash,
-            sequence: checkpoint.sequence,
-            parentCheckpointHash: checkpoint.parentCheckpointHash,
-            packetRoot: checkpoint.packetRoot,
-            stateRoot: checkpoint.stateRoot,
-            firstPacketSequence: checkpoint.firstPacketSequence,
-            lastPacketSequence: checkpoint.lastPacketSequence,
-            packetCount: checkpoint.packetCount,
-            packetAccumulator: checkpoint.packetAccumulator,
-            sourceBlockNumber: checkpoint.sourceBlockNumber,
-            sourceBlockHash: checkpoint.sourceBlockHash,
-            timestamp: checkpoint.timestamp,
-            sourceCommitmentHash: checkpoint.sourceCommitmentHash,
+        consensusStates[header.sourceChainId][consensusStateHash] = BankChainConsensusState.ConsensusState({
+            sourceChainId: header.sourceChainId,
+            sourceHeaderProducer: header.sourceHeaderProducer,
+            sourcePacketCommitment: header.sourcePacketCommitment,
+            sourceValidatorSetRegistry: header.sourceValidatorSetRegistry,
+            validatorEpochId: header.validatorEpochId,
+            validatorEpochHash: header.validatorEpochHash,
+            height: header.height,
+            parentHash: header.parentHash,
+            blockHash: header.blockHash,
+            packetRoot: header.packetRoot,
+            stateRoot: header.stateRoot,
+            executionStateRoot: header.executionStateRoot,
+            firstPacketSequence: header.firstPacketSequence,
+            lastPacketSequence: header.lastPacketSequence,
+            packetCount: header.packetCount,
+            packetAccumulator: header.packetAccumulator,
+            sourceBlockNumber: header.sourceBlockNumber,
+            sourceBlockHash: header.sourceBlockHash,
+            round: header.round,
+            timestamp: header.timestamp,
             consensusStateHash: consensusStateHash,
             exists: true
         });
-        consensusStateHashBySequence[checkpoint.sourceChainId][checkpoint.sequence] = consensusStateHash;
-        latestConsensusStateSequence[checkpoint.sourceChainId] = checkpoint.sequence;
-        latestConsensusStateHash[checkpoint.sourceChainId] = consensusStateHash;
-        latestPacketSequence[checkpoint.sourceChainId] = checkpoint.lastPacketSequence;
-        latestSourceBlockNumber[checkpoint.sourceChainId] = checkpoint.sourceBlockNumber;
-        latestSourceBlockHash[checkpoint.sourceChainId] = checkpoint.sourceBlockHash;
+        consensusStateHashBySequence[header.sourceChainId][header.height] = consensusStateHash;
+        latestConsensusStateSequence[header.sourceChainId] = header.height;
+        latestConsensusStateHash[header.sourceChainId] = consensusStateHash;
+        latestPacketSequence[header.sourceChainId] = header.lastPacketSequence;
+        latestSourceBlockNumber[header.sourceChainId] = header.sourceBlockNumber;
+        latestSourceBlockHash[header.sourceChainId] = header.sourceBlockHash;
 
         emit ClientUpdated(
-            checkpoint.sourceChainId,
-            checkpoint.sequence,
+            header.sourceChainId,
+            header.height,
             consensusStateHash,
-            checkpoint.validatorEpochId,
-            checkpoint.validatorEpochHash,
-            checkpoint.packetRoot,
-            checkpoint.stateRoot,
-            checkpoint.firstPacketSequence,
-            checkpoint.lastPacketSequence,
-            checkpoint.packetAccumulator,
-            checkpoint.sourceBlockNumber,
-            checkpoint.sourceBlockHash,
-            checkpoint.sourceCommitmentHash,
+            header.validatorEpochId,
+            header.validatorEpochHash,
+            header.blockHash,
+            header.packetRoot,
+            header.stateRoot,
+            header.executionStateRoot,
+            header.firstPacketSequence,
+            header.lastPacketSequence,
+            header.packetAccumulator,
+            header.sourceBlockNumber,
+            header.sourceBlockHash,
             msg.sender
         );
     }
@@ -276,6 +278,29 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
         if (leafIndex != sequence - consensus.firstPacketSequence) return false;
         bytes32 stateLeaf = IBCPathLib.stateLeaf(path, value);
         return MerkleLib.verify(consensus.stateRoot, stateLeaf, leafIndex, siblings);
+    }
+
+    function trustedStateRoot(uint256 sourceChainId, bytes32 consensusStateHash)
+        external
+        view
+        override
+        returns (bytes32)
+    {
+        BankChainConsensusState.ConsensusState storage consensus =
+            consensusStates[sourceChainId][consensusStateHash];
+        if (!consensus.exists) return bytes32(0);
+        return consensus.executionStateRoot != bytes32(0) ? consensus.executionStateRoot : consensus.stateRoot;
+    }
+
+    function trustedPacketCommitment(uint256 sourceChainId, bytes32 consensusStateHash)
+        external
+        view
+        override
+        returns (address)
+    {
+        BankChainConsensusState.ConsensusState storage consensus =
+            consensusStates[sourceChainId][consensusStateHash];
+        return consensus.exists ? consensus.sourcePacketCommitment : address(0);
     }
 
     function verifyNonMembership(
@@ -346,20 +371,24 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
         return BankChainClientState.hash(epoch);
     }
 
-    function hashSourceCommitment(BankChainClientMessage.Checkpoint memory checkpoint)
+    function hashHeader(BankChainClientMessage.Header memory header)
         public
         pure
         returns (bytes32)
     {
-        return BankChainClientMessage.sourceCommitmentHash(checkpoint);
+        return BankChainClientMessage.headerHash(header);
     }
 
-    function hashConsensusState(BankChainClientMessage.Checkpoint memory checkpoint)
+    function hashCommitment(BankChainClientMessage.Header memory header)
         public
         pure
         returns (bytes32)
     {
-        return BankChainClientMessage.checkpointHash(checkpoint);
+        return BankChainClientMessage.commitDigest(header);
+    }
+
+    function hashConsensusState(BankChainClientMessage.Header memory header) public pure returns (bytes32) {
+        return BankChainClientMessage.headerHash(header);
     }
 
     function _freezeForMisbehaviour(
@@ -453,83 +482,83 @@ contract BankChainClient is AccessControl, IBCClient, IBCClientStore {
         require(BankChainClientState.hashCalldata(epoch) == epoch.epochHash, "EPOCH_HASH_MISMATCH");
     }
 
-    function _validateCheckpointShape(BankChainClientMessage.Checkpoint calldata checkpoint) internal pure {
-        require(checkpoint.sourceChainId != 0, "CHAIN_ID_ZERO");
-        require(checkpoint.sourceCheckpointRegistry != address(0), "SOURCE_REGISTRY_ZERO");
-        require(checkpoint.sourcePacketCommitment != address(0), "SOURCE_PACKET_STORE_ZERO");
-        require(checkpoint.sourceValidatorSetRegistry != address(0), "VALIDATOR_REGISTRY_ZERO");
-        require(checkpoint.validatorEpochId != 0, "VALIDATOR_EPOCH_ZERO");
-        require(checkpoint.validatorEpochHash != bytes32(0), "VALIDATOR_EPOCH_HASH_ZERO");
-        require(checkpoint.sequence != 0, "SEQUENCE_ZERO");
-        require(checkpoint.packetRoot != bytes32(0), "PACKET_ROOT_ZERO");
-        require(checkpoint.stateRoot != bytes32(0), "STATE_ROOT_ZERO");
-        require(checkpoint.sourceCommitmentHash != bytes32(0), "SOURCE_COMMITMENT_ZERO");
-        require(checkpoint.packetAccumulator != bytes32(0), "PACKET_ACCUMULATOR_ZERO");
-        require(checkpoint.packetCount > 0, "PACKET_COUNT_ZERO");
-        require(checkpoint.firstPacketSequence != 0, "FIRST_PACKET_ZERO");
-        require(checkpoint.lastPacketSequence >= checkpoint.firstPacketSequence, "BAD_PACKET_RANGE");
+    function _validateHeaderShape(BankChainClientMessage.Header calldata header) internal pure {
+        require(header.sourceChainId != 0, "CHAIN_ID_ZERO");
+        require(header.sourceHeaderProducer != address(0), "SOURCE_HEADER_PRODUCER_ZERO");
+        require(header.sourcePacketCommitment != address(0), "SOURCE_PACKET_STORE_ZERO");
+        require(header.sourceValidatorSetRegistry != address(0), "VALIDATOR_REGISTRY_ZERO");
+        require(header.validatorEpochId != 0, "VALIDATOR_EPOCH_ZERO");
+        require(header.validatorEpochHash != bytes32(0), "VALIDATOR_EPOCH_HASH_ZERO");
+        require(header.height != 0, "HEIGHT_ZERO");
+        require(header.blockHash != bytes32(0), "BLOCK_HASH_ZERO");
+        require(header.packetRoot != bytes32(0), "PACKET_ROOT_ZERO");
+        require(header.stateRoot != bytes32(0), "STATE_ROOT_ZERO");
+        require(header.packetAccumulator != bytes32(0), "PACKET_ACCUMULATOR_ZERO");
+        require(header.packetCount > 0, "PACKET_COUNT_ZERO");
+        require(header.firstPacketSequence != 0, "FIRST_PACKET_ZERO");
+        require(header.lastPacketSequence >= header.firstPacketSequence, "BAD_PACKET_RANGE");
         require(
-            checkpoint.lastPacketSequence - checkpoint.firstPacketSequence + 1 == checkpoint.packetCount,
+            header.lastPacketSequence - header.firstPacketSequence + 1 == header.packetCount,
             "PACKET_COUNT_MISMATCH"
         );
-        require(checkpoint.sourceBlockHash != bytes32(0), "SOURCE_BLOCK_HASH_ZERO");
-        require(checkpoint.timestamp != 0, "TIMESTAMP_ZERO");
+        require(header.sourceBlockHash != bytes32(0), "SOURCE_BLOCK_HASH_ZERO");
+        require(header.timestamp != 0, "TIMESTAMP_ZERO");
     }
 
     function _validateProgression(
-        BankChainClientMessage.Checkpoint calldata checkpoint,
+        BankChainClientMessage.Header calldata header,
         BankChainClientState.ValidatorEpoch storage epoch
     ) internal view {
-        uint256 latestSequence = latestConsensusStateSequence[checkpoint.sourceChainId];
-        require(checkpoint.sequence == latestSequence + 1, "WRONG_SEQUENCE");
-        require(checkpoint.sourceBlockNumber >= epoch.activationBlockNumber, "CHECKPOINT_BEFORE_EPOCH");
+        uint256 latestSequence = latestConsensusStateSequence[header.sourceChainId];
+        require(header.height == latestSequence + 1, "WRONG_HEIGHT");
+        require(header.sourceBlockNumber >= epoch.activationBlockNumber, "HEADER_BEFORE_EPOCH");
 
         if (latestSequence == 0) {
-            require(checkpoint.parentCheckpointHash == bytes32(0), "WRONG_PARENT_CHECKPOINT");
-            require(checkpoint.firstPacketSequence == 1, "WRONG_PACKET_RANGE");
+            require(header.parentHash == bytes32(0), "WRONG_PARENT_HEADER");
+            require(header.firstPacketSequence == 1, "WRONG_PACKET_RANGE");
         } else {
             require(
-                checkpoint.parentCheckpointHash == latestConsensusStateHash[checkpoint.sourceChainId],
-                "WRONG_PARENT_CHECKPOINT"
+                header.parentHash == latestConsensusStateHash[header.sourceChainId],
+                "WRONG_PARENT_HEADER"
             );
             require(
-                checkpoint.firstPacketSequence == latestPacketSequence[checkpoint.sourceChainId] + 1,
+                header.firstPacketSequence == latestPacketSequence[header.sourceChainId] + 1,
                 "WRONG_PACKET_RANGE"
             );
-            uint256 latestBlockNumber = latestSourceBlockNumber[checkpoint.sourceChainId];
-            require(checkpoint.sourceBlockNumber >= latestBlockNumber, "SOURCE_BLOCK_REGRESSION");
-            if (checkpoint.sourceBlockNumber == latestBlockNumber) {
+            uint256 latestBlockNumber = latestSourceBlockNumber[header.sourceChainId];
+            require(header.sourceBlockNumber >= latestBlockNumber, "SOURCE_BLOCK_REGRESSION");
+            if (header.sourceBlockNumber == latestBlockNumber) {
                 require(
-                    checkpoint.sourceBlockHash == latestSourceBlockHash[checkpoint.sourceChainId],
+                    header.sourceBlockHash == latestSourceBlockHash[header.sourceChainId],
                     "SOURCE_BLOCK_HASH_MISMATCH"
                 );
             }
 
             BankChainConsensusState.ConsensusState storage previousConsensus =
-                consensusStates[checkpoint.sourceChainId][latestConsensusStateHash[checkpoint.sourceChainId]];
-            require(checkpoint.timestamp >= previousConsensus.timestamp, "TIMESTAMP_REGRESSION");
+                consensusStates[header.sourceChainId][latestConsensusStateHash[header.sourceChainId]];
+            require(header.timestamp >= previousConsensus.timestamp, "TIMESTAMP_REGRESSION");
         }
 
         BankChainClientState.ValidatorEpoch storage successor =
-            validatorEpochs[checkpoint.sourceChainId][epoch.epochId + 1];
+            validatorEpochs[header.sourceChainId][epoch.epochId + 1];
         if (successor.epochHash != bytes32(0)) {
-            require(checkpoint.sourceBlockNumber < successor.activationBlockNumber, "CHECKPOINT_AFTER_EPOCH_SUPERSEDED");
+            require(header.sourceBlockNumber < successor.activationBlockNumber, "HEADER_AFTER_EPOCH_SUPERSEDED");
         }
     }
 
-    function _bindSourceEndpoints(BankChainClientMessage.Checkpoint calldata checkpoint) internal {
-        address knownRegistry = sourceCheckpointRegistryForChain[checkpoint.sourceChainId];
-        address knownPacketStore = sourcePacketCommitmentForChain[checkpoint.sourceChainId];
-        if (knownRegistry == address(0)) {
-            sourceCheckpointRegistryForChain[checkpoint.sourceChainId] = checkpoint.sourceCheckpointRegistry;
+    function _bindSourceEndpoints(BankChainClientMessage.Header calldata header) internal {
+        address knownHeaderProducer = sourceHeaderProducerForChain[header.sourceChainId];
+        address knownPacketStore = sourcePacketCommitmentForChain[header.sourceChainId];
+        if (knownHeaderProducer == address(0)) {
+            sourceHeaderProducerForChain[header.sourceChainId] = header.sourceHeaderProducer;
         } else {
-            require(knownRegistry == checkpoint.sourceCheckpointRegistry, "SOURCE_REGISTRY_MISMATCH");
+            require(knownHeaderProducer == header.sourceHeaderProducer, "SOURCE_HEADER_PRODUCER_MISMATCH");
         }
 
         if (knownPacketStore == address(0)) {
-            sourcePacketCommitmentForChain[checkpoint.sourceChainId] = checkpoint.sourcePacketCommitment;
+            sourcePacketCommitmentForChain[header.sourceChainId] = header.sourcePacketCommitment;
         } else {
-            require(knownPacketStore == checkpoint.sourcePacketCommitment, "SOURCE_PACKET_STORE_MISMATCH");
+            require(knownPacketStore == header.sourcePacketCommitment, "SOURCE_PACKET_STORE_MISMATCH");
         }
     }
 

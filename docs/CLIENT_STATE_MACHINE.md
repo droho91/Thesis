@@ -12,7 +12,7 @@
 `Active`:
 
 - client accepts valid source-certified validator epoch updates
-- client accepts valid source-certified checkpoint updates
+- client accepts valid QBFT/IBFT-like finalized header updates
 - packet membership verification can succeed
 - packet non-membership verification can succeed for absence claims bound to the trusted remote state root
 
@@ -31,9 +31,9 @@
 
 ## Client Messages
 
-The implemented `ClientMessage` carries a source checkpoint. It is accepted only if it is signed by a known trusted source validator epoch.
+The implemented `ClientMessage` carries a finalized source header. It is accepted only if the header hash is valid and enough validators from a known trusted source epoch sign the QBFT/IBFT-like commit digest.
 
-The active epoch remains the head of the validator-set chain. Historical epochs remain usable for delayed checkpoint relay when the checkpoint source block is before the successor epoch activation anchor. A checkpoint signed by a superseded epoch after the successor activation is rejected.
+The active epoch remains the head of the validator-set chain. Historical epochs remain usable for delayed header relay when the header source block is before the successor epoch activation anchor. A header signed by a superseded epoch after the successor activation is rejected.
 
 ## Membership And Non-Membership
 
@@ -41,7 +41,7 @@ The active epoch remains the head of the validator-set chain. Historical epochs 
 
 `verifyNonMembership` proves packet absence in the local snapshot in two cases:
 
-- the claimed packet sequence is greater than the trusted checkpoint's last packet sequence
+- the claimed packet sequence is greater than the trusted header's last packet sequence
 - the claimed sequence is inside the trusted range, but a different value is proven at the same packet commitment path
 
 ## Misbehaviour Evidence

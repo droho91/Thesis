@@ -37,33 +37,34 @@ contract BankChainClientTest is IBCLocalSimulationBase {
         (, uint256 sequence) = _sendLock(10 ether);
         SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint =
             checkpointsA.commitCheckpoint(sequence);
-        BankChainClientMessage.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
-        checkpoint.sourceBlockHash = bytes32(0);
-        checkpoint.sourceCommitmentHash = clientB.hashSourceCommitment(checkpoint);
-        bytes32 consensusStateHash = clientB.hashConsensusState(checkpoint);
+        BankChainClientMessage.Header memory header = _clientHeader(sourceCheckpoint);
+        header.sourceBlockHash = bytes32(0);
+        header.blockHash = clientB.hashHeader(header);
+        bytes32 commitDigest = clientB.hashCommitment(header);
         BankChainClientMessage.ClientMessage memory clientMessage =
-            BankChainClientMessage.ClientMessage({checkpoint: checkpoint});
+            BankChainClientMessage.ClientMessage({header: header});
 
         vm.expectRevert(bytes("SOURCE_BLOCK_HASH_ZERO"));
         vm.prank(relayer);
-        clientB.updateState(clientMessage, _signatures(validatorKeysA, consensusStateHash, 2));
+        clientB.updateState(clientMessage, _signatures(validatorKeysA, commitDigest, 2));
     }
 
     function testDuplicateUpdateIsSafelyRejected() public {
         (, uint256 sequence) = _sendLock(12 ether);
         SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint =
             checkpointsA.commitCheckpoint(sequence);
-        BankChainClientMessage.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
-        bytes32 consensusStateHash = clientB.hashConsensusState(checkpoint);
+        BankChainClientMessage.Header memory header = _clientHeader(sourceCheckpoint);
+        header.blockHash = clientB.hashHeader(header);
+        bytes32 commitDigest = clientB.hashCommitment(header);
         BankChainClientMessage.ClientMessage memory clientMessage =
-            BankChainClientMessage.ClientMessage({checkpoint: checkpoint});
+            BankChainClientMessage.ClientMessage({header: header});
 
         vm.prank(relayer);
-        clientB.updateState(clientMessage, _signatures(validatorKeysA, consensusStateHash, 2));
+        clientB.updateState(clientMessage, _signatures(validatorKeysA, commitDigest, 2));
 
         vm.expectRevert(bytes("CONSENSUS_STATE_EXISTS"));
         vm.prank(anyRelayer);
-        clientB.updateState(clientMessage, _signatures(validatorKeysA, consensusStateHash, 2));
+        clientB.updateState(clientMessage, _signatures(validatorKeysA, commitDigest, 2));
         assertEq(uint256(clientB.status(CHAIN_A)), uint256(IBCClientTypes.Status.Active));
     }
 
@@ -71,23 +72,25 @@ contract BankChainClientTest is IBCLocalSimulationBase {
         (, uint256 sequence) = _sendLock(15 ether);
         SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint =
             checkpointsA.commitCheckpoint(sequence);
-        BankChainClientMessage.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
-        bytes32 consensusStateHash = clientB.hashConsensusState(checkpoint);
+        BankChainClientMessage.Header memory header = _clientHeader(sourceCheckpoint);
+        header.blockHash = clientB.hashHeader(header);
+        bytes32 commitDigest = clientB.hashCommitment(header);
         BankChainClientMessage.ClientMessage memory clientMessage =
-            BankChainClientMessage.ClientMessage({checkpoint: checkpoint});
+            BankChainClientMessage.ClientMessage({header: header});
 
         vm.prank(relayer);
-        clientB.updateState(clientMessage, _signatures(validatorKeysA, consensusStateHash, 2));
+        clientB.updateState(clientMessage, _signatures(validatorKeysA, commitDigest, 2));
 
-        BankChainClientMessage.Checkpoint memory conflict = checkpoint;
+        BankChainClientMessage.Header memory conflict = header;
         conflict.packetRoot = keccak256("conflicting-root");
-        conflict.sourceCommitmentHash = clientB.hashSourceCommitment(conflict);
+        conflict.blockHash = clientB.hashHeader(conflict);
         bytes32 conflictHash = clientB.hashConsensusState(conflict);
+        bytes32 conflictDigest = clientB.hashCommitment(conflict);
         BankChainClientMessage.ClientMessage memory conflictMessage =
-            BankChainClientMessage.ClientMessage({checkpoint: conflict});
+            BankChainClientMessage.ClientMessage({header: conflict});
 
         vm.prank(anyRelayer);
-        clientB.updateState(conflictMessage, _signatures(validatorKeysA, conflictHash, 2));
+        clientB.updateState(conflictMessage, _signatures(validatorKeysA, conflictDigest, 2));
 
         assertEq(uint256(clientB.status(CHAIN_A)), uint256(IBCClientTypes.Status.Frozen));
         assertEq(clientB.conflictingConsensusStateHashBySequence(CHAIN_A, 1), conflictHash);
@@ -123,20 +126,22 @@ contract BankChainClientTest is IBCLocalSimulationBase {
         (, uint256 sequence) = _sendLock(20 ether);
         SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint =
             checkpointsA.commitCheckpoint(sequence);
-        BankChainClientMessage.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
-        bytes32 consensusStateHash = clientB.hashConsensusState(checkpoint);
+        BankChainClientMessage.Header memory header = _clientHeader(sourceCheckpoint);
+        header.blockHash = clientB.hashHeader(header);
+        bytes32 consensusStateHash = clientB.hashConsensusState(header);
+        bytes32 commitDigest = clientB.hashCommitment(header);
         BankChainClientMessage.ClientMessage memory clientMessage =
-            BankChainClientMessage.ClientMessage({checkpoint: checkpoint});
+            BankChainClientMessage.ClientMessage({header: header});
 
         vm.expectRevert(bytes("VALIDATOR_EPOCH_UNKNOWN"));
         vm.prank(relayer);
-        clientB.updateState(clientMessage, _signatures(rotatedValidatorKeysA, consensusStateHash, 2));
+        clientB.updateState(clientMessage, _signatures(rotatedValidatorKeysA, commitDigest, 2));
 
         vm.prank(anyRelayer);
         clientB.updateValidatorEpoch(rotatedEpoch, _signatures(validatorKeysA, rotatedEpoch.epochHash, 2));
 
         vm.prank(relayer);
-        clientB.updateState(clientMessage, _signatures(rotatedValidatorKeysA, consensusStateHash, 2));
+        clientB.updateState(clientMessage, _signatures(rotatedValidatorKeysA, commitDigest, 2));
         assertTrue(clientB.isConsensusStateVerified(CHAIN_A, consensusStateHash));
     }
 
@@ -144,10 +149,12 @@ contract BankChainClientTest is IBCLocalSimulationBase {
         (, uint256 sequence) = _sendLock(20 ether);
         SourceCheckpointRegistry.SourceCheckpoint memory delayedSourceCheckpoint =
             checkpointsA.commitCheckpoint(sequence);
-        BankChainClientMessage.Checkpoint memory delayedCheckpoint = _clientCheckpoint(delayedSourceCheckpoint);
-        bytes32 delayedConsensusStateHash = clientB.hashConsensusState(delayedCheckpoint);
+        BankChainClientMessage.Header memory delayedHeader = _clientHeader(delayedSourceCheckpoint);
+        delayedHeader.blockHash = clientB.hashHeader(delayedHeader);
+        bytes32 delayedConsensusStateHash = clientB.hashConsensusState(delayedHeader);
+        bytes32 delayedCommitDigest = clientB.hashCommitment(delayedHeader);
         BankChainClientMessage.ClientMessage memory delayedMessage =
-            BankChainClientMessage.ClientMessage({checkpoint: delayedCheckpoint});
+            BankChainClientMessage.ClientMessage({header: delayedHeader});
 
         vm.roll(block.number + 10);
         validatorRegistryA.commitValidatorEpoch(
@@ -162,7 +169,7 @@ contract BankChainClientTest is IBCLocalSimulationBase {
         clientB.updateValidatorEpoch(rotatedEpoch, _signatures(validatorKeysA, rotatedEpoch.epochHash, 2));
 
         vm.prank(relayer);
-        clientB.updateState(delayedMessage, _signatures(validatorKeysA, delayedConsensusStateHash, 2));
+        clientB.updateState(delayedMessage, _signatures(validatorKeysA, delayedCommitDigest, 2));
 
         assertTrue(clientB.isConsensusStateVerified(CHAIN_A, delayedConsensusStateHash));
         assertEq(clientB.activeValidatorEpochId(CHAIN_A), VALIDATOR_EPOCH_2);
@@ -185,19 +192,19 @@ contract BankChainClientTest is IBCLocalSimulationBase {
         (, uint256 sequence) = _sendLock(20 ether);
         SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint =
             checkpointsA.commitCheckpoint(sequence);
-        BankChainClientMessage.Checkpoint memory forgedOldEpochCheckpoint = _clientCheckpoint(sourceCheckpoint);
+        BankChainClientMessage.Header memory forgedOldEpochHeader = _clientHeader(sourceCheckpoint);
         BankChainClientState.ValidatorEpoch memory oldEpoch =
             clientB.validatorEpoch(CHAIN_A, VALIDATOR_EPOCH_1);
-        forgedOldEpochCheckpoint.validatorEpochId = oldEpoch.epochId;
-        forgedOldEpochCheckpoint.validatorEpochHash = oldEpoch.epochHash;
-        forgedOldEpochCheckpoint.sourceCommitmentHash = clientB.hashSourceCommitment(forgedOldEpochCheckpoint);
-        bytes32 forgedHash = clientB.hashConsensusState(forgedOldEpochCheckpoint);
+        forgedOldEpochHeader.validatorEpochId = oldEpoch.epochId;
+        forgedOldEpochHeader.validatorEpochHash = oldEpoch.epochHash;
+        forgedOldEpochHeader.blockHash = clientB.hashHeader(forgedOldEpochHeader);
+        bytes32 forgedDigest = clientB.hashCommitment(forgedOldEpochHeader);
         BankChainClientMessage.ClientMessage memory forgedMessage =
-            BankChainClientMessage.ClientMessage({checkpoint: forgedOldEpochCheckpoint});
+            BankChainClientMessage.ClientMessage({header: forgedOldEpochHeader});
 
-        vm.expectRevert(bytes("CHECKPOINT_AFTER_EPOCH_SUPERSEDED"));
+        vm.expectRevert(bytes("HEADER_AFTER_EPOCH_SUPERSEDED"));
         vm.prank(relayer);
-        clientB.updateState(forgedMessage, _signatures(validatorKeysA, forgedHash, 2));
+        clientB.updateState(forgedMessage, _signatures(validatorKeysA, forgedDigest, 2));
     }
 
     function testVerifyNonMembershipSucceedsForFuturePacketSequence() public {
@@ -257,14 +264,13 @@ contract BankChainClientTest is IBCLocalSimulationBase {
         (, uint256 sequence) = _sendLock(5 ether);
         SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint =
             checkpointsA.commitCheckpoint(sequence);
-        BankChainClientMessage.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
-        checkpoint.sourceCommitmentHash = bytes32(0);
-        bytes32 consensusStateHash = clientB.hashConsensusState(checkpoint);
+        BankChainClientMessage.Header memory header = _clientHeader(sourceCheckpoint);
+        header.blockHash = bytes32(0);
         BankChainClientMessage.ClientMessage memory clientMessage =
-            BankChainClientMessage.ClientMessage({checkpoint: checkpoint});
+            BankChainClientMessage.ClientMessage({header: header});
 
-        vm.expectRevert(bytes("SOURCE_COMMITMENT_ZERO"));
+        vm.expectRevert(bytes("BLOCK_HASH_ZERO"));
         vm.prank(relayer);
-        clientB.updateState(clientMessage, _signatures(validatorKeysA, consensusStateHash, 2));
+        clientB.updateState(clientMessage, _signatures(validatorKeysA, bytes32(0), 2));
     }
 }

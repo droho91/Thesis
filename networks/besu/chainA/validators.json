@@ -1,0 +1,30 @@
+[
+  {
+    "name": "bank-a-validator-1",
+    "address": "0x59113461726Bbd8ED644adE0B987d614b400769D",
+    "privateKey": "0x0a5ad6b4ac358e5f59c3ef2583242b22949f219ea04bc814b9e39f38f44facd3",
+    "ip": "172.30.10.11",
+    "enode": "enode://0ca9d472eb846be9e0da691bb299a3a2413ebaef3089c460c12a164f207bbc71f16a4a58dcb9dee9df0552cf0435db44872d8a599a513ae963b7f248f70f8405@172.30.10.11:30303"
+  },
+  {
+    "name": "bank-a-validator-2",
+    "address": "0xCc6A54cd9D75cba77f21080121AF66B9f2366ee9",
+    "privateKey": "0x67dabfa4051d4599797251025ffdfae74c6d88c64cf38e38f36f54cb301c8b1c",
+    "ip": "172.30.10.12",
+    "enode": "enode://77a1587b89cbb3592de889e52a6b34c55894aabbe3063325c037e5029588861c769186c77eee3fa6d3a9dc5d1255d639e40781bd97bc44d3cffe1a5eecd1bbe0@172.30.10.12:30303"
+  },
+  {
+    "name": "bank-a-validator-3",
+    "address": "0x553EA5c3Bf034A4eb9D4cFcc9aB33c110d5AE127",
+    "privateKey": "0x86696afa1616bd8fa34e49ec09b075fe41637d90d475109541a2397b3c8b9219",
+    "ip": "172.30.10.13",
+    "enode": "enode://40d31d888d6a879549a0f966c623a49ce366fa41b47819821c82ba564a69cea317cf52ffff76e16d8b533cec56439899a3755870564560a86d7f446fc432d406@172.30.10.13:30303"
+  },
+  {
+    "name": "bank-a-validator-4",
+    "address": "0x438278aC16cB867565A855EfC5182BF2400bDAcc",
+    "privateKey": "0x1c496eea9a41c449389b85a8356a6589db0c93884b2b87eaba9fbbaee7474a19",
+    "ip": "172.30.10.14",
+    "enode": "enode://ab32bffb9eaa91d9199be91d5c04afcc7b6ab260c6acc0005e216bc2370c26ad202249a29862aba9bcceeee6557c99f0ab14cefbe8f58acec0565b2ae038155b@172.30.10.14:30303"
+  }
+]

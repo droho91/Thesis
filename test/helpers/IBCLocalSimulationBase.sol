@@ -173,13 +173,15 @@ abstract contract IBCLocalSimulationBase is Test {
     ) internal returns (FinalizedPacket memory finalized) {
         SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint =
             registry.commitCheckpoint(packetStore.packetSequence());
-        BankChainClientMessage.Checkpoint memory checkpoint = _clientCheckpoint(sourceCheckpoint);
-        bytes32 consensusStateHash = client.hashConsensusState(checkpoint);
+        BankChainClientMessage.Header memory header = _clientHeader(sourceCheckpoint);
+        header.blockHash = client.hashHeader(header);
+        bytes32 consensusStateHash = client.hashConsensusState(header);
+        bytes32 commitDigest = client.hashCommitment(header);
         BankChainClientMessage.ClientMessage memory clientMessage =
-            BankChainClientMessage.ClientMessage({checkpoint: checkpoint});
+            BankChainClientMessage.ClientMessage({header: header});
 
         vm.prank(relayer);
-        client.updateState(clientMessage, _signatures(signerKeys, consensusStateHash, signerCount));
+        client.updateState(clientMessage, _signatures(signerKeys, commitDigest, signerCount));
 
         finalized = FinalizedPacket({
             consensusStateHash: consensusStateHash,
@@ -253,30 +255,32 @@ abstract contract IBCLocalSimulationBase is Test {
         }
     }
 
-    function _clientCheckpoint(SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint)
+    function _clientHeader(SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint)
         internal
         pure
-        returns (BankChainClientMessage.Checkpoint memory)
+        returns (BankChainClientMessage.Header memory)
     {
-        return BankChainClientMessage.Checkpoint({
+        return BankChainClientMessage.Header({
             sourceChainId: sourceCheckpoint.sourceChainId,
-            sourceCheckpointRegistry: sourceCheckpoint.sourceCheckpointRegistry,
+            sourceHeaderProducer: sourceCheckpoint.sourceCheckpointRegistry,
             sourcePacketCommitment: sourceCheckpoint.sourcePacketCommitment,
             sourceValidatorSetRegistry: sourceCheckpoint.sourceValidatorSetRegistry,
             validatorEpochId: sourceCheckpoint.validatorEpochId,
             validatorEpochHash: sourceCheckpoint.validatorEpochHash,
-            sequence: sourceCheckpoint.sequence,
-            parentCheckpointHash: sourceCheckpoint.parentCheckpointHash,
+            height: sourceCheckpoint.sequence,
+            parentHash: sourceCheckpoint.parentCheckpointHash,
             packetRoot: sourceCheckpoint.packetRoot,
             stateRoot: sourceCheckpoint.stateRoot,
+            executionStateRoot: bytes32(0),
             firstPacketSequence: sourceCheckpoint.firstPacketSequence,
             lastPacketSequence: sourceCheckpoint.lastPacketSequence,
             packetCount: sourceCheckpoint.packetCount,
             packetAccumulator: sourceCheckpoint.packetAccumulator,
             sourceBlockNumber: sourceCheckpoint.sourceBlockNumber,
             sourceBlockHash: sourceCheckpoint.sourceBlockHash,
+            round: 0,
             timestamp: sourceCheckpoint.timestamp,
-            sourceCommitmentHash: sourceCheckpoint.sourceCommitmentHash
+            blockHash: bytes32(0)
         });
     }
 

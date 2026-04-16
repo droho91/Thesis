@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import {
-  checkpointObject,
+  finalizedHeaderObject,
+  headerProducerAddress,
   loadArtifact,
   loadConfig,
   peerKey,
@@ -16,21 +17,26 @@ async function submitConflict(sourceKey, config, artifacts) {
   const destination = config.chains[destinationKey];
   const sourceProvider = providerFor(config, sourceKey);
   const destinationSigner = await signerFor(config, destinationKey, 0);
-  const checkpointRegistry = new ethers.Contract(source.checkpointRegistry, artifacts.checkpointRegistry.abi, sourceProvider);
+  const headerProducer = new ethers.Contract(
+    headerProducerAddress(source),
+    artifacts.checkpointRegistry.abi,
+    sourceProvider
+  );
   const client = new ethers.Contract(destination.client, artifacts.client.abi, destinationSigner);
-  const sequence = BigInt(process.env.CONFLICT_SEQUENCE || "1");
-  const checkpoint = checkpointObject(await checkpointRegistry.checkpointsBySequence(sequence));
-  if (checkpoint.sourceCommitmentHash === ethers.ZeroHash) {
-    throw new Error(`source ${sourceKey} checkpoint ${sequence} is empty`);
+  const height = BigInt(process.env.CONFLICT_HEIGHT || process.env.CONFLICT_SEQUENCE || "1");
+  const header = finalizedHeaderObject(await headerProducer.headersByHeight(height));
+  if (header.sourceCommitmentHash === ethers.ZeroHash) {
+    throw new Error(`source ${sourceKey} finalized header ${height} is empty`);
   }
-  checkpoint.packetRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict:${sourceKey}:${Date.now()}`));
-  checkpoint.stateRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict-state:${sourceKey}:${Date.now()}`));
-  checkpoint.sourceCommitmentHash = await client.hashSourceCommitment(checkpoint);
-  const digest = await client.hashConsensusState(checkpoint);
-  const signatures = await signaturesFor(sourceProvider, digest);
-  const tx = await client.updateState([checkpoint], signatures);
+  header.packetRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict:${sourceKey}:${Date.now()}`));
+  header.stateRoot = ethers.keccak256(ethers.toUtf8Bytes(`conflict-state:${sourceKey}:${Date.now()}`));
+  header.blockHash = await client.hashHeader(header);
+  const digest = await client.hashConsensusState(header);
+  const commitDigest = await client.hashCommitment(header);
+  const signatures = await signaturesFor(sourceKey, sourceProvider, commitDigest);
+  const tx = await client.updateState([header], signatures);
   await tx.wait();
-  console.log(`[misbehaviour] submitted conflicting update ${sourceKey}->${destinationKey} ${pretty(digest)}`);
+  console.log(`[misbehaviour] submitted conflicting finalized header ${sourceKey}->${destinationKey} ${pretty(digest)}`);
 }
 
 async function main() {

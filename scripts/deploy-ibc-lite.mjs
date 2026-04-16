@@ -4,7 +4,10 @@ import {
   CHAIN_B_RPC,
   deploy,
   loadArtifact,
+  normalizeRuntime,
+  providerForRpc,
   saveConfig,
+  signerForRpc,
   validatorAddresses,
 } from "./ibc-lite-common.mjs";
 
@@ -12,7 +15,7 @@ const INITIAL_EPOCH_ID = BigInt(process.env.VALIDATOR_EPOCH_ID || 1);
 
 async function deploySourceCore({ chainKey, provider, owner, artifacts }) {
   const chainId = Number((await provider.getNetwork()).chainId);
-  const validators = await validatorAddresses(provider);
+  const validators = await validatorAddresses(chainKey, provider);
   const powers = validators.map(() => 1n);
   const packetStore = await deploy(artifacts.packetStore, owner, [chainId]);
   const validatorRegistry = await deploy(artifacts.validatorRegistry, owner, [
@@ -21,14 +24,14 @@ async function deploySourceCore({ chainKey, provider, owner, artifacts }) {
     validators,
     powers,
   ]);
-  const checkpointRegistry = await deploy(artifacts.checkpointRegistry, owner, [
+  const headerProducer = await deploy(artifacts.checkpointRegistry, owner, [
     chainId,
     await packetStore.getAddress(),
     await validatorRegistry.getAddress(),
   ]);
 
   console.log(`[${chainKey}] source core chainId=${chainId}`);
-  return { chainId, packetStore, validatorRegistry, checkpointRegistry };
+  return { chainId, packetStore, validatorRegistry, headerProducer };
 }
 
 function validatorEpochObject(epoch) {
@@ -64,10 +67,10 @@ async function main() {
     app: await loadArtifact("apps/MinimalTransferApp.sol", "MinimalTransferApp"),
   };
 
-  const providerA = new ethers.JsonRpcProvider(CHAIN_A_RPC);
-  const providerB = new ethers.JsonRpcProvider(CHAIN_B_RPC);
-  const ownerA = await providerA.getSigner(0);
-  const ownerB = await providerB.getSigner(0);
+  const providerA = providerForRpc(CHAIN_A_RPC);
+  const providerB = providerForRpc(CHAIN_B_RPC);
+  const ownerA = await signerForRpc(CHAIN_A_RPC, "A", 0);
+  const ownerB = await signerForRpc(CHAIN_B_RPC, "B", 0);
 
   const sourceA = await deploySourceCore({ chainKey: "A", provider: providerA, owner: ownerA, artifacts });
   const sourceB = await deploySourceCore({ chainKey: "B", provider: providerB, owner: ownerB, artifacts });
@@ -111,13 +114,14 @@ async function main() {
   await (await appB.configureRemoteApp(sourceA.chainId, await appA.getAddress())).wait();
 
   const config = {
+    runtime: normalizeRuntime(),
     chains: {
       A: {
         rpc: CHAIN_A_RPC,
         chainId: sourceA.chainId,
         packetStore: await sourceA.packetStore.getAddress(),
         validatorRegistry: await sourceA.validatorRegistry.getAddress(),
-        checkpointRegistry: await sourceA.checkpointRegistry.getAddress(),
+        headerProducer: await sourceA.headerProducer.getAddress(),
         client: await clientA.getAddress(),
         packetHandler: await handlerA.getAddress(),
         canonicalToken: await bankTokenA.getAddress(),
@@ -129,7 +133,7 @@ async function main() {
         chainId: sourceB.chainId,
         packetStore: await sourceB.packetStore.getAddress(),
         validatorRegistry: await sourceB.validatorRegistry.getAddress(),
-        checkpointRegistry: await sourceB.checkpointRegistry.getAddress(),
+        headerProducer: await sourceB.headerProducer.getAddress(),
         client: await clientB.getAddress(),
         packetHandler: await handlerB.getAddress(),
         voucherToken: await voucherB.getAddress(),

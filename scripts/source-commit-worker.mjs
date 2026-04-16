@@ -1,20 +1,22 @@
 import { ethers } from "ethers";
-import { loadArtifact, loadConfig, signerFor, pretty } from "./ibc-lite-common.mjs";
+import { headerProducerAddress, loadArtifact, loadConfig, signerFor, pretty } from "./ibc-lite-common.mjs";
 
-async function commitPending(chainKey, config, artifacts) {
+async function finalizePendingHeaders(chainKey, config, artifacts) {
   const signer = await signerFor(config, chainKey, 0);
   const chain = config.chains[chainKey];
   const packetStore = new ethers.Contract(chain.packetStore, artifacts.packetStore.abi, signer);
-  const checkpointRegistry = new ethers.Contract(chain.checkpointRegistry, artifacts.checkpointRegistry.abi, signer);
+  const headerProducer = new ethers.Contract(headerProducerAddress(chain), artifacts.checkpointRegistry.abi, signer);
   const packetSequence = await packetStore.packetSequence();
-  const committed = await checkpointRegistry.lastCommittedPacketSequence();
+  const committed = await headerProducer.lastCommittedPacketSequence();
   if (packetSequence <= committed) {
-    console.log(`[source-commit] ${chainKey} no pending packets`);
+    console.log(`[source-commit] ${chainKey} no pending packets to finalize`);
     return;
   }
-  const tx = await checkpointRegistry.commitCheckpoint(packetSequence);
+  const tx = await headerProducer.finalizeHeader(packetSequence);
   const receipt = await tx.wait();
-  console.log(`[source-commit] ${chainKey} committed packets ${committed + 1n}-${packetSequence} tx=${pretty(receipt.hash)}`);
+  console.log(
+    `[source-commit] ${chainKey} finalized header for packets ${committed + 1n}-${packetSequence} tx=${pretty(receipt.hash)}`
+  );
 }
 
 async function main() {
@@ -23,8 +25,8 @@ async function main() {
     packetStore: await loadArtifact("source/SourcePacketCommitment.sol", "SourcePacketCommitment"),
     checkpointRegistry: await loadArtifact("source/SourceCheckpointRegistry.sol", "SourceCheckpointRegistry"),
   };
-  await commitPending("A", config, artifacts);
-  await commitPending("B", config, artifacts);
+  await finalizePendingHeaders("A", config, artifacts);
+  await finalizePendingHeaders("B", config, artifacts);
 }
 
 main().catch((error) => {

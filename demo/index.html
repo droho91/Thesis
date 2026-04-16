@@ -37,14 +37,14 @@
           <small>validator set anchor</small>
         </article>
         <article class="metric metric-client">
-          <span>B trusts A checkpoint</span>
+          <span>B trusts A header</span>
           <strong id="trustedAOnB">-</strong>
           <small>consensus state sequence</small>
         </article>
         <article class="metric metric-client">
-          <span>A state root on B</span>
+          <span>A trusted root on B</span>
           <strong id="trustedPacketRootA">-</strong>
-          <small>trusted remote state root</small>
+          <small>execution root first, packet-state root only in legacy mode</small>
         </article>
         <article class="metric metric-proof">
           <span>Forward consumed</span>
@@ -64,10 +64,10 @@
           <strong>Escrow</strong>
           <small id="routeEscrowText">waiting</small>
         </article>
-        <article id="routeCheckpoint">
+        <article id="routeHeader">
           <span>02</span>
-          <strong>Source artifact</strong>
-          <small id="routeCheckpointText">waiting</small>
+          <strong>Finalized header</strong>
+          <small id="routeHeaderText">waiting</small>
         </article>
         <article id="routeClient">
           <span>03</span>
@@ -106,7 +106,7 @@
           <div class="action-group setup" data-phase="00">
             <div>
               <h3>Local stack</h3>
-              <p>Use these after starting Bank A and Bank B local nodes.</p>
+              <p>Canonical path: start the Besu bank chains first, then deploy and seed the contracts from here.</p>
             </div>
             <button class="button-primary" id="deploySeed" type="button">Deploy + Seed</button>
             <button class="button-secondary" id="refreshState" type="button">Refresh State</button>
@@ -116,10 +116,10 @@
           <div class="action-group" data-phase="01">
             <div>
               <h3>Forward path: lock, prove, mint</h3>
-              <p>Bank B can mint a voucher only after its Bank A client trusts a certified checkpoint.</p>
+              <p>Bank B can mint a voucher only after its Bank A client verifies a finalized QBFT-like header.</p>
             </div>
             <button class="button-primary" data-action="lock" type="button">Lock aBANK</button>
-            <button class="button-secondary" data-action="checkpointForward" type="button">Commit A Checkpoint</button>
+            <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Finalize A Header</button>
             <button class="button-secondary" data-action="updateForwardClient" type="button">Update B Client</button>
             <button class="button-run" data-action="proveForwardMint" type="button">Prove + Mint</button>
           </div>
@@ -141,7 +141,7 @@
               <p>Bank A releases escrow only after the reverse packet is committed, trusted, and proven.</p>
             </div>
             <button class="button-danger" data-action="burn" type="button">Burn Voucher</button>
-            <button class="button-secondary" data-action="checkpointReverse" type="button">Commit B Checkpoint</button>
+            <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Finalize B Header</button>
             <button class="button-secondary" data-action="updateReverseClient" type="button">Update A Client</button>
             <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock</button>
           </div>
@@ -194,8 +194,8 @@
               <dd id="poolLiquidity">-</dd>
             </div>
             <div>
-              <dt>A checkpoints</dt>
-              <dd id="checkpointSequenceA">-</dd>
+              <dt>A finalized headers</dt>
+              <dd id="headerHeightA">-</dd>
             </div>
             <div>
               <dt>B client for A status</dt>
@@ -234,11 +234,11 @@
               <dd id="packetSequenceB">-</dd>
             </div>
             <div>
-              <dt>B checkpoints</dt>
-              <dd id="checkpointSequenceB">-</dd>
+              <dt>B finalized headers</dt>
+              <dd id="headerHeightB">-</dd>
             </div>
             <div>
-              <dt>A trusts B through checkpoint</dt>
+              <dt>A trusts B through header</dt>
               <dd id="trustedBOnA">-</dd>
             </div>
             <div>
@@ -259,7 +259,7 @@
           <h2 id="lastMessage">Ready</h2>
         </div>
         <div class="console-frame">
-          <pre id="contractOutput">Start both local chains, then press Deploy + Seed.</pre>
+          <pre id="contractOutput">Start the Besu bank chains, then press Deploy + Seed.</pre>
         </div>
       </section>
     </main>
