@@ -9,6 +9,7 @@ import {
   saveConfig,
   signerForRpc,
   validatorAddresses,
+  waitForBesuRuntimeReady,
 } from "./ibc-lite-common.mjs";
 
 const INITIAL_EPOCH_ID = BigInt(process.env.VALIDATOR_EPOCH_ID || 1);
@@ -58,6 +59,8 @@ export async function runDeployIBCLite() {
   if (!activeRuntime.besuFirst) {
     throw new Error("deploy-ibc-lite.mjs is a canonical Besu-first entrypoint.");
   }
+
+  await waitForBesuRuntimeReady();
 
   const artifacts = {
     packetStore: await loadArtifact("source/SourcePacketCommitment.sol", "SourcePacketCommitment"),

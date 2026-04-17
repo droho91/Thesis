@@ -9,258 +9,380 @@
   </head>
   <body>
     <main class="shell">
-      <header class="topbar">
-        <div class="brand-tile">
-          <img src="./assets/logo.png" alt="Bank chain client mark" />
-        </div>
-        <div class="title-block">
-          <p class="eyebrow">Local IBC / light-client prototype</p>
-          <h1>Verified bank-chain communication</h1>
-          <p>
-            Control the local two-chain model directly: write source packet commitments, advance a
-            remote client from source-certified artifacts, verify membership proofs, block replay,
-            freeze on conflict, and recover explicitly.
-          </p>
-        </div>
-        <div class="status-pill" id="deploymentStatus">Checking local stack</div>
-      </header>
-
-      <section class="balances" aria-label="Live state">
-        <article class="metric metric-source">
-          <span>Bank A packet state</span>
-          <strong id="packetSequenceA">-</strong>
-          <small>canonical source commitments</small>
-        </article>
-        <article class="metric metric-client">
-          <span>B trusts A epoch</span>
-          <strong id="trustedEpochAOnB">-</strong>
-          <small>validator set anchor</small>
-        </article>
-        <article class="metric metric-client">
-          <span>B trusts A header</span>
-          <strong id="trustedAOnB">-</strong>
-          <small>consensus state sequence</small>
-        </article>
-        <article class="metric metric-client">
-          <span>A trusted root on B</span>
-          <strong id="trustedPacketRootA">-</strong>
-          <small>execution root first; packet-state root survives only inside the internal compatibility harness</small>
-        </article>
-        <article class="metric metric-proof">
-          <span>Forward consumed</span>
-          <strong id="forwardConsumedState">-</strong>
-          <small>consumed packet ids</small>
-        </article>
-        <article class="metric metric-safety">
-          <span>Client safety</span>
-          <strong id="safetyState">-</strong>
-          <small>active, frozen, recovering</small>
-        </article>
-      </section>
-
-      <section class="protocol-roadmap" aria-label="Live protocol progress">
-        <article id="routeEscrow">
-          <span>01</span>
-          <strong>Escrow</strong>
-          <small id="routeEscrowText">waiting</small>
-        </article>
-        <article id="routeHeader">
-          <span>02</span>
-          <strong>Finalized header</strong>
-          <small id="routeHeaderText">waiting</small>
-        </article>
-        <article id="routeClient">
-          <span>03</span>
-          <strong>Client update</strong>
-          <small id="routeClientText">waiting</small>
-        </article>
-        <article id="routeProof">
-          <span>04</span>
-          <strong>Proof execution</strong>
-          <small id="routeProofText">waiting</small>
-        </article>
-        <article id="routeLending">
-          <span>05</span>
-          <strong>Lending use case</strong>
-          <small id="routeLendingText">waiting</small>
-        </article>
-        <article id="routeReverse">
-          <span>06</span>
-          <strong>Reverse packet</strong>
-          <small id="routeReverseText">waiting</small>
-        </article>
-        <article id="routeSafety">
-          <span>07</span>
-          <strong>Freeze / recovery</strong>
-          <small id="routeSafetyText">available</small>
-        </article>
-      </section>
-
-      <section class="workspace">
-        <section class="operations" aria-label="Demo operations">
-          <div class="section-head">
-            <p class="eyebrow">Direct actions</p>
-            <h2>Operate the verified state transition</h2>
+      <header class="hero">
+        <section class="hero-panel hero-main">
+          <div class="brand-frame">
+            <img src="./assets/logo.png" alt="Bank chain client mark" />
           </div>
-
-          <div class="action-group setup" data-phase="00">
-            <div>
-              <h3>Local stack</h3>
-              <p>Canonical path: start the Besu bank chains first, then deploy and seed the contracts from here.</p>
-            </div>
-            <button class="button-primary" id="deploySeed" type="button">Deploy + Seed</button>
-            <button class="button-secondary" id="refreshState" type="button">Refresh State</button>
-            <button class="button-run" data-action="fullFlow" type="button">Run Full Flow</button>
-          </div>
-
-          <div class="action-group" data-phase="01">
-            <div>
-              <h3>Forward path: lock, prove, mint</h3>
-              <p>Bank B can mint a voucher only after its Bank A client verifies a finalized QBFT-like header.</p>
-            </div>
-            <button class="button-primary" data-action="lock" type="button">Lock aBANK</button>
-            <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Finalize A Header</button>
-            <button class="button-secondary" data-action="updateForwardClient" type="button">Update B Client</button>
-            <button class="button-run" data-action="proveForwardMint" type="button">Prove + Mint</button>
-          </div>
-
-          <div class="action-group" data-phase="02">
-            <div>
-              <h3>Lending use case: proven voucher collateral</h3>
-              <p>The lending pool accepts the voucher only after Bank B has verified Bank A state through the client.</p>
-            </div>
-            <button class="button-primary" data-action="depositCollateral" type="button">Deposit Voucher</button>
-            <button class="button-run" data-action="borrow" type="button">Borrow bCASH</button>
-            <button class="button-secondary" data-action="repay" type="button">Repay bCASH</button>
-            <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw Voucher</button>
-          </div>
-
-          <div class="action-group" data-phase="03">
-            <div>
-              <h3>Reverse path: burn, prove, unlock</h3>
-              <p>Bank A releases escrow only after the reverse packet is committed, trusted, and proven.</p>
-            </div>
-            <button class="button-danger" data-action="burn" type="button">Burn Voucher</button>
-            <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Finalize B Header</button>
-            <button class="button-secondary" data-action="updateReverseClient" type="button">Update A Client</button>
-            <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock</button>
-          </div>
-
-          <div class="action-group" data-phase="04">
-            <div>
-              <h3>Safety path: misbehaviour and recovery</h3>
-              <p>A conflicting certified update freezes the client; replay and absence checks are explicit.</p>
-            </div>
-            <button class="button-danger" data-action="freezeClient" type="button">Submit Conflict</button>
-            <button class="button-run" data-action="recoverClient" type="button">Recover Client</button>
-            <button class="button-danger" data-action="replayForward" type="button">Replay Forward</button>
-            <button class="button-secondary" data-action="checkNonMembership" type="button">Check Non-Membership</button>
+          <div class="hero-copy">
+            <p class="eyebrow">Local IBC / light-client prototype</p>
+            <h1>Verified bank-chain communication</h1>
+            <p class="hero-text">
+              This demo is organized around the trust path first. A voucher appears only after a
+              finalized header updates the remote client, the execution root becomes trusted, and a
+              packet storage proof executes exactly once.
+            </p>
+            <ul class="hero-tags" aria-label="Protocol guarantees">
+              <li>Finalized header</li>
+              <li>Trusted execution root</li>
+              <li>Storage proof execution</li>
+              <li>Replay blocked</li>
+            </ul>
           </div>
         </section>
 
-        <aside class="receipt" aria-label="Readable trace">
-          <div class="section-head">
-            <p class="eyebrow">Technical receipt</p>
-            <h2>What the latest trusted path proves</h2>
-          </div>
+        <aside class="hero-panel hero-runtime">
+          <p class="eyebrow">Runtime status</p>
+          <div class="status-pill" id="deploymentStatus">Checking local stack</div>
+          <p class="runtime-note">
+            Canonical runtime: Besu QBFT on both bank chains. The lending surface stays visible, but
+            the client and proof path remain the real trust anchor.
+          </p>
+        </aside>
+      </header>
 
-          <dl class="receipt-list">
+      <section class="signal-strip" aria-label="Live protocol summary">
+        <article class="signal-card">
+          <span class="signal-kicker">Source progression</span>
+          <h2>Bank A writes and seals state</h2>
+          <dl class="signal-stats">
             <div>
-              <dt>Bank A user balance</dt>
-              <dd id="bankABalance">-</dd>
+              <dt>Packet sequence</dt>
+              <dd id="packetSequenceA">-</dd>
             </div>
             <div>
-              <dt>Bank A escrow</dt>
-              <dd id="escrowBalance">-</dd>
-            </div>
-            <div>
-              <dt>Bank B voucher</dt>
-              <dd id="voucherBalance">-</dd>
-            </div>
-            <div>
-              <dt>Bank B borrowed cash</dt>
-              <dd id="bankBBalance">-</dd>
-            </div>
-            <div>
-              <dt>Lending collateral</dt>
-              <dd id="poolCollateral">-</dd>
-            </div>
-            <div>
-              <dt>Lending debt</dt>
-              <dd id="poolDebt">-</dd>
-            </div>
-            <div>
-              <dt>Pool liquidity</dt>
-              <dd id="poolLiquidity">-</dd>
-            </div>
-            <div>
-              <dt>A finalized headers</dt>
+              <dt>Finalized headers</dt>
               <dd id="headerHeightA">-</dd>
             </div>
+          </dl>
+        </article>
+
+        <article class="signal-card">
+          <span class="signal-kicker">Remote trust</span>
+          <h2>Bank B trusts Bank A</h2>
+          <dl class="signal-stats">
             <div>
-              <dt>B client for A status</dt>
-              <dd id="statusAOnB">-</dd>
+              <dt>Trusted epoch</dt>
+              <dd id="trustedEpochAOnB">-</dd>
             </div>
             <div>
-              <dt>A client for B status</dt>
-              <dd id="statusBOnA">-</dd>
+              <dt>Trusted header</dt>
+              <dd id="trustedAOnB">-</dd>
             </div>
             <div>
-              <dt>B trusted A consensus hash</dt>
-              <dd id="trustedConsensusAOnB">-</dd>
+              <dt>Trusted root</dt>
+              <dd id="trustedPacketRootA">-</dd>
+            </div>
+          </dl>
+        </article>
+
+        <article class="signal-card">
+          <span class="signal-kicker">Execution gate</span>
+          <h2>One-time receive only</h2>
+          <dl class="signal-stats">
+            <div>
+              <dt>Consumed once</dt>
+              <dd id="forwardConsumedState">-</dd>
             </div>
             <div>
-              <dt>B trusted A source block</dt>
-              <dd id="trustedSourceBlockAOnB">-</dd>
-            </div>
-            <div>
-              <dt>B trusted A packet range</dt>
-              <dd id="trustedPacketRangeA">-</dd>
-            </div>
-            <div>
-              <dt>Forward packet id</dt>
-              <dd id="forwardPacketId">-</dd>
-            </div>
-            <div>
-              <dt>Replay blocked</dt>
+              <dt>Replay gate</dt>
               <dd id="replayBlockedState">-</dd>
             </div>
             <div>
-              <dt>Non-membership proof</dt>
-              <dd id="nonMembershipState">-</dd>
-            </div>
-            <div>
-              <dt>B packets written</dt>
-              <dd id="packetSequenceB">-</dd>
-            </div>
-            <div>
-              <dt>B finalized headers</dt>
-              <dd id="headerHeightB">-</dd>
-            </div>
-            <div>
-              <dt>A trusts B through header</dt>
-              <dd id="trustedBOnA">-</dd>
-            </div>
-            <div>
-              <dt>Reverse packet id</dt>
-              <dd id="reversePacketId">-</dd>
-            </div>
-            <div>
-              <dt>Misbehaviour evidence</dt>
-              <dd id="misbehaviourState">-</dd>
+              <dt>Safety state</dt>
+              <dd id="safetyState">-</dd>
             </div>
           </dl>
-        </aside>
+        </article>
+
+        <article class="signal-card">
+          <span class="signal-kicker">Application outcome</span>
+          <h2>Voucher and credit surface</h2>
+          <dl class="signal-stats">
+            <div>
+              <dt>Voucher</dt>
+              <dd id="voucherBalance">-</dd>
+            </div>
+            <div>
+              <dt>Borrowed cash</dt>
+              <dd id="bankBBalance">-</dd>
+            </div>
+            <div>
+              <dt>Escrowed aBANK</dt>
+              <dd id="escrowBalance">-</dd>
+            </div>
+          </dl>
+        </article>
       </section>
 
-      <section class="log-panel" aria-label="Action log">
-        <div class="section-head">
-          <p class="eyebrow">Action log</p>
-          <h2 id="lastMessage">Ready</h2>
-        </div>
-        <div class="console-frame">
-          <pre id="contractOutput">Start the Besu bank chains, then press Deploy + Seed.</pre>
-        </div>
+      <section class="workbench">
+        <section class="main-stage" aria-label="Operator workbench">
+          <div class="section-head">
+            <p class="eyebrow">Operator workbench</p>
+            <h2>Drive the protocol in the order the trust model expects</h2>
+            <p class="section-text">
+              The main stage is sequenced around the protocol. The right rail stays in inspector mode
+              so the viewer can always see what is trusted, what is consumed, and what the app layer
+              gained from that proof path.
+            </p>
+          </div>
+
+          <section class="activity-panel" aria-label="Latest operation">
+            <div class="activity-copy">
+              <p class="eyebrow">Latest operation</p>
+              <div class="activity-heading">
+                <h3 id="latestActionTitle">Waiting for the first action</h3>
+                <span id="latestActionTime">No recent operation</span>
+              </div>
+              <p class="activity-summary" id="latestActionSummary">
+                Use the controls below to move the protocol forward. The UI will summarize the last
+                successful action and the state changes it caused.
+              </p>
+            </div>
+            <ul class="activity-changes" id="latestActionChanges">
+              <li>Nothing has changed yet.</li>
+            </ul>
+          </section>
+
+          <div class="protocol-roadmap" aria-label="Live protocol progress">
+            <article id="routeEscrow">
+              <span>01</span>
+              <strong>Escrow</strong>
+              <small id="routeEscrowText">waiting</small>
+            </article>
+            <article id="routeHeader">
+              <span>02</span>
+              <strong>Finalized header</strong>
+              <small id="routeHeaderText">waiting</small>
+            </article>
+            <article id="routeClient">
+              <span>03</span>
+              <strong>Client update</strong>
+              <small id="routeClientText">waiting</small>
+            </article>
+            <article id="routeProof">
+              <span>04</span>
+              <strong>Proof execution</strong>
+              <small id="routeProofText">waiting</small>
+            </article>
+            <article id="routeLending">
+              <span>05</span>
+              <strong>Lending use case</strong>
+              <small id="routeLendingText">waiting</small>
+            </article>
+            <article id="routeReverse">
+              <span>06</span>
+              <strong>Reverse packet</strong>
+              <small id="routeReverseText">waiting</small>
+            </article>
+            <article id="routeSafety">
+              <span>07</span>
+              <strong>Freeze / recovery</strong>
+              <small id="routeSafetyText">available</small>
+            </article>
+          </div>
+
+          <div class="control-stack">
+            <section class="flow-card setup" data-phase="00">
+              <div class="flow-copy">
+                <p class="flow-kicker">Runtime</p>
+                <h3>Deploy and hydrate the local two-chain stack</h3>
+                <p>
+                  Bring up Besu, deploy the contracts, seed the demo balances, and refresh the
+                  state before running protocol actions.
+                </p>
+              </div>
+              <div class="flow-actions">
+                <button class="button-primary" id="deploySeed" type="button">Deploy + Seed</button>
+                <button class="button-secondary" id="refreshState" type="button">Refresh State</button>
+                <button class="button-run" data-action="fullFlow" type="button">Run Full Flow</button>
+              </div>
+            </section>
+
+            <section class="flow-card" data-phase="01">
+              <div class="flow-copy">
+                <p class="flow-kicker">Forward path</p>
+                <h3>Lock on Bank A, then prove on Bank B</h3>
+                <p>
+                  Commit the packet, finalize the header, update the remote client, and execute the
+                  storage proof before the voucher can exist on Bank B.
+                </p>
+              </div>
+              <div class="flow-actions">
+                <button class="button-primary" data-action="lock" type="button">Lock aBANK</button>
+                <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Finalize A Header</button>
+                <button class="button-secondary" data-action="updateForwardClient" type="button">Update B Client</button>
+                <button class="button-run" data-action="proveForwardMint" type="button">Prove + Mint</button>
+              </div>
+            </section>
+
+            <section class="flow-card" data-phase="02">
+              <div class="flow-copy">
+                <p class="flow-kicker">Lending use case</p>
+                <h3>Use the proven voucher as collateral</h3>
+                <p>
+                  The lending pool is downstream from the proof. It demonstrates what verified
+                  cross-chain state can unlock, not what the system trusts.
+                </p>
+              </div>
+              <div class="flow-actions">
+                <button class="button-primary" data-action="depositCollateral" type="button">Deposit Voucher</button>
+                <button class="button-run" data-action="borrow" type="button">Borrow bCASH</button>
+                <button class="button-secondary" data-action="repay" type="button">Repay bCASH</button>
+                <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw Voucher</button>
+              </div>
+            </section>
+
+            <section class="flow-card" data-phase="03">
+              <div class="flow-copy">
+                <p class="flow-kicker">Reverse path</p>
+                <h3>Burn the voucher and unescrow on Bank A</h3>
+                <p>
+                  The return trip mirrors the forward path: commit on Bank B, trust the new header
+                  on Bank A, and then unlock the escrowed asset.
+                </p>
+              </div>
+              <div class="flow-actions">
+                <button class="button-danger" data-action="burn" type="button">Burn Voucher</button>
+                <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Finalize B Header</button>
+                <button class="button-secondary" data-action="updateReverseClient" type="button">Update A Client</button>
+                <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock</button>
+              </div>
+            </section>
+
+            <section class="flow-card" data-phase="04">
+              <div class="flow-copy">
+                <p class="flow-kicker">Safety path</p>
+                <h3>Freeze on conflicting updates, recover explicitly</h3>
+                <p>
+                  Misbehaviour remains first-class: submit a conflict, freeze the client, then
+                  recover under a successor epoch to restore trust progression.
+                </p>
+              </div>
+              <div class="flow-actions">
+                <button class="button-danger" data-action="freezeClient" type="button">Submit Conflict</button>
+                <button class="button-run" data-action="recoverClient" type="button">Recover Client</button>
+                <button class="button-danger" data-action="replayForward" type="button">Replay Forward</button>
+                <button class="button-secondary" data-action="checkNonMembership" type="button">Check Non-Membership</button>
+              </div>
+            </section>
+          </div>
+
+          <section class="console-section" aria-label="Action log">
+            <div class="section-head compact">
+              <p class="eyebrow">Action log</p>
+              <h2 id="lastMessage">Ready</h2>
+              <p class="section-text">
+                The latest receipt records the concrete trusted path that produced the current state.
+              </p>
+            </div>
+            <div class="console-frame">
+              <pre id="contractOutput">Start the Besu bank chains, then press Deploy + Seed.</pre>
+            </div>
+          </section>
+        </section>
+
+        <aside class="side-rail" aria-label="State inspector">
+          <section class="rail-card">
+            <div class="section-head compact">
+              <p class="eyebrow">Balances</p>
+              <h2>Application state</h2>
+            </div>
+            <dl class="rail-grid">
+              <div>
+                <dt>Bank A user</dt>
+                <dd id="bankABalance">-</dd>
+              </div>
+              <div>
+                <dt>Pool liquidity</dt>
+                <dd id="poolLiquidity">-</dd>
+              </div>
+              <div>
+                <dt>Pool collateral</dt>
+                <dd id="poolCollateral">-</dd>
+              </div>
+              <div>
+                <dt>Pool debt</dt>
+                <dd id="poolDebt">-</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="rail-card">
+            <div class="section-head compact">
+              <p class="eyebrow">Trusted remote state</p>
+              <h2>Bank B about Bank A</h2>
+            </div>
+            <dl class="rail-grid">
+              <div>
+                <dt>Client status</dt>
+                <dd id="statusAOnB">-</dd>
+              </div>
+              <div>
+                <dt>Trusted consensus hash</dt>
+                <dd id="trustedConsensusAOnB">-</dd>
+              </div>
+              <div>
+                <dt>Trusted source block</dt>
+                <dd id="trustedSourceBlockAOnB">-</dd>
+              </div>
+              <div>
+                <dt>Trusted packet range</dt>
+                <dd id="trustedPacketRangeA">-</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="rail-card">
+            <div class="section-head compact">
+              <p class="eyebrow">Return trust</p>
+              <h2>Bank A about Bank B</h2>
+            </div>
+            <dl class="rail-grid">
+              <div>
+                <dt>Bank B packets</dt>
+                <dd id="packetSequenceB">-</dd>
+              </div>
+              <div>
+                <dt>B finalized headers</dt>
+                <dd id="headerHeightB">-</dd>
+              </div>
+              <div>
+                <dt>A trusts B header</dt>
+                <dd id="trustedBOnA">-</dd>
+              </div>
+              <div>
+                <dt>A client status</dt>
+                <dd id="statusBOnA">-</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="rail-card">
+            <div class="section-head compact">
+              <p class="eyebrow">Receipts</p>
+              <h2>Proof artifacts</h2>
+            </div>
+            <dl class="rail-grid">
+              <div>
+                <dt>Forward packet id</dt>
+                <dd id="forwardPacketId">-</dd>
+              </div>
+              <div>
+                <dt>Reverse packet id</dt>
+                <dd id="reversePacketId">-</dd>
+              </div>
+              <div>
+                <dt>Misbehaviour evidence</dt>
+                <dd id="misbehaviourState">-</dd>
+              </div>
+              <div>
+                <dt>Non-membership</dt>
+                <dd id="nonMembershipState">-</dd>
+              </div>
+            </dl>
+          </section>
+        </aside>
       </section>
     </main>
     <script type="module" src="./app.js"></script>

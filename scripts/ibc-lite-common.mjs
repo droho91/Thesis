@@ -11,8 +11,8 @@ export const STATE_LEAF_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.
 export const PACKET_COMMITMENT_PATH_TYPEHASH = ethers.keccak256(
   ethers.toUtf8Bytes("IBCLite.PacketCommitmentPath.v1")
 );
-const PACKET_LEAF_AT_SLOT = 1n;
-const PACKET_PATH_AT_SLOT = 2n;
+const PACKET_LEAF_AT_SLOT = 2n;
+const PACKET_PATH_AT_SLOT = 3n;
 
 function runtimeDefaults() {
   const mode = process.env.RUNTIME_MODE || (useBesuKeys() ? "besu" : "legacy");
@@ -134,6 +134,56 @@ export function providerFor(config, chainKey) {
 
 export function providerForRpc(rpc) {
   return new ethers.JsonRpcProvider(rpc);
+}
+
+async function rpcReady(rpc) {
+  const response = await fetch(rpc, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "eth_chainId",
+      params: [],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`RPC ${rpc} returned HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  if (payload.error || !payload.result) {
+    throw new Error(payload.error?.message || `RPC ${rpc} did not return a chain id`);
+  }
+  return payload.result;
+}
+
+export async function waitForRpcReady(
+  rpc,
+  { label = rpc, timeoutMs = Number(process.env.RPC_WAIT_TIMEOUT_MS || 120000), intervalMs = 2000 } = {}
+) {
+  const start = Date.now();
+  let lastError = "RPC not reachable yet";
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const chainId = await rpcReady(rpc);
+      console.log(`[wait] ${label} ready at ${rpc} (chainId=${BigInt(chainId).toString()})`);
+      return chainId;
+    } catch (error) {
+      lastError = error.message;
+      await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
+    }
+  }
+
+  throw new Error(`[wait] ${label} did not become ready within ${timeoutMs / 1000}s. Last error: ${lastError}`);
+}
+
+export async function waitForBesuRuntimeReady({
+  timeoutMs = Number(process.env.RPC_WAIT_TIMEOUT_MS || 120000),
+  intervalMs = 2000,
+} = {}) {
+  await waitForRpcReady(CHAIN_A_RPC, { label: "Bank A RPC", timeoutMs, intervalMs });
+  await waitForRpcReady(CHAIN_B_RPC, { label: "Bank B RPC", timeoutMs, intervalMs });
 }
 
 export function headerProducerAddress(chainConfig) {

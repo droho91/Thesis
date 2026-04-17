@@ -7,6 +7,22 @@ export function setText(id, value) {
   if (node) node.textContent = value ?? "-";
 }
 
+function setList(id, items) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.innerHTML = "";
+  for (const item of items) {
+    const li = document.createElement("li");
+    if (item.label) {
+      const strong = document.createElement("strong");
+      strong.textContent = item.label;
+      li.appendChild(strong);
+    }
+    li.appendChild(document.createTextNode(item.value));
+    node.appendChild(li);
+  }
+}
+
 function compact(value) {
   if (!value) return "-";
   return value.length > 22 ? `${value.slice(0, 12)}...${value.slice(-8)}` : value;
@@ -188,6 +204,29 @@ export function renderStatus(status) {
     misbehaviour.recovered ? `recovered epoch ${misbehaviour.epochId}` : misbehaviour.frozen ? `frozen seq ${misbehaviour.sequence}` : "none"
   );
   renderRoadmap(status);
+}
+
+export function renderLatestActivity(activity) {
+  if (!activity) {
+    setText("latestActionTitle", "Waiting for the first action");
+    setText("latestActionTime", "No recent operation");
+    setText(
+      "latestActionSummary",
+      "Use the controls below to move the protocol forward. The UI will summarize the last successful action and the state changes it caused."
+    );
+    setList("latestActionChanges", [{ value: "Nothing has changed yet." }]);
+    return;
+  }
+
+  setText("latestActionTitle", activity.title);
+  setText("latestActionTime", activity.timeLabel || "Just now");
+  setText("latestActionSummary", activity.summary);
+  setList(
+    "latestActionChanges",
+    activity.changes?.length
+      ? activity.changes
+      : [{ value: "The action completed, but there was no material state change to summarize." }]
+  );
 }
 
 export function markControllerOffline() {

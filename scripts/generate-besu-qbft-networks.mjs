@@ -69,7 +69,7 @@ function operatorSpec(network, label) {
 
 function qbftExtraData(validators) {
   const validatorAddresses = [...validators].map((validator) => validator.address.toLowerCase()).sort();
-  return ethers.encodeRlp([VANITY, validatorAddresses, "0x", "0x", []]);
+  return ethers.encodeRlp([VANITY, validatorAddresses, [], "0x", []]);
 }
 
 function genesisFor(network, validators, operators) {
@@ -157,7 +157,7 @@ function dockerCompose(networks) {
       lines.push(`    container_name: thesis-${node.name}`);
       lines.push(`    command: ["--config-file=/network/nodes/${node.name}/config.toml"]`);
       lines.push("    volumes:");
-      lines.push(`      - ./networks/besu/${network.key}:/network`);
+      lines.push(`      - ./${network.key}:/network`);
       if (exposeRpc) {
         lines.push("    ports:");
         lines.push(`      - "${network.hostRpcPort}:8545"`);

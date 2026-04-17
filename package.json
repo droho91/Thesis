@@ -8,7 +8,7 @@
     "node:chainA": "hardhat node --hostname 127.0.0.1 --port 8545 --chain-id 31337",
     "node:chainB": "npx ganache --server.host 127.0.0.1 --server.port 9545 --chain.chainId 31338 --wallet.mnemonic \"test test test test test test test test test test test junk\"",
     "besu:generate": "node scripts/generate-besu-qbft-networks.mjs",
-    "besu:up": "docker compose -f networks/besu/docker-compose.yml up -d",
+    "besu:up": "docker compose -f networks/besu/docker-compose.yml up -d && node scripts/wait-for-besu-rpc.mjs",
     "besu:down": "docker compose -f networks/besu/docker-compose.yml down -v",
     "deploy:ibc-lite:raw": "npm run compile && node scripts/deploy-ibc-lite.mjs",
     "seed:ibc-lite:raw": "node scripts/seed-ibc-lite.mjs",

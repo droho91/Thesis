@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { normalizeRuntime } from "./ibc-lite-common.mjs";
@@ -6,7 +6,11 @@ import { readDemoStatus, readTrace } from "./ibc-lite-demo-read-model.mjs";
 
 // Demo service layer: wraps runtime command execution and composes payloads consumed by the HTTP API.
 const configPath = resolve(process.cwd(), ".ibc-lite.local.json");
+const traceJsonPath = resolve(process.cwd(), "demo", "latest-run.json");
+const traceJsPath = resolve(process.cwd(), "demo", "latest-run.js");
 const npm = "npm";
+const node = process.execPath;
+const DEFAULT_TIMEOUT_MS = Number(process.env.DEMO_SERVICE_TIMEOUT_MS || 300000);
 
 function runEnv() {
   const temp = process.env.TMPDIR || process.env.TEMP || process.env.TMP || "/tmp";
@@ -17,15 +21,26 @@ function runEnv() {
   };
 }
 
-function runCommand(command, args) {
+function runCommand(command, args, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   return new Promise((resolveRun, rejectRun) => {
+    const useShell = process.platform === "win32" && command === npm;
     const child = spawn(command, args, {
       cwd: process.cwd(),
       env: runEnv(),
-      shell: process.platform === "win32",
+      shell: useShell,
       windowsHide: true,
     });
     let output = "";
+    let finished = false;
+
+    const timer = setTimeout(() => {
+      if (finished) return;
+      child.kill();
+      rejectRun(
+        new Error(`${command} ${args.join(" ")} timed out after ${Math.round(timeoutMs / 1000)}s\n${output}`)
+      );
+    }, timeoutMs);
+
     child.stdout.on("data", (chunk) => {
       output += chunk.toString();
     });
@@ -33,9 +48,13 @@ function runCommand(command, args) {
       output += chunk.toString();
     });
     child.on("error", (error) => {
+      finished = true;
+      clearTimeout(timer);
       rejectRun(new Error(`${command} ${args.join(" ")} could not start: ${error.message}`));
     });
     child.on("close", (code) => {
+      finished = true;
+      clearTimeout(timer);
       if (code === 0) return resolveRun(output);
       rejectRun(new Error(`${command} ${args.join(" ")} failed with exit code ${code}\n${output}`));
     });
@@ -56,14 +75,24 @@ export async function runtimeScripts() {
   if (!runtime.besuFirst) {
     throw new Error("Demo service only supports the canonical Besu-first runtime.");
   }
-  return { deploy: "deploy:ibc-lite", seed: "seed:ibc-lite", flow: "demo:flow", runtime };
+  return {
+    compile: { command: npm, args: ["run", "compile"] },
+    deploy: { command: node, args: ["scripts/deploy-ibc-lite.mjs"] },
+    seed: { command: node, args: ["scripts/seed-ibc-lite.mjs"] },
+    flow: { command: node, args: ["scripts/demo-ibc-lite-flow.mjs"] },
+    runtime,
+  };
 }
 
 async function deployAndSeed() {
   const scripts = await runtimeScripts();
-  const deploy = await runCommand(npm, ["run", scripts.deploy]);
-  const seed = await runCommand(npm, ["run", scripts.seed]);
-  return `${deploy}\n${seed}`;
+  const compile = await runCommand(scripts.compile.command, scripts.compile.args);
+  const deploy = await runCommand(scripts.deploy.command, scripts.deploy.args);
+  const seed = await runCommand(scripts.seed.command, scripts.seed.args);
+  const freshTrace = { generatedAt: new Date().toISOString() };
+  await writeFile(traceJsonPath, `${JSON.stringify(freshTrace, null, 2)}\n`);
+  await writeFile(traceJsPath, `window.IBCLiteLatestRun = ${JSON.stringify(freshTrace, null, 2)};\n`);
+  return `${compile}\n${deploy}\n${seed}`;
 }
 
 async function runFlowStrict() {
@@ -79,7 +108,7 @@ async function runFlowStrict() {
 
   try {
     const scripts = await runtimeScripts();
-    output += await runCommand(npm, ["run", scripts.flow]);
+    output += await runCommand(scripts.flow.command, scripts.flow.args);
     return { ok: true, output };
   } catch (error) {
     output += "\n[controller] Flow failed. No automatic redeploy or retry was performed.\n";

@@ -19,8 +19,12 @@ function units(value) {
   return ethers.formatUnits(value, 18);
 }
 
+function hash32(value) {
+  return typeof value === "string" && ethers.isHexString(value, 32);
+}
+
 function zeroHash(value) {
-  return !value || value === ethers.ZeroHash;
+  return !hash32(value) || value === ethers.ZeroHash;
 }
 
 function normalizeFlowTrace(flow) {
@@ -308,8 +312,8 @@ export async function readDemoStatus() {
   const [trustedAOnBSummary, trustedBOnASummary, forwardConsumed, reverseConsumed] = await Promise.all([
     consensusSummary(clientB, cfg.chains.A.chainId, consensusHashAOnB),
     consensusSummary(clientA, cfg.chains.B.chainId, consensusHashBOnA),
-    trace?.forward?.packetId ? handlerB.consumedPackets(trace.forward.packetId) : false,
-    trace?.reverse?.packetId ? handlerA.consumedPackets(trace.reverse.packetId) : false,
+    hash32(trace?.forward?.packetId) ? handlerB.consumedPackets(trace.forward.packetId) : false,
+    hash32(trace?.reverse?.packetId) ? handlerA.consumedPackets(trace.reverse.packetId) : false,
   ]);
 
   return {

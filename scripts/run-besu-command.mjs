@@ -6,7 +6,7 @@ if (!script) {
   process.exit(1);
 }
 
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const npm = "npm";
 const args = ["run", script];
 const env = {
   ...process.env,
@@ -21,7 +21,8 @@ const child = spawn(npm, args, {
   cwd: process.cwd(),
   env,
   stdio: "inherit",
-  shell: false,
+  shell: process.platform === "win32",
+  windowsHide: true,
 });
 
 child.on("close", (code) => {

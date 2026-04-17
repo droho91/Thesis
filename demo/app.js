@@ -1,9 +1,11 @@
-import { markControllerOffline, renderRoadmap, renderStatus, setText } from "./demo-status-view.js";
+import { markControllerOffline, renderLatestActivity, renderRoadmap, renderStatus, setText } from "./demo-status-view.js";
 
 const buttons = [...document.querySelectorAll("button")];
 const actionButtons = [...document.querySelectorAll("[data-action]")];
 const deploySeedButton = document.getElementById("deploySeed");
 const refreshButton = document.getElementById("refreshState");
+const ACTIVITY_STORAGE_KEY = "ibc-lite-latest-activity";
+let currentStatus = null;
 
 function setBusy(busy) {
   document.body.classList.toggle("is-busy", busy);
@@ -14,6 +16,141 @@ function setBusy(busy) {
 
 function setOutput(value) {
   setText("contractOutput", value || "No action output yet.");
+}
+
+function formatClock(isoString) {
+  if (!isoString) return "Just now";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "Just now";
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    day: "2-digit",
+    month: "short",
+  }).format(date);
+}
+
+function snapshotStatus(status) {
+  if (!status?.deployed) return {};
+  return {
+    packetSequenceA: status.progress?.packetSequenceA,
+    headerHeightA: status.progress?.headerHeightA,
+    trustedAOnB: status.progress?.trustedAOnB,
+    voucherBalance: status.balances?.voucher,
+    bankBBalance: status.balances?.bankB,
+    poolCollateral: status.balances?.poolCollateral,
+    poolDebt: status.balances?.poolDebt,
+    escrowBalance: status.balances?.escrow,
+    packetSequenceB: status.progress?.packetSequenceB,
+    headerHeightB: status.progress?.headerHeightB,
+    trustedBOnA: status.progress?.trustedBOnA,
+    forwardPacketId: status.trace?.forward?.packetId,
+    reversePacketId: status.trace?.reverse?.packetId,
+    safetyState: status.security?.frozen
+      ? "Frozen"
+      : status.security?.recovering
+        ? "Recovering"
+        : `${status.progress?.statusAOnB}/${status.progress?.statusBOnA}`,
+    replayBlocked: String(Boolean(status.security?.replayBlocked)),
+    nonMembership: status.security?.nonMembership ? `seq ${status.security.nonMembership.absentSequence}` : null,
+  };
+}
+
+const FACT_LABELS = {
+  packetSequenceA: "Bank A packet sequence",
+  headerHeightA: "Bank A finalized headers",
+  trustedAOnB: "Bank B trusted Bank A header",
+  voucherBalance: "Voucher balance",
+  bankBBalance: "Borrowed bCASH",
+  poolCollateral: "Pool collateral",
+  poolDebt: "Pool debt",
+  escrowBalance: "Escrowed aBANK",
+  packetSequenceB: "Bank B packet sequence",
+  headerHeightB: "Bank B finalized headers",
+  trustedBOnA: "Bank A trusted Bank B header",
+  forwardPacketId: "Forward packet receipt",
+  reversePacketId: "Reverse packet receipt",
+  safetyState: "Client safety state",
+  replayBlocked: "Replay protection",
+  nonMembership: "Non-membership proof",
+};
+
+function collectChanges(before, after) {
+  const previous = before || {};
+  const next = after || {};
+  return Object.keys(FACT_LABELS)
+    .filter((key) => previous[key] !== next[key] && next[key] != null && next[key] !== "")
+    .slice(0, 6)
+    .map((key) => ({
+      label: FACT_LABELS[key],
+      value: `${previous[key] == null ? "set" : previous[key]} -> ${next[key]}`,
+    }));
+}
+
+function actionTitle(action) {
+  const titles = {
+    lock: "Locked canonical asset on Bank A",
+    finalizeForwardHeader: "Finalized Bank A header",
+    updateForwardClient: "Updated Bank B client",
+    proveForwardMint: "Executed forward storage proof",
+    depositCollateral: "Deposited voucher collateral",
+    borrow: "Borrowed Bank B credit",
+    repay: "Repaid Bank B credit",
+    withdrawCollateral: "Withdrew voucher collateral",
+    burn: "Burned voucher on Bank B",
+    finalizeReverseHeader: "Finalized Bank B header",
+    updateReverseClient: "Updated Bank A client",
+    proveReverseUnlock: "Executed reverse storage proof",
+    freezeClient: "Submitted conflicting update",
+    recoverClient: "Recovered frozen client",
+    replayForward: "Attempted forward replay",
+    checkNonMembership: "Verified non-membership",
+    fullFlow: "Completed full proof-backed flow",
+    deploySeed: "Prepared runtime and demo balances",
+    refresh: "Refreshed live state",
+  };
+  return titles[action] || action;
+}
+
+function persistActivity(activity) {
+  try {
+    sessionStorage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(activity));
+  } catch {}
+}
+
+function loadPersistedActivity() {
+  try {
+    const raw = sessionStorage.getItem(ACTIVITY_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function pushActivity(action, summary, nextStatus) {
+  const activity = {
+    title: actionTitle(action),
+    summary,
+    time: new Date().toISOString(),
+    timeLabel: formatClock(new Date().toISOString()),
+    changes: collectChanges(snapshotStatus(currentStatus), snapshotStatus(nextStatus)),
+  };
+  persistActivity(activity);
+  renderLatestActivity(activity);
+}
+
+function pushFailedActivity(action, error) {
+  const summary = error?.message || "The action failed before any contract state changed.";
+  const activity = {
+    title: `${actionTitle(action)} failed`,
+    summary,
+    time: new Date().toISOString(),
+    timeLabel: formatClock(new Date().toISOString()),
+    changes: [{ value: "No state change was committed." }],
+  };
+  persistActivity(activity);
+  renderLatestActivity(activity);
 }
 
 async function requestJson(path, options = {}) {
@@ -37,15 +174,20 @@ async function refreshStatus() {
 async function runDeploySeed() {
   setBusy(true);
   setText("lastMessage", "Deploying contracts and seeding balances...");
-  setOutput("Running deploy and seed from the UI controller...");
+  setOutput(
+    "Compiling contracts, deploying to both Besu bank chains, and seeding demo balances.\n\nThis can take a little while on first run."
+  );
   try {
     const payload = await requestJson("/api/deploy-seed", { method: "POST" });
     renderStatus(payload.status);
+    pushActivity("deploySeed", "Contracts were deployed and demo balances were seeded on the live Besu runtime.", payload.status);
+    currentStatus = payload.status;
     setText("lastMessage", "Deployment and seed complete.");
     setOutput(payload.output);
   } catch (error) {
     setText("lastMessage", "Deploy + Seed failed.");
     setOutput(error.message);
+    pushFailedActivity("deploySeed", error);
   } finally {
     setBusy(false);
   }
@@ -61,11 +203,14 @@ async function runAction(action) {
       body: JSON.stringify({ action }),
     });
     renderStatus(payload.status);
+    pushActivity(action, payload.message, payload.status);
+    currentStatus = payload.status;
     setText("lastMessage", payload.message);
     setOutput(payload.message);
   } catch (error) {
     setText("lastMessage", `${action} failed.`);
     setOutput(error.message);
+    pushFailedActivity(action, error);
   } finally {
     setBusy(false);
   }
@@ -76,10 +221,13 @@ refreshButton?.addEventListener("click", async () => {
   setBusy(true);
   try {
     const status = await refreshStatus();
+    pushActivity("refresh", "The UI re-read contract state and refreshed the current protocol snapshot.", status);
+    currentStatus = status;
     setText("lastMessage", status.deployed ? "State refreshed." : status.message);
   } catch (error) {
     setText("lastMessage", "Refresh failed.");
     setOutput(error.message);
+    pushFailedActivity("refresh", error);
   } finally {
     setBusy(false);
   }
@@ -89,9 +237,15 @@ actionButtons.forEach((button) => {
   button.addEventListener("click", () => runAction(button.dataset.action));
 });
 
-refreshStatus().catch((error) => {
+renderLatestActivity(loadPersistedActivity());
+
+refreshStatus()
+  .then((status) => {
+    currentStatus = status;
+  })
+  .catch((error) => {
   markControllerOffline();
   setText("lastMessage", "Could not load local demo state.");
   setOutput(error.message);
   renderRoadmap();
-});
+  });
