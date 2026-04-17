@@ -35,6 +35,17 @@ The repository is now organized around an IBC/light-client-like separation:
 - `contracts/apps`: minimal transfer app, escrow vault, voucher token, local demo bank token, and a deliberately small lending pool for the thesis use case.
 - `contracts/libs`: Merkle, commitment, packet, and domain hashing helpers.
 
+The demo/runtime surface has also been split into explicit layers:
+
+- read-model/status snapshot,
+- action orchestration,
+- runtime service payloads,
+- HTTP API routing,
+- static asset serving,
+- browser render layer.
+
+This split exists to keep the thesis demo aligned with the protocol architecture instead of collapsing back into a monolithic product controller.
+
 The trust anchor is `BankChainClient`. Packet execution is valid only after:
 
 1. the source app writes a packet commitment,

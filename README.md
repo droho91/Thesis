@@ -25,9 +25,9 @@ then burns the voucher on the reverse path and unescrows the canonical asset on 
 
 No mainnet RPC, paid prover, cloud service, subscription API, or external infrastructure is required.
 
-The canonical runtime now assumes local Besu QBFT bank chains plus storage proofs. The older
-Hardhat/Ganache mnemonic path remains only for the legacy dev harness, where it avoids node RPC
-methods such as `personal_sign`.
+The canonical runtime assumes local Besu QBFT bank chains plus storage proofs. A separate internal
+compatibility harness still exists for local contract work, but it is not part of the thesis demo
+surface.
 
 ## Architecture
 
@@ -71,6 +71,8 @@ TMPDIR=/tmp XDG_CACHE_HOME=/tmp/.cache npm run test:solidity
 The browser UI in `demo/` is now also the local contract controller. The canonical runtime is
 `npm run demo:ui`, which treats Besu QBFT and storage proofs as the primary demo path.
 
+If you want a quick file-level map of the demo/runtime surface, see `docs/DEMO_RUNTIME_MAP.md`.
+
 The UI has direct operation buttons instead of a passive diagram:
 
 - `Deploy + Seed`: deploy the two-chain IBC-lite stack and seed demo balances.
@@ -110,16 +112,7 @@ npm run seed:ibc-lite
 npm run demo:flow
 ```
 
-Legacy dev-harness commands still exist for contract testing and compatibility checks:
-
-```bash
-npm run node:chainA
-npm run node:chainB
-TMPDIR=/tmp XDG_CACHE_HOME=/tmp/.cache npm run legacy:deploy:ibc-lite
-npm run legacy:seed:ibc-lite
-npm run legacy:demo:flow
-npm run legacy:demo:ui
-```
+The internal compatibility harness is intentionally outside the canonical thesis demo path and is not documented as a normal operator flow here.
 
 On Windows PowerShell, set the temp/cache variables like this before deploying:
 
@@ -164,6 +157,7 @@ The Solidity tests cover:
 - `docs/IBC_LIGHT_CLIENT_SCOPE.md`
 - `docs/HARD_RESET_DECISION.md`
 - `docs/EVM_BESU_DIRECTION.md`
+- `docs/DEMO_RUNTIME_MAP.md`
 - `docs/THESIS_POSITIONING.md`
 - `docs/CLIENT_STATE_MACHINE.md`
 - `docs/PACKET_FLOW.md`
@@ -176,7 +170,7 @@ The Solidity tests cover:
 The model uses local ECDSA validator commit seals over QBFT/IBFT-like finalized header hashes,
 local EVM block anchors, source-chain registries, and an RPC-hydrated execution state root for the
 canonical Besu-first proof path. A packet-state Merkle root still survives internally for the
-legacy/dev harness only. The repo still does not implement production QBFT/IBFT engine
+internal compatibility harness only. The repo still does not implement production QBFT/IBFT engine
 integration, slashing, validator operations, governance hardening, or a full production IBC client.
 
 ## Direction 1: Besu + EVM State Proofs
@@ -217,8 +211,8 @@ That boundary is still intentionally modest, but it is no longer a placeholder. 
 
 The script layer now hydrates an `executionStateRoot` from the source RPC block header and uses
 `eth_getProof` for the packet storage slots as the canonical Besu runtime path. The older
-packet-state Merkle proof path remains only as a legacy/dev compatibility path behind the legacy
-commands. What the repo still does **not** do is verify Besu finalized headers on-chain.
+packet-state Merkle proof path remains only behind the internal compatibility harness. What the repo
+still does **not** do is verify Besu finalized headers on-chain.
 
 ### Running The Current Stack On Besu QBFT
 

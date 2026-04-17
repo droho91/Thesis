@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IBCClientTypes} from "./IBCClientTypes.sol";
 import {IBCEVMProofBoundary} from "./IBCEVMProofBoundary.sol";
 import {IBCEVMTypes} from "./IBCEVMTypes.sol";
 import {IBCPathLib} from "./IBCPathLib.sol";
@@ -12,23 +11,6 @@ import {SourcePacketCommitmentSlots} from "../source/SourcePacketCommitmentSlots
 /// @notice Core helper that verifies packet commitments against a trusted remote client.
 abstract contract IBCProofVerifier is IBCEVMProofBoundary {
     constructor(address _ibcClient) IBCEVMProofBoundary(_ibcClient) {}
-
-    function _verifyPacketMembership(
-        PacketLib.Packet calldata packet,
-        IBCClientTypes.MembershipProof calldata proof
-    ) internal view returns (bool) {
-        bytes32 path = IBCPathLib.packetCommitmentPath(packet.sourceChainId, packet.sourcePort, packet.sequence);
-        bytes32 value = PacketLib.leafHashCalldata(packet);
-        return ibcClient.verifyMembership(
-            packet.sourceChainId,
-            proof.consensusStateHash,
-            path,
-            value,
-            packet.sequence,
-            proof.leafIndex,
-            proof.siblings
-        );
-    }
 
     function _verifyPacketNonMembership(
         uint256 sourceChainId,

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {IBCEVMTypes} from "./IBCEVMTypes.sol";
-import {IBCClientTypes} from "./IBCClientTypes.sol";
 import {IBCProofVerifier} from "./IBCProofVerifier.sol";
 import {PacketLib} from "../libs/PacketLib.sol";
 
@@ -27,17 +26,6 @@ contract IBCPacketHandler is IBCProofVerifier {
     constructor(uint256 _localChainId, address _ibcClient) IBCProofVerifier(_ibcClient) {
         require(_localChainId != 0, "CHAIN_ID_ZERO");
         localChainId = _localChainId;
-    }
-
-    function recvPacket(PacketLib.Packet calldata packet, IBCClientTypes.MembershipProof calldata proof)
-        external
-        returns (bytes32 packetId)
-    {
-        require(packet.destinationChainId == localChainId, "WRONG_DESTINATION_CHAIN");
-        require(packet.destinationPort != address(0), "DESTINATION_PORT_ZERO");
-        require(_verifyPacketMembership(packet, proof), "INVALID_PACKET_PROOF");
-
-        return _consumeAndExecute(packet, proof.consensusStateHash);
     }
 
     function recvPacketFromStorageProof(

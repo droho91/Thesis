@@ -14,7 +14,7 @@ The contribution is the inter-chain linkage mechanism. The app exists to demonst
 - source-side QBFT/IBFT-like finalized packet headers
 - remote client state and consensus state storage
 - client messages carrying finalized headers and source validator commit seals
-- membership verification for packet commitment storage slots under a trusted execution state root, with the older packet-state proof path kept only inside the legacy/dev harness during transition
+- membership verification for packet commitment storage slots under a trusted execution state root, with the older packet-state proof path kept only inside the internal compatibility harness during transition
 - non-membership verification for absent packet commitments in a trusted snapshot
 - one-time packet execution
 - freeze on conflicting certified updates
@@ -41,7 +41,7 @@ The contribution is the inter-chain linkage mechanism. The app exists to demonst
 - Local ECDSA accounts represent bank validators.
 - Source block hashes are local anchors inside a simulated finalized header.
 - Finalized headers are produced by a local source registry transaction, not by an integrated production QBFT/IBFT engine.
-- The canonical Besu-first path treats the trusted execution state root as the proof anchor, but the repository still carries a packet-state Merkle root inside the legacy/dev harness as a transition scaffold.
+- The canonical Besu-first path treats the trusted execution state root as the proof anchor, but the repository still carries a packet-state Merkle root inside the internal compatibility harness as a transition scaffold.
 - Non-membership is implemented for packet commitment absence, but not for a generalized production IBC state store.
 - Recovery is role-gated for the local simulation.
 

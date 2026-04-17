@@ -42,7 +42,7 @@ For the Besu/QBFT transition path, the intended long-term trust artifact is a re
 
 The current helper-based finalized-header producer is therefore transitional. It is useful for the existing zero-cost Solidity simulation, but it is not the intended final trust source if the repository migrates to real Besu bank chains.
 
-When the repo is run in `runtime.mode = besu`, the packet path is storage-proof-first. The older packet-state Merkle path is treated as legacy compatibility, not as the canonical Besu demo surface.
+When the repo is run in `runtime.mode = besu`, the packet path is storage-proof-first. The older packet-state Merkle path is treated as internal compatibility only, not as the canonical Besu demo surface.
 
 ## Lending Assumption
 

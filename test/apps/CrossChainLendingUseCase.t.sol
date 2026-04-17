@@ -7,10 +7,10 @@ import {PacketLib} from "../../contracts/libs/PacketLib.sol";
 contract CrossChainLendingUseCaseTest is IBCLocalSimulationBase {
     function testVerifiedVoucherCanCollateralizeBankBLending() public {
         (PacketLib.Packet memory packet, uint256 sequence) = _sendLock(100 ether);
-        FinalizedPacket memory finalized = _finalizeAtoB(sequence, validatorKeysA, 2);
+        StorageFinalizedPacket memory finalized = _finalizeAtoBForStorageProof(sequence, validatorKeysA, 2);
 
         vm.prank(relayer);
-        handlerB.recvPacket(packet, finalized.proof);
+        handlerB.recvPacketFromStorageProof(packet, finalized.leafProof, finalized.pathProof);
 
         vm.startPrank(user);
         voucherB.approve(address(lendingPoolB), 100 ether);
@@ -26,10 +26,10 @@ contract CrossChainLendingUseCaseTest is IBCLocalSimulationBase {
 
     function testCannotBorrowAboveVerifiedCollateralLimit() public {
         (PacketLib.Packet memory packet, uint256 sequence) = _sendLock(100 ether);
-        FinalizedPacket memory finalized = _finalizeAtoB(sequence, validatorKeysA, 2);
+        StorageFinalizedPacket memory finalized = _finalizeAtoBForStorageProof(sequence, validatorKeysA, 2);
 
         vm.prank(relayer);
-        handlerB.recvPacket(packet, finalized.proof);
+        handlerB.recvPacketFromStorageProof(packet, finalized.leafProof, finalized.pathProof);
 
         vm.startPrank(user);
         voucherB.approve(address(lendingPoolB), 100 ether);
@@ -41,10 +41,10 @@ contract CrossChainLendingUseCaseTest is IBCLocalSimulationBase {
 
     function testRepayThenWithdrawCollateralBeforeBurnPath() public {
         (PacketLib.Packet memory packet, uint256 sequence) = _sendLock(100 ether);
-        FinalizedPacket memory finalized = _finalizeAtoB(sequence, validatorKeysA, 2);
+        StorageFinalizedPacket memory finalized = _finalizeAtoBForStorageProof(sequence, validatorKeysA, 2);
 
         vm.prank(relayer);
-        handlerB.recvPacket(packet, finalized.proof);
+        handlerB.recvPacketFromStorageProof(packet, finalized.leafProof, finalized.pathProof);
 
         vm.startPrank(user);
         voucherB.approve(address(lendingPoolB), 100 ether);

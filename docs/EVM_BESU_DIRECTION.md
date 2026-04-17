@@ -87,7 +87,7 @@ That is enough to demonstrate a recognizable packet lifecycle without claiming a
 - script-side `executionStateRoot` hydration
   - the relayer/demo scripts now fetch the source block header from RPC, bind its `stateRoot` into the relayed client header as `executionStateRoot`, and in canonical Besu mode require `eth_getProof` storage witnesses instead of silently falling back
 - first-class runtime mode
-  - the repo now records `runtime.mode` and `runtime.proofPolicy` in `.ibc-lite.local.json`, so the short canonical commands (`npm run demo:ui`, `npm run deploy:ibc-lite`, `npm run demo:flow`) run Besu-first, while `legacy:*` commands keep the compatibility fallback
+  - the repo now records `runtime.mode` and `runtime.proofPolicy` in `.ibc-lite.local.json`, so the short canonical commands (`npm run demo:ui`, `npm run deploy:ibc-lite`, `npm run demo:flow`) run Besu-first, while a separate internal compatibility harness keeps the older fallback path out of the main thesis surface
 - `contracts/libs/RLPDecodeLib.sol`, `contracts/libs/HexPrefixLib.sol`, and `contracts/libs/MerklePatriciaProofLib.sol`
   - the RLP, hex-prefix, and trie logic needed for Ethereum account/storage inclusion proofs
 - `networks/besu/`
@@ -98,7 +98,7 @@ That is enough to demonstrate a recognizable packet lifecycle without claiming a
 - on-chain RLP/header parsing for Besu QBFT or IBFT block headers
 - on-chain verification of validator commit seals from header `extraData` or equivalent consensus artifacts
 - channel, acknowledgement, and timeout state machines
-- eventual hard removal of the packet-state Merkle fallback from the internal legacy harness after the Besu path fully covers every intended regression and demo case
+- eventual hard removal of the packet-state Merkle fallback from the internal compatibility harness after the Besu path fully covers every intended regression and demo case
 - on-chain verification of real `eth_getProof` witnesses fetched from Besu runtime, rather than synthetic trie fixtures in the Solidity tests plus opportunistic RPC-driven demo execution
 
 ## External References

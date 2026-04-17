@@ -2,24 +2,14 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ethers } from "ethers";
 import {
-  buildMerkleProof,
-  ethGetProof,
-  finalizedHeaderObject,
-  headerProducerAddress,
-  hydrateExecutionStateRoot,
   loadArtifact,
   loadConfig,
-  merkleRoot,
   normalizeRuntime,
-  packetLeafStorageSlot,
-  packetPathStorageSlot,
-  pretty,
   providerFor,
-  rlpEncodeWord,
-  signaturesFor,
   signerFor,
-  stateLeaf,
 } from "./ibc-lite-common.mjs";
+import { ensureFinalizedHeader, relayTrustedHeaderUpdate } from "./ibc-lite-header-progression.mjs";
+import { relayPacketForCanonicalRuntime } from "./ibc-lite-relay-paths.mjs";
 
 const ACTION_LOCK_MINT = 1;
 const ACTION_BURN_UNLOCK = 2;
@@ -88,148 +78,17 @@ async function ensureSeed({ cfg, artifacts, ownerA, ownerB, userA }) {
   await (await canonical.connect(userA).approve(cfg.chains.A.escrowVault, ethers.MaxUint256)).wait();
 }
 
-async function finalizeSourceHeader(chainKey, cfg, artifacts) {
-  const signer = await signerFor(cfg, chainKey, 0);
-  const chain = cfg.chains[chainKey];
-  const packetStore = new ethers.Contract(chain.packetStore, artifacts.packetStore.abi, signer);
-  const headerProducer = new ethers.Contract(
-    headerProducerAddress(chain),
-    artifacts.checkpointRegistry.abi,
-    signer
-  );
-  const packetSequence = await packetStore.packetSequence();
-  const committed = await headerProducer.lastCommittedPacketSequence();
-  if (packetSequence <= committed) {
-    throw new Error(`[${chainKey}] no pending packet to finalize`);
-  }
-  await (await headerProducer.finalizeHeader(packetSequence)).wait();
-  const header = finalizedHeaderObject(await headerProducer.headersByHeight(await headerProducer.headerHeight()));
-  console.log(`[${chainKey}] finalized local header ${header.height} stateRoot=${pretty(header.stateRoot)}`);
-  return header;
-}
-
-async function updateRemoteClient(sourceKey, destinationKey, header, cfg, artifacts) {
-  const sourceProvider = providerFor(cfg, sourceKey);
-  const destinationSigner = await signerFor(cfg, destinationKey, 0);
-  const client = new ethers.Contract(cfg.chains[destinationKey].client, artifacts.client.abi, destinationSigner);
-  const runtime = cfg.runtime || normalizeRuntime(cfg);
-  header = await hydrateExecutionStateRoot(cfg, sourceKey, header, {
-    strict: runtime.proofPolicy === "storage-required",
-  });
-  header.blockHash = await client.hashHeader(header);
-  const consensusHash = await client.hashConsensusState(header);
-  const commitDigest = await client.hashCommitment(header);
-  const already = await client.consensusStateHashBySequence(cfg.chains[sourceKey].chainId, header.height);
-  if (already === ethers.ZeroHash) {
-    const signatures = await signaturesFor(sourceKey, sourceProvider, commitDigest);
-    await (await client.updateState([header], signatures)).wait();
-  }
-  console.log(`[${destinationKey}] trusted ${sourceKey} header=${pretty(consensusHash)} height=${header.height}`);
-  return consensusHash;
-}
-
 async function relayPacket(sourceKey, destinationKey, packet, header, consensusHash, cfg, artifacts) {
-  const runtime = cfg.runtime || normalizeRuntime(cfg);
-  const source = cfg.chains[sourceKey];
-  const destination = cfg.chains[destinationKey];
-  const sourceProvider = providerFor(cfg, sourceKey);
-  const destinationSigner = await signerFor(cfg, destinationKey, 0);
-  const packetStore = new ethers.Contract(source.packetStore, artifacts.packetStore.abi, sourceProvider);
-  const client = new ethers.Contract(destination.client, artifacts.client.abi, destinationSigner);
-  const handler = new ethers.Contract(destination.packetHandler, artifacts.handler.abi, destinationSigner);
-  const packetId = await packetStore.packetIdAt(packet.sequence);
-  const packetLeaf = await packetStore.packetLeafAt(packet.sequence);
-  const packetPath = await packetStore.packetPathAt(packet.sequence);
-  const trustedRoot = await client.trustedStateRoot(source.chainId, consensusHash);
-
-  if (header.executionStateRoot !== ethers.ZeroHash && trustedRoot === header.executionStateRoot) {
-    try {
-      const proof = await ethGetProof(
-        sourceProvider,
-        source.packetStore,
-        [packetLeafStorageSlot(packet.sequence), packetPathStorageSlot(packet.sequence)],
-        header.sourceBlockNumber
-      );
-      const leafWitness = proof.storageProof.find(
-        (entry) => entry.key.toLowerCase() === packetLeafStorageSlot(packet.sequence).toLowerCase()
-      );
-      const pathWitness = proof.storageProof.find(
-        (entry) => entry.key.toLowerCase() === packetPathStorageSlot(packet.sequence).toLowerCase()
-      );
-      if (!leafWitness || !pathWitness) throw new Error("missing storage proof witness");
-
-      const leafProof = {
-        sourceChainId: BigInt(source.chainId),
-        consensusStateHash: consensusHash,
-        stateRoot: trustedRoot,
-        account: source.packetStore,
-        storageKey: packetLeafStorageSlot(packet.sequence),
-        expectedValue: rlpEncodeWord(packetLeaf),
-        accountProof: proof.accountProof,
-        storageProof: leafWitness.proof,
-      };
-      const pathProof = {
-        sourceChainId: BigInt(source.chainId),
-        consensusStateHash: consensusHash,
-        stateRoot: trustedRoot,
-        account: source.packetStore,
-        storageKey: packetPathStorageSlot(packet.sequence),
-        expectedValue: rlpEncodeWord(packetPath),
-        accountProof: proof.accountProof,
-        storageProof: pathWitness.proof,
-      };
-
-      if (!(await handler.consumedPackets(packetId))) {
-        await (await handler.recvPacketFromStorageProof(packet, leafProof, pathProof)).wait();
-      }
-      console.log(`[${destinationKey}] packet executed via storage proof packetId=${pretty(packetId)}`);
-      return {
-        packetId,
-        packetRoot: header.packetRoot,
-        stateRoot: header.stateRoot,
-        executionStateRoot: trustedRoot,
-        proofMode: "storage",
-      };
-    } catch (error) {
-      if (!runtime.allowMerkleFallback) {
-        throw new Error(
-          `[${destinationKey}] Storage proof is required in ${runtime.mode} runtime, but proof execution failed: ${error.message}`
-        );
-      }
-      console.warn(
-        `[${destinationKey}] storage proof unavailable for ${sourceKey} packet ${pretty(packetId)}; falling back to packet-state Merkle proof`
-      );
-    }
-  }
-
-  if (!runtime.allowMerkleFallback) {
-    throw new Error(
-      `[${destinationKey}] Storage proof is required in ${runtime.mode} runtime, but the trusted execution state root was unavailable.`
-    );
-  }
-
-  const leaves = [];
-  for (let sequence = header.firstPacketSequence; sequence <= header.lastPacketSequence; sequence++) {
-    const path = await packetStore.packetPathAt(sequence);
-    const leaf = await packetStore.packetLeafAt(sequence);
-    leaves.push(stateLeaf(path, leaf));
-  }
-  const root = merkleRoot(leaves);
-  if (root !== header.stateRoot) throw new Error(`[${sourceKey}] state root mismatch`);
-  const leafIndex = Number(packet.sequence - header.firstPacketSequence);
-  const proof = [consensusHash, leafIndex, buildMerkleProof(leaves, leafIndex)];
-  if (!(await handler.consumedPackets(packetId))) {
-    await (await handler.recvPacket(packet, proof)).wait();
-  }
-  console.log(`[${destinationKey}] packet executed packetId=${pretty(packetId)} leafIndex=${leafIndex}`);
-  return {
-    packetId,
-    leafIndex,
-    packetRoot: header.packetRoot,
-    stateRoot: root,
-    executionStateRoot: trustedRoot !== header.stateRoot ? trustedRoot : ethers.ZeroHash,
-    proofMode: "merkle",
-  };
+  return relayPacketForCanonicalRuntime({
+    cfg,
+    artifacts,
+    sourceKey,
+    destinationKey,
+    packet,
+    header,
+    consensusHash,
+    logPrefix: destinationKey,
+  });
 }
 
 async function writeUiTrace(trace) {
@@ -239,7 +98,12 @@ async function writeUiTrace(trace) {
   console.log(`[ui] wrote latest real trace to demo/latest-run.js`);
 }
 
-async function main() {
+export async function runDemoFlow() {
+  const activeRuntime = normalizeRuntime();
+  if (!activeRuntime.besuFirst) {
+    throw new Error("demo-ibc-lite-flow.mjs is a canonical Besu-first entrypoint.");
+  }
+
   const cfg = await loadConfig();
   const artifacts = await loadArtifacts();
   const ownerA = await signerFor(cfg, "A", 0);
@@ -271,9 +135,17 @@ async function main() {
     amount: TRANSFER_AMOUNT,
     action: ACTION_LOCK_MINT,
   });
-  const headerA = await finalizeSourceHeader("A", cfg, artifacts);
-  const consensusA = await updateRemoteClient("A", "B", headerA, cfg, artifacts);
-  const lockProof = await relayPacket("A", "B", forwardPacket, headerA, consensusA, cfg, artifacts);
+  const headerA = await ensureFinalizedHeader({ cfg, artifacts, chainKey: "A", logPrefix: "A" });
+  const { header: trustedHeaderA, consensusHash: consensusA } = await relayTrustedHeaderUpdate({
+    cfg,
+    artifacts,
+    sourceKey: "A",
+    destinationKey: "B",
+    header: headerA,
+    runtime: activeRuntime,
+    logPrefix: "B",
+  });
+  const lockProof = await relayPacket("A", "B", forwardPacket, trustedHeaderA, consensusA, cfg, artifacts);
   console.log(`[B] voucher balance=${ethers.formatUnits(await voucher.balanceOf(await userB.getAddress()), 18)} vA`);
 
   console.log("\n=== Lending use case: verified voucher -> Bank B credit ===");
@@ -301,9 +173,17 @@ async function main() {
     amount: TRANSFER_AMOUNT,
     action: ACTION_BURN_UNLOCK,
   });
-  const headerB = await finalizeSourceHeader("B", cfg, artifacts);
-  const consensusB = await updateRemoteClient("B", "A", headerB, cfg, artifacts);
-  const burnProof = await relayPacket("B", "A", reversePacket, headerB, consensusB, cfg, artifacts);
+  const headerB = await ensureFinalizedHeader({ cfg, artifacts, chainKey: "B", logPrefix: "B" });
+  const { header: trustedHeaderB, consensusHash: consensusB } = await relayTrustedHeaderUpdate({
+    cfg,
+    artifacts,
+    sourceKey: "B",
+    destinationKey: "A",
+    header: headerB,
+    runtime: activeRuntime,
+    logPrefix: "A",
+  });
+  const burnProof = await relayPacket("B", "A", reversePacket, trustedHeaderB, consensusB, cfg, artifacts);
   console.log(`[A] escrow total=${ethers.formatUnits(await escrow.totalEscrowed(), 18)} aBANK`);
 
   await writeUiTrace({
@@ -350,7 +230,7 @@ async function main() {
   console.log("IBC-lite transfer proof flow complete.");
 }
 
-main().catch((error) => {
+runDemoFlow().catch((error) => {
   console.error(error);
   process.exit(1);
 });

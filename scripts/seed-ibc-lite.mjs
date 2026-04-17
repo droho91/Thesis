@@ -1,11 +1,16 @@
 import { ethers } from "ethers";
-import { loadArtifact, loadConfig, signerFor } from "./ibc-lite-common.mjs";
+import { loadArtifact, loadConfig, normalizeRuntime, signerFor } from "./ibc-lite-common.mjs";
 
 const USER_INDEX = Number(process.env.USER_INDEX || 1);
 const AMOUNT = ethers.parseUnits(process.env.SEED_AMOUNT || "1000", 18);
 const POOL_LIQUIDITY = ethers.parseUnits(process.env.POOL_LIQUIDITY || "10000", 18);
 
-async function main() {
+export async function runSeedIBCLite() {
+  const activeRuntime = normalizeRuntime();
+  if (!activeRuntime.besuFirst) {
+    throw new Error("seed-ibc-lite.mjs is a canonical Besu-first entrypoint.");
+  }
+
   const config = await loadConfig();
   const tokenArtifact = await loadArtifact("apps/BankToken.sol", "BankToken");
   const ownerA = await signerFor(config, "A", 0);
@@ -19,7 +24,7 @@ async function main() {
   console.log(`[seed] funded Bank B lending pool with ${ethers.formatUnits(POOL_LIQUIDITY, 18)} bCASH`);
 }
 
-main().catch((error) => {
+runSeedIBCLite().catch((error) => {
   console.error(error);
   process.exit(1);
 });

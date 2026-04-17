@@ -17,7 +17,7 @@ Client layer:
 Core packet/proof layer:
 
 - `SourcePacketCommitment`
-- legacy `SourceCheckpointRegistry` contract acting as the local finalized-header producer for the simulation
+- `SourceCheckpointRegistry` acting as the local finalized-header producer for the zero-cost simulation
 - `IBCPacketHandler`
 - `IBCProofVerifier`
 - `PacketLib`

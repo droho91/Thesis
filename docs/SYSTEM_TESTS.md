@@ -72,4 +72,4 @@ From the browser UI:
 - `Check Non-Membership` verifies that the next Bank A packet sequence is absent from Bank B's trusted Bank A state root snapshot.
 - `Replay Forward` attempts to execute the already consumed forward packet again and should be rejected by `IBCPacketHandler.consumedPackets`.
 
-Legacy dev-harness commands (`npm run node:chainA`, `npm run node:chainB`, `npm run legacy:deploy:ibc-lite`) remain only for fast local contract testing, not for the canonical thesis demo.
+An internal compatibility harness still exists for fast local contract testing, but it is not part of the canonical thesis demo path.

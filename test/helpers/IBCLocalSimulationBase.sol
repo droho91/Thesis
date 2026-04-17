@@ -10,12 +10,14 @@ import {VoucherToken} from "../../contracts/apps/VoucherToken.sol";
 import {BankChainClient} from "../../contracts/clients/BankChainClient.sol";
 import {BankChainClientMessage} from "../../contracts/clients/BankChainClientMessage.sol";
 import {BankChainClientState} from "../../contracts/clients/BankChainClientState.sol";
+import {IBCEVMTypes} from "../../contracts/core/IBCEVMTypes.sol";
 import {IBCClientTypes} from "../../contracts/core/IBCClientTypes.sol";
 import {IBCPacketHandler} from "../../contracts/core/IBCPacketHandler.sol";
 import {IBCPathLib} from "../../contracts/core/IBCPathLib.sol";
 import {PacketLib} from "../../contracts/libs/PacketLib.sol";
 import {SourceCheckpointRegistry} from "../../contracts/source/SourceCheckpointRegistry.sol";
 import {SourcePacketCommitment} from "../../contracts/source/SourcePacketCommitment.sol";
+import {SourcePacketCommitmentSlots} from "../../contracts/source/SourcePacketCommitmentSlots.sol";
 import {SourceValidatorEpochRegistry} from "../../contracts/source/SourceValidatorEpochRegistry.sol";
 
 abstract contract IBCLocalSimulationBase is Test {
@@ -54,6 +56,24 @@ abstract contract IBCLocalSimulationBase is Test {
         bytes32 consensusStateHash;
         IBCClientTypes.MembershipProof proof;
         SourceCheckpointRegistry.SourceCheckpoint sourceCheckpoint;
+    }
+
+    struct StorageFinalizedPacket {
+        bytes32 consensusStateHash;
+        IBCEVMTypes.StorageProof leafProof;
+        IBCEVMTypes.StorageProof pathProof;
+        SourceCheckpointRegistry.SourceCheckpoint sourceCheckpoint;
+    }
+
+    struct BuiltPacketStorageProof {
+        bytes32 stateRoot;
+        bytes32 leafSlot;
+        bytes32 pathSlot;
+        bytes[] accountProof;
+        bytes[] leafStorageProof;
+        bytes[] pathStorageProof;
+        bytes expectedLeafTrieValue;
+        bytes expectedPathTrieValue;
     }
 
     function setUp() public virtual {
@@ -162,6 +182,20 @@ abstract contract IBCLocalSimulationBase is Test {
         return _finalize(checkpointsB, packetsB, clientA, CHAIN_B, packetSequence, signerKeys, signerCount);
     }
 
+    function _finalizeAtoBForStorageProof(uint256 packetSequence, uint256[] storage signerKeys, uint256 signerCount)
+        internal
+        returns (StorageFinalizedPacket memory finalized)
+    {
+        return _finalizeForStorageProof(checkpointsA, packetsA, clientB, CHAIN_A, packetSequence, signerKeys, signerCount);
+    }
+
+    function _finalizeBtoAForStorageProof(uint256 packetSequence, uint256[] storage signerKeys, uint256 signerCount)
+        internal
+        returns (StorageFinalizedPacket memory finalized)
+    {
+        return _finalizeForStorageProof(checkpointsB, packetsB, clientA, CHAIN_B, packetSequence, signerKeys, signerCount);
+    }
+
     function _finalize(
         SourceCheckpointRegistry registry,
         SourcePacketCommitment packetStore,
@@ -186,6 +220,56 @@ abstract contract IBCLocalSimulationBase is Test {
         finalized = FinalizedPacket({
             consensusStateHash: consensusStateHash,
             proof: _proofFor(packetStore, sourceCheckpoint, packetSequence, consensusStateHash),
+            sourceCheckpoint: sourceCheckpoint
+        });
+        assertEq(sourceCheckpoint.sourceChainId, sourceChainId);
+    }
+
+    function _finalizeForStorageProof(
+        SourceCheckpointRegistry registry,
+        SourcePacketCommitment packetStore,
+        BankChainClient client,
+        uint256 sourceChainId,
+        uint256 packetSequence,
+        uint256[] storage signerKeys,
+        uint256 signerCount
+    ) internal returns (StorageFinalizedPacket memory finalized) {
+        SourceCheckpointRegistry.SourceCheckpoint memory sourceCheckpoint =
+            registry.commitCheckpoint(packetStore.packetSequence());
+        BuiltPacketStorageProof memory built = _buildPacketStorageProof(packetStore, packetSequence);
+        BankChainClientMessage.Header memory header = _clientHeader(sourceCheckpoint);
+        header.executionStateRoot = built.stateRoot;
+        header.blockHash = client.hashHeader(header);
+        bytes32 consensusStateHash = client.hashConsensusState(header);
+        bytes32 commitDigest = client.hashCommitment(header);
+        BankChainClientMessage.ClientMessage memory clientMessage =
+            BankChainClientMessage.ClientMessage({header: header});
+
+        vm.prank(relayer);
+        client.updateState(clientMessage, _signatures(signerKeys, commitDigest, signerCount));
+
+        finalized = StorageFinalizedPacket({
+            consensusStateHash: consensusStateHash,
+            leafProof: IBCEVMTypes.StorageProof({
+                sourceChainId: sourceChainId,
+                consensusStateHash: consensusStateHash,
+                stateRoot: built.stateRoot,
+                account: address(packetStore),
+                storageKey: built.leafSlot,
+                expectedValue: built.expectedLeafTrieValue,
+                accountProof: built.accountProof,
+                storageProof: built.leafStorageProof
+            }),
+            pathProof: IBCEVMTypes.StorageProof({
+                sourceChainId: sourceChainId,
+                consensusStateHash: consensusStateHash,
+                stateRoot: built.stateRoot,
+                account: address(packetStore),
+                storageKey: built.pathSlot,
+                expectedValue: built.expectedPathTrieValue,
+                accountProof: built.accountProof,
+                storageProof: built.pathStorageProof
+            }),
             sourceCheckpoint: sourceCheckpoint
         });
         assertEq(sourceCheckpoint.sourceChainId, sourceChainId);
@@ -220,6 +304,38 @@ abstract contract IBCLocalSimulationBase is Test {
         }
     }
 
+    function _buildPacketStorageProof(SourcePacketCommitment packetStore, uint256 packetSequence)
+        private
+        view
+        returns (BuiltPacketStorageProof memory built)
+    {
+        built.leafSlot = SourcePacketCommitmentSlots.packetLeafAt(packetSequence);
+        built.pathSlot = SourcePacketCommitmentSlots.packetPathAt(packetSequence);
+
+        bytes32 packetLeaf = packetStore.packetLeafAt(packetSequence);
+        bytes32 packetPath = packetStore.packetPathAt(packetSequence);
+        bytes32 storageRoot;
+        (
+            storageRoot,
+            built.leafStorageProof,
+            built.pathStorageProof,
+            built.expectedLeafTrieValue,
+            built.expectedPathTrieValue
+        ) = _buildDualStorageTrie(built.leafSlot, packetLeaf, built.pathSlot, packetPath);
+
+        bytes memory accountValue = _mptAccountValue(storageRoot);
+        bytes memory accountLeaf = _mptRlpEncodeList(
+            _mptPair(
+                _mptCompactPath(_mptNibbles(abi.encodePacked(keccak256(abi.encodePacked(address(packetStore))))), true),
+                accountValue
+            )
+        );
+
+        built.stateRoot = keccak256(accountLeaf);
+        built.accountProof = new bytes[](1);
+        built.accountProof[0] = accountLeaf;
+    }
+
     function _buildMerkleProof(bytes32[] memory leaves, uint256 leafIndex)
         internal
         pure
@@ -252,6 +368,193 @@ abstract contract IBCLocalSimulationBase is Test {
             }
             index = index / 2;
             level = next;
+        }
+    }
+
+    function _buildDualStorageTrie(bytes32 keyA, bytes32 wordA, bytes32 keyB, bytes32 wordB)
+        private
+        pure
+        returns (
+            bytes32 root,
+            bytes[] memory proofA,
+            bytes[] memory proofB,
+            bytes memory valueA,
+            bytes memory valueB
+        )
+    {
+        bytes memory pathA = _mptNibbles(abi.encodePacked(keccak256(abi.encodePacked(keyA))));
+        bytes memory pathB = _mptNibbles(abi.encodePacked(keccak256(abi.encodePacked(keyB))));
+        uint256 commonPrefix = _mptCommonPrefixLength(pathA, pathB);
+        require(commonPrefix < pathA.length, "IDENTICAL_STORAGE_PATHS");
+
+        valueA = _mptRlpEncodeBytes(abi.encodePacked(wordA));
+        valueB = _mptRlpEncodeBytes(abi.encodePacked(wordB));
+
+        bytes memory leafA = _mptRlpEncodeList(
+            _mptPair(_mptCompactPath(_mptSlice(pathA, commonPrefix + 1, pathA.length - commonPrefix - 1), true), valueA)
+        );
+        bytes memory leafB = _mptRlpEncodeList(
+            _mptPair(_mptCompactPath(_mptSlice(pathB, commonPrefix + 1, pathB.length - commonPrefix - 1), true), valueB)
+        );
+
+        bytes[] memory branchItems = new bytes[](17);
+        for (uint256 i = 0; i < 17; i++) {
+            branchItems[i] = _mptRlpEncodeBytes("");
+        }
+        branchItems[uint8(pathA[commonPrefix])] = _mptRlpEncodeBytes(_mptChildReference(leafA));
+        branchItems[uint8(pathB[commonPrefix])] = _mptRlpEncodeBytes(_mptChildReference(leafB));
+        bytes memory branchNode = _mptRlpEncodeList(branchItems);
+
+        if (commonPrefix == 0) {
+            root = keccak256(branchNode);
+            proofA = new bytes[](2);
+            proofA[0] = branchNode;
+            proofA[1] = leafA;
+            proofB = new bytes[](2);
+            proofB[0] = branchNode;
+            proofB[1] = leafB;
+            return (root, proofA, proofB, valueA, valueB);
+        }
+
+        bytes memory extensionNode = _mptRlpEncodeList(
+            _mptPair(_mptCompactPath(_mptSlice(pathA, 0, commonPrefix), false), _mptChildReference(branchNode))
+        );
+        root = keccak256(extensionNode);
+        proofA = new bytes[](3);
+        proofA[0] = extensionNode;
+        proofA[1] = branchNode;
+        proofA[2] = leafA;
+        proofB = new bytes[](3);
+        proofB[0] = extensionNode;
+        proofB[1] = branchNode;
+        proofB[2] = leafB;
+    }
+
+    function _mptAccountValue(bytes32 storageRoot) private pure returns (bytes memory) {
+        bytes[] memory items = new bytes[](4);
+        items[0] = _mptRlpEncodeBytes(hex"01");
+        items[1] = _mptRlpEncodeBytes("");
+        items[2] = _mptRlpEncodeBytes(abi.encodePacked(storageRoot));
+        items[3] = _mptRlpEncodeBytes(abi.encodePacked(keccak256("")));
+        return _mptRlpEncodeList(items);
+    }
+
+    function _mptPair(bytes memory a, bytes memory b) private pure returns (bytes[] memory items) {
+        items = new bytes[](2);
+        items[0] = _mptRlpEncodeBytes(a);
+        items[1] = _mptRlpEncodeBytes(b);
+    }
+
+    function _mptChildReference(bytes memory node) private pure returns (bytes memory) {
+        return node.length < 32 ? node : abi.encodePacked(keccak256(node));
+    }
+
+    function _mptCommonPrefixLength(bytes memory a, bytes memory b) private pure returns (uint256 prefix) {
+        uint256 max = a.length < b.length ? a.length : b.length;
+        while (prefix < max && a[prefix] == b[prefix]) {
+            prefix++;
+        }
+    }
+
+    function _mptSlice(bytes memory input, uint256 start, uint256 length) private pure returns (bytes memory out) {
+        out = new bytes(length);
+        for (uint256 i = 0; i < length; i++) {
+            out[i] = input[start + i];
+        }
+    }
+
+    function _mptCompactPath(bytes memory nibbles_, bool isLeaf) private pure returns (bytes memory compact) {
+        uint8 flags = isLeaf ? 2 : 0;
+        bool oddLength = nibbles_.length % 2 == 1;
+        uint256 compactLength = oddLength ? (nibbles_.length + 1) / 2 : (nibbles_.length / 2) + 1;
+        compact = new bytes(compactLength);
+
+        uint256 nibbleOffset;
+        uint256 compactIndex = 1;
+        if (oddLength) {
+            compact[0] = bytes1((flags + 1) << 4 | uint8(nibbles_[0]));
+            nibbleOffset = 1;
+        } else {
+            compact[0] = bytes1(flags << 4);
+        }
+
+        for (uint256 i = nibbleOffset; i < nibbles_.length; i += 2) {
+            compact[compactIndex] = bytes1((uint8(nibbles_[i]) << 4) | uint8(nibbles_[i + 1]));
+            compactIndex++;
+        }
+    }
+
+    function _mptNibbles(bytes memory raw) private pure returns (bytes memory out) {
+        out = new bytes(raw.length * 2);
+        for (uint256 i = 0; i < raw.length; i++) {
+            uint8 value = uint8(raw[i]);
+            out[2 * i] = bytes1(value >> 4);
+            out[2 * i + 1] = bytes1(value & 0x0f);
+        }
+    }
+
+    function _mptRlpEncodeBytes(bytes memory raw) private pure returns (bytes memory out) {
+        if (raw.length == 1 && uint8(raw[0]) < 0x80) {
+            return raw;
+        }
+
+        if (raw.length <= 55) {
+            out = new bytes(1 + raw.length);
+            out[0] = bytes1(uint8(0x80 + raw.length));
+            for (uint256 i = 0; i < raw.length; i++) {
+                out[i + 1] = raw[i];
+            }
+            return out;
+        }
+
+        bytes memory lengthBytes = _mptEncodeLength(raw.length);
+        out = new bytes(1 + lengthBytes.length + raw.length);
+        out[0] = bytes1(uint8(0xb7 + lengthBytes.length));
+        for (uint256 i = 0; i < lengthBytes.length; i++) {
+            out[i + 1] = lengthBytes[i];
+        }
+        for (uint256 i = 0; i < raw.length; i++) {
+            out[1 + lengthBytes.length + i] = raw[i];
+        }
+    }
+
+    function _mptRlpEncodeList(bytes[] memory items) private pure returns (bytes memory out) {
+        bytes memory payload;
+        for (uint256 i = 0; i < items.length; i++) {
+            payload = bytes.concat(payload, items[i]);
+        }
+
+        if (payload.length <= 55) {
+            out = new bytes(1 + payload.length);
+            out[0] = bytes1(uint8(0xc0 + payload.length));
+            for (uint256 i = 0; i < payload.length; i++) {
+                out[i + 1] = payload[i];
+            }
+            return out;
+        }
+
+        bytes memory lengthBytes = _mptEncodeLength(payload.length);
+        out = new bytes(1 + lengthBytes.length + payload.length);
+        out[0] = bytes1(uint8(0xf7 + lengthBytes.length));
+        for (uint256 i = 0; i < lengthBytes.length; i++) {
+            out[i + 1] = lengthBytes[i];
+        }
+        for (uint256 i = 0; i < payload.length; i++) {
+            out[1 + lengthBytes.length + i] = payload[i];
+        }
+    }
+
+    function _mptEncodeLength(uint256 value) private pure returns (bytes memory out) {
+        uint256 temp = value;
+        uint256 length;
+        while (temp != 0) {
+            length++;
+            temp >>= 8;
+        }
+        out = new bytes(length);
+        for (uint256 i = length; i > 0; i--) {
+            out[i - 1] = bytes1(uint8(value));
+            value >>= 8;
         }
     }
 

@@ -53,7 +53,12 @@ function validatorEpochObject(epoch) {
   };
 }
 
-async function main() {
+export async function runDeployIBCLite() {
+  const activeRuntime = normalizeRuntime();
+  if (!activeRuntime.besuFirst) {
+    throw new Error("deploy-ibc-lite.mjs is a canonical Besu-first entrypoint.");
+  }
+
   const artifacts = {
     packetStore: await loadArtifact("source/SourcePacketCommitment.sol", "SourcePacketCommitment"),
     validatorRegistry: await loadArtifact("source/SourceValidatorEpochRegistry.sol", "SourceValidatorEpochRegistry"),
@@ -114,7 +119,7 @@ async function main() {
   await (await appB.configureRemoteApp(sourceA.chainId, await appA.getAddress())).wait();
 
   const config = {
-    runtime: normalizeRuntime(),
+    runtime: activeRuntime,
     chains: {
       A: {
         rpc: CHAIN_A_RPC,
@@ -147,7 +152,7 @@ async function main() {
   console.log(`IBC-lite deployment saved to .ibc-lite.local.json`);
 }
 
-main().catch((error) => {
+runDeployIBCLite().catch((error) => {
   console.error(error);
   process.exit(1);
 });

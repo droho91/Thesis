@@ -1,229 +1,32 @@
-import { createReadStream } from "node:fs";
-import { access, readFile, stat } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { extname, resolve, sep } from "node:path";
-import { readDemoStatus, runDemoAction } from "./ibc-lite-demo-actions.mjs";
+import { resolve } from "node:path";
 import { normalizeRuntime } from "./ibc-lite-common.mjs";
+import { handleDemoApi } from "./ibc-lite-demo-api.mjs";
+import { serveStaticDemo } from "./ibc-lite-demo-static-server.mjs";
 
 const root = resolve(process.cwd(), "demo");
 const port = Number(process.env.DEMO_UI_PORT || 5173);
-const tracePath = resolve(root, "latest-run.json");
-const configPath = resolve(process.cwd(), ".ibc-lite.local.json");
-const npm = "npm";
 
-const types = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-};
-
-function sendText(res, status, text) {
-  res.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
-  res.end(text);
-}
-
-function sendJson(res, status, payload) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify(payload));
-}
-
-function runEnv() {
-  const temp = process.env.TMPDIR || process.env.TEMP || process.env.TMP || "/tmp";
-  return {
-    ...process.env,
-    TMPDIR: temp,
-    XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || resolve(temp, ".cache"),
-  };
-}
-
-function runCommand(command, args) {
-  return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, {
-      cwd: process.cwd(),
-      env: runEnv(),
-      shell: process.platform === "win32",
-      windowsHide: true,
-    });
-    let output = "";
-    child.stdout.on("data", (chunk) => {
-      output += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      output += chunk.toString();
-    });
-    child.on("error", (error) => {
-      rejectRun(new Error(`${command} ${args.join(" ")} could not start: ${error.message}`));
-    });
-    child.on("close", (code) => {
-      if (code === 0) return resolveRun(output);
-      rejectRun(new Error(`${command} ${args.join(" ")} failed with exit code ${code}\n${output}`));
-    });
-  });
-}
-
-async function readTrace() {
-  try {
-    return JSON.parse(await readFile(tracePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-async function hasDeploymentConfig() {
-  try {
-    await access(configPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function runtimeScripts() {
-  const defaults = normalizeRuntime();
-  if (!(await hasDeploymentConfig())) {
-    return defaults.besuFirst
-      ? { deploy: "deploy:ibc-lite", seed: "seed:ibc-lite", flow: "demo:flow", runtime: defaults }
-      : { deploy: "legacy:deploy:ibc-lite", seed: "legacy:seed:ibc-lite", flow: "legacy:demo:flow", runtime: defaults };
+export function startDemoUi() {
+  const activeRuntime = normalizeRuntime();
+  if (!activeRuntime.besuFirst) {
+    throw new Error("serve-demo-ui.mjs is a canonical Besu-first UI entrypoint.");
   }
 
-  try {
-    const config = JSON.parse(await readFile(configPath, "utf8"));
-    const runtime = normalizeRuntime(config);
-    return runtime.besuFirst
-      ? { deploy: "deploy:ibc-lite", seed: "seed:ibc-lite", flow: "demo:flow", runtime }
-      : { deploy: "legacy:deploy:ibc-lite", seed: "legacy:seed:ibc-lite", flow: "legacy:demo:flow", runtime };
-  } catch {
-    return defaults.besuFirst
-      ? { deploy: "deploy:ibc-lite", seed: "seed:ibc-lite", flow: "demo:flow", runtime: defaults }
-      : { deploy: "legacy:deploy:ibc-lite", seed: "legacy:seed:ibc-lite", flow: "legacy:demo:flow", runtime: defaults };
-  }
-}
-
-async function deployAndSeed() {
-  const scripts = await runtimeScripts();
-  const deploy = await runCommand(npm, ["run", scripts.deploy]);
-  const seed = await runCommand(npm, ["run", scripts.seed]);
-  return `${deploy}\n${seed}`;
-}
-
-async function runFlowStrict() {
-  let output = "";
-
-  if (!(await hasDeploymentConfig())) {
-    return {
-      ok: false,
-      output: "[controller] No .ibc-lite.local.json found. Press Deploy + Seed before running the flow.\n",
-      error: "No local deployment config.",
-    };
-  }
-
-  try {
-    const scripts = await runtimeScripts();
-    output += await runCommand(npm, ["run", scripts.flow]);
-    return { ok: true, output };
-  } catch (error) {
-    output += "\n[controller] Flow failed. No automatic redeploy or retry was performed.\n";
-    output += error.message;
-    return { ok: false, output, error: "Contract flow failed. Inspect the failed path, then redeploy/seed manually if needed." };
-  }
-}
-
-async function handleApi(req, res, url) {
-  try {
-    if (req.method === "GET" && url.pathname === "/api/health") {
-      const scripts = await runtimeScripts();
-      return sendJson(res, 200, {
-        ok: true,
-        platform: process.platform,
-        cwd: process.cwd(),
-        runtime: scripts.runtime,
-        hasDeploymentConfig: await hasDeploymentConfig(),
-        trace: await readTrace(),
-      });
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/trace") {
-      return sendJson(res, 200, { trace: await readTrace() });
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/status") {
-      return sendJson(res, 200, await readDemoStatus());
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/deploy-seed") {
-      const output = await deployAndSeed();
-      return sendJson(res, 200, { ok: true, output, trace: await readTrace(), status: await readDemoStatus() });
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/action") {
-      const body = await readRequestJson(req);
-      const result = await runDemoAction(body.action);
-      return sendJson(res, 200, result);
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/run-flow") {
-      const result = await runFlowStrict();
-      return sendJson(res, result.ok ? 200 : 500, { ...result, trace: await readTrace() });
-    }
-
-    sendJson(res, 404, { ok: false, error: "Unknown API endpoint" });
-  } catch (error) {
-    sendJson(res, 500, { ok: false, error: error.message, output: error.message });
-  }
-}
-
-function readRequestJson(req) {
-  return new Promise((resolveRead, rejectRead) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk.toString();
-      if (body.length > 1_000_000) {
-        req.destroy();
-        rejectRead(new Error("Request body too large"));
-      }
-    });
-    req.on("end", () => {
-      try {
-        resolveRead(body ? JSON.parse(body) : {});
-      } catch {
-        rejectRead(new Error("Invalid JSON request body"));
-      }
-    });
-    req.on("error", rejectRead);
-  });
-}
-
-async function fileForRequest(req) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const pathname = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
-  const file = resolve(root, `.${pathname}`);
-  if (!(file === root || file.startsWith(`${root}${sep}`))) return null;
-  const info = await stat(file);
-  return info.isDirectory() ? resolve(file, "index.html") : file;
-}
-
-const server = createServer(async (req, res) => {
-  try {
+  const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    if (url.pathname.startsWith("/api/")) return await handleApi(req, res, url);
-    const file = await fileForRequest(req);
-    if (!file) return sendText(res, 403, "Forbidden");
-    res.writeHead(200, { "content-type": types[extname(file)] || "application/octet-stream" });
-    createReadStream(file).pipe(res);
-  } catch {
-    sendText(res, 404, "Not found");
-  }
-});
+    if (url.pathname.startsWith("/api/")) return await handleDemoApi(req, res, url);
+    return serveStaticDemo(root, req, res);
+  });
 
-server.on("error", (error) => {
-  console.error(`Could not start demo UI on 127.0.0.1:${port}: ${error.message}`);
-  process.exit(1);
-});
+  server.on("error", (error) => {
+    console.error(`Could not start demo UI on 127.0.0.1:${port}: ${error.message}`);
+    process.exit(1);
+  });
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Demo UI: http://127.0.0.1:${port}/`);
-});
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`Demo UI: http://127.0.0.1:${port}/`);
+  });
+}
+
+startDemoUi();

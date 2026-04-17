@@ -7,14 +7,14 @@ import {PacketLib} from "../../contracts/libs/PacketLib.sol";
 contract MinimalTransferAppTest is IBCLocalSimulationBase {
     function testMinimalEscrowToVoucherMintFlowWorks() public {
         (PacketLib.Packet memory packet, uint256 sequence) = _sendLock(100 ether);
-        FinalizedPacket memory finalized = _finalizeAtoB(sequence, validatorKeysA, 2);
+        StorageFinalizedPacket memory finalized = _finalizeAtoBForStorageProof(sequence, validatorKeysA, 2);
 
         assertEq(escrowA.totalEscrowed(), 100 ether);
         assertEq(canonicalA.balanceOf(address(escrowA)), 100 ether);
         assertEq(canonicalA.balanceOf(user), 900 ether);
 
         vm.prank(relayer);
-        handlerB.recvPacket(packet, finalized.proof);
+        handlerB.recvPacketFromStorageProof(packet, finalized.leafProof, finalized.pathProof);
 
         assertEq(voucherB.balanceOf(user), 100 ether);
         assertTrue(voucherB.processedMintPackets(PacketLib.packetId(packet)));
@@ -22,17 +22,17 @@ contract MinimalTransferAppTest is IBCLocalSimulationBase {
 
     function testMinimalBurnToUnescrowFlowWorks() public {
         (PacketLib.Packet memory lockPacket, uint256 lockSequence) = _sendLock(120 ether);
-        FinalizedPacket memory finalizedLock = _finalizeAtoB(lockSequence, validatorKeysA, 2);
+        StorageFinalizedPacket memory finalizedLock = _finalizeAtoBForStorageProof(lockSequence, validatorKeysA, 2);
 
         vm.prank(relayer);
-        handlerB.recvPacket(lockPacket, finalizedLock.proof);
+        handlerB.recvPacketFromStorageProof(lockPacket, finalizedLock.leafProof, finalizedLock.pathProof);
         assertEq(voucherB.balanceOf(user), 120 ether);
 
         (PacketLib.Packet memory burnPacket, uint256 burnSequence) = _sendBurn(120 ether);
-        FinalizedPacket memory finalizedBurn = _finalizeBtoA(burnSequence, validatorKeysB, 2);
+        StorageFinalizedPacket memory finalizedBurn = _finalizeBtoAForStorageProof(burnSequence, validatorKeysB, 2);
 
         vm.prank(anyRelayer);
-        handlerA.recvPacket(burnPacket, finalizedBurn.proof);
+        handlerA.recvPacketFromStorageProof(burnPacket, finalizedBurn.leafProof, finalizedBurn.pathProof);
 
         assertEq(voucherB.balanceOf(user), 0);
         assertEq(escrowA.totalEscrowed(), 0);

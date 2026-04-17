@@ -1,57 +1,38 @@
-import { ethers } from "ethers";
 import {
-  finalizedHeaderObject,
-  headerProducerAddress,
-  hydrateExecutionStateRoot,
   loadArtifact,
   loadConfig,
   normalizeRuntime,
   peerKey,
-  pretty,
-  providerFor,
-  signaturesFor,
-  signerFor,
 } from "./ibc-lite-common.mjs";
+import { relayLatestTrustedHeader } from "./ibc-lite-header-progression.mjs";
 
 async function relayLatest(sourceKey, config, artifacts) {
   const runtime = config.runtime || normalizeRuntime(config);
   const destinationKey = peerKey(sourceKey);
-  const source = config.chains[sourceKey];
-  const destination = config.chains[destinationKey];
-  const sourceProvider = providerFor(config, sourceKey);
-  const destinationSigner = await signerFor(config, destinationKey, 0);
-  const headerProducer = new ethers.Contract(
-    headerProducerAddress(source),
-    artifacts.checkpointRegistry.abi,
-    sourceProvider
-  );
-  const client = new ethers.Contract(destination.client, artifacts.client.abi, destinationSigner);
-  const latestHeight = await headerProducer.headerHeight();
-  if (latestHeight === 0n) {
-    console.log(`[client-update] ${sourceKey}->${destinationKey} no finalized source header`);
-    return;
+  try {
+    await relayLatestTrustedHeader({
+      cfg: config,
+      artifacts,
+      sourceKey,
+      destinationKey,
+      runtime,
+      logPrefix: "client-update",
+    });
+  } catch (error) {
+    if (error.message === `[${sourceKey}] No finalized header exists yet.`) {
+      console.log(`[client-update] ${sourceKey}->${destinationKey} no finalized source header`);
+      return;
+    }
+    throw error;
   }
-  const header = await hydrateExecutionStateRoot(
-    config,
-    sourceKey,
-    finalizedHeaderObject(await headerProducer.headersByHeight(latestHeight)),
-    { strict: runtime.proofPolicy === "storage-required" }
-  );
-  header.blockHash = await client.hashHeader(header);
-  const already = await client.consensusStateHashBySequence(source.chainId, header.height);
-  if (already !== ethers.ZeroHash) {
-    console.log(`[client-update] ${sourceKey}->${destinationKey} already trusted height ${header.height}`);
-    return;
-  }
-  const digest = await client.hashConsensusState(header);
-  const commitDigest = await client.hashCommitment(header);
-  const signatures = await signaturesFor(sourceKey, sourceProvider, commitDigest);
-  const tx = await client.updateState([header], signatures);
-  await tx.wait();
-  console.log(`[client-update] ${sourceKey}->${destinationKey} trusted ${pretty(digest)} height=${header.height}`);
 }
 
-async function main() {
+export async function runClientUpdateRelayer() {
+  const activeRuntime = normalizeRuntime();
+  if (!activeRuntime.besuFirst) {
+    throw new Error("client-update-relayer.mjs is a canonical Besu-first entrypoint.");
+  }
+
   const config = await loadConfig();
   const artifacts = {
     checkpointRegistry: await loadArtifact("source/SourceCheckpointRegistry.sol", "SourceCheckpointRegistry"),
@@ -61,7 +42,7 @@ async function main() {
   await relayLatest("B", config, artifacts);
 }
 
-main().catch((error) => {
+runClientUpdateRelayer().catch((error) => {
   console.error(error);
   process.exit(1);
 });
