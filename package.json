@@ -5,6 +5,7 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "test:solidity": "hardhat test",
+    "test:v2": "hardhat test test/v2/BesuLightClientV2.t.sol test/v2/PacketReceiveV2.t.sol test/v2/PacketAcknowledgementV2.t.sol test/v2/PacketTimeoutV2.t.sol test/v2/PacketHandshakeV2.t.sol test/v2/BankPolicyV2.t.sol test/v2/PolicyTransferAppV2.t.sol test/v2/LendingValuationV2.t.sol",
     "node:chainA": "hardhat node --hostname 127.0.0.1 --port 8545 --chain-id 31337",
     "node:chainB": "npx ganache --server.host 127.0.0.1 --server.port 9545 --chain.chainId 31338 --wallet.mnemonic \"test test test test test test test test test test test junk\"",
     "besu:generate": "node scripts/generate-besu-qbft-networks.mjs",

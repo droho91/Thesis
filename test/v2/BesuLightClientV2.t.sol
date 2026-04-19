@@ -75,12 +75,108 @@ contract BesuLightClientV2Test is Test {
         assertEq(client.latestTrustedHeight(SOURCE_CHAIN_ID), 10);
     }
 
-    function testUpdateClientRejectsStaleHeight() public {
+    function testUpdateClientFreezesOnConflictingTrustedHeight() public {
         BesuLightClientTypes.HeaderUpdate memory update =
             _headerUpdate(1, bytes32(0), keccak256("state-root-1"), validators, _signerKeys3());
 
-        vm.expectRevert(bytes("HEIGHT_NOT_FORWARD"));
         client.updateClient(update, _validatorSet(1));
+
+        assertEq(uint256(client.status(SOURCE_CHAIN_ID)), uint256(BesuLightClientTypes.ClientStatus.Frozen));
+
+        (
+            uint256 evidenceChainId,
+            uint256 evidenceHeight,
+            bytes32 trustedHeaderHash,
+            bytes32 conflictingHeaderHash,
+            bytes32 evidenceHash,
+            uint256 detectedAt
+        ) = client.frozenEvidence(SOURCE_CHAIN_ID);
+
+        assertEq(evidenceChainId, SOURCE_CHAIN_ID);
+        assertEq(evidenceHeight, 1);
+        assertEq(trustedHeaderHash, keccak256("anchor-header"));
+        assertEq(conflictingHeaderHash, update.headerHash);
+        assertEq(
+            evidenceHash,
+            keccak256(abi.encode(SOURCE_CHAIN_ID, uint256(1), keccak256("anchor-header"), update.headerHash))
+        );
+        assertGt(detectedAt, 0);
+    }
+
+    function testRecoveryRequiresFrozenClient() public {
+        vm.expectRevert(bytes("CLIENT_NOT_FROZEN"));
+        client.beginRecovery(SOURCE_CHAIN_ID);
+    }
+
+    function testRecoverClientRequiresRecoveringState() public {
+        BesuLightClientTypes.TrustedHeader memory recoveryAnchor = BesuLightClientTypes.TrustedHeader({
+            sourceChainId: SOURCE_CHAIN_ID,
+            height: 2,
+            headerHash: keccak256("recovery-header"),
+            parentHash: keccak256("anchor-header"),
+            stateRoot: keccak256("recovery-state-root"),
+            timestamp: 1_700_000_002,
+            validatorsHash: BesuQBFTExtraDataLib.validatorsHash(validators),
+            exists: true
+        });
+
+        vm.expectRevert(bytes("CLIENT_NOT_RECOVERING"));
+        client.recoverClient(SOURCE_CHAIN_ID, recoveryAnchor, _validatorSet(2));
+    }
+
+    function testRecoverClientRestoresActiveStatus() public {
+        BesuLightClientTypes.HeaderUpdate memory conflict =
+            _headerUpdate(1, bytes32(0), keccak256("state-root-1"), validators, _signerKeys3());
+        client.updateClient(conflict, _validatorSet(1));
+
+        client.beginRecovery(SOURCE_CHAIN_ID);
+        assertEq(uint256(client.status(SOURCE_CHAIN_ID)), uint256(BesuLightClientTypes.ClientStatus.Recovering));
+
+        BesuLightClientTypes.TrustedHeader memory recoveryAnchor = BesuLightClientTypes.TrustedHeader({
+            sourceChainId: SOURCE_CHAIN_ID,
+            height: 2,
+            headerHash: keccak256("recovery-header"),
+            parentHash: keccak256("anchor-header"),
+            stateRoot: keccak256("recovery-state-root"),
+            timestamp: 1_700_000_002,
+            validatorsHash: BesuQBFTExtraDataLib.validatorsHash(validators),
+            exists: true
+        });
+
+        client.recoverClient(SOURCE_CHAIN_ID, recoveryAnchor, _validatorSet(2));
+
+        assertEq(uint256(client.status(SOURCE_CHAIN_ID)), uint256(BesuLightClientTypes.ClientStatus.Active));
+        assertEq(client.latestTrustedHeight(SOURCE_CHAIN_ID), 2);
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 2), recoveryAnchor.stateRoot);
+        assertEq(client.trustedTimestamp(SOURCE_CHAIN_ID, 2), recoveryAnchor.timestamp);
+
+        (
+            uint256 evidenceChainId,
+            uint256 evidenceHeight,
+            bytes32 trustedHeaderHash,
+            bytes32 conflictingHeaderHash,
+            bytes32 evidenceHash,
+            uint256 detectedAt
+        ) = client.frozenEvidence(SOURCE_CHAIN_ID);
+
+        assertEq(evidenceChainId, 0);
+        assertEq(evidenceHeight, 0);
+        assertEq(trustedHeaderHash, bytes32(0));
+        assertEq(conflictingHeaderHash, bytes32(0));
+        assertEq(evidenceHash, bytes32(0));
+        assertEq(detectedAt, 0);
+    }
+
+    function testUpdateClientRejectsUntrustedStaleHeight() public {
+        BesuLightClientTypes.HeaderUpdate memory latestUpdate =
+            _headerUpdate(10, keccak256("non-adjacent-parent"), keccak256("state-root-10"), validators, _signerKeys3());
+        client.updateClient(latestUpdate, _validatorSet(10));
+
+        BesuLightClientTypes.HeaderUpdate memory staleUpdate =
+            _headerUpdate(5, keccak256("stale-parent"), keccak256("state-root-5"), validators, _signerKeys3());
+
+        vm.expectRevert(bytes("HEIGHT_NOT_FORWARD"));
+        client.updateClient(staleUpdate, _validatorSet(5));
     }
 
     function testUpdateClientRejectsWrongStateRootField() public {

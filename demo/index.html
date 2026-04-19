@@ -186,14 +186,15 @@
             <section class="flow-card setup" data-phase="00">
               <div class="flow-copy">
                 <p class="flow-kicker">Runtime</p>
-                <h3>Deploy and hydrate the local two-chain stack</h3>
+                <h3>Prepare the local two-chain stack</h3>
                 <p>
-                  Bring up Besu, deploy the contracts, seed the demo balances, and refresh the
-                  state before running protocol actions.
+                  Reuse a ready seeded stack for the live demo, or run a fresh reset before the
+                  room is watching.
                 </p>
               </div>
               <div class="flow-actions">
-                <button class="button-primary" id="deploySeed" type="button">Deploy + Seed</button>
+                <button class="button-primary" id="deploySeed" type="button">Prepare / Reuse</button>
+                <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
                 <button class="button-secondary" id="refreshState" type="button">Refresh State</button>
                 <button class="button-run" data-action="fullFlow" type="button">Run Full Flow</button>
               </div>

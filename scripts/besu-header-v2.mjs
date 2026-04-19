@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { ethers } from "ethers";
 
 export function parseQbftExtraData(extraData) {
@@ -75,6 +77,33 @@ export function blockForSealHash(block) {
   };
 }
 
+function chainFolder(chainKey) {
+  if (chainKey === "A" || chainKey === "chainA") return "chainA";
+  if (chainKey === "B" || chainKey === "chainB") return "chainB";
+  return chainKey;
+}
+
+async function loadBesuValidators(chainKey) {
+  const path = resolve(process.cwd(), "networks", "besu", chainFolder(chainKey), "validators.json");
+  return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function qbftCommitSealsForHeaderHash({ chainKey, validators, headerHash }) {
+  const validatorEntries = await loadBesuValidators(chainKey);
+  const validatorsByAddress = new Map(
+    validatorEntries.map((entry) => [ethers.getAddress(entry.address), entry])
+  );
+
+  return validators.map((validator) => {
+    const address = ethers.getAddress(validator);
+    const entry = validatorsByAddress.get(address);
+    if (!entry?.privateKey) {
+      throw new Error(`No Besu validator private key found for ${address} on chain ${chainKey}.`);
+    }
+    return new ethers.SigningKey(entry.privateKey).sign(headerHash).serialized;
+  });
+}
+
 export async function qbftValidatorsByBlock(provider, blockTag) {
   return provider.send("qbft_getValidatorsByBlockNumber", [blockTag]);
 }
@@ -114,5 +143,71 @@ export async function buildBesuHeaderUpdate({
       validatorsHash: validatorsHash(validatorSet),
     },
     block,
+  };
+}
+
+export async function buildConflictingBesuHeaderUpdate({
+  provider,
+  chainKey,
+  blockTag,
+  sourceChainId,
+  validatorEpoch = 1n,
+  conflictStateRoot,
+}) {
+  const base = await buildBesuHeaderUpdate({
+    provider,
+    blockTag,
+    sourceChainId,
+    validatorEpoch,
+  });
+
+  const decodedExtraData = ethers.decodeRlp(base.block.extraData);
+  if (!Array.isArray(decodedExtraData) || decodedExtraData.length !== 5) {
+    throw new Error("QBFT extraData must decode to [vanity, validators, vote, round, seals].");
+  }
+
+  const [vanity, validatorsRaw, voteRaw, roundRaw] = decodedExtraData;
+  const syntheticStateRoot =
+    conflictStateRoot ||
+    ethers.keccak256(
+      ethers.toUtf8Bytes(`v2-conflict:${chainKey}:${sourceChainId.toString()}:${base.headerUpdate.height.toString()}`)
+    );
+
+  const sealHeader = {
+    ...base.block,
+    stateRoot: syntheticStateRoot,
+    extraData: ethers.encodeRlp([vanity, validatorsRaw, voteRaw, roundRaw, []]),
+  };
+  const rawHeaderRlp = encodeBlockHeaderRlp(sealHeader);
+  const headerHash = ethers.keccak256(rawHeaderRlp);
+  const commitSeals = await qbftCommitSealsForHeaderHash({
+    chainKey,
+    validators: base.validatorSet.validators,
+    headerHash,
+  });
+  const fullExtraData = ethers.encodeRlp([vanity, validatorsRaw, voteRaw, roundRaw, commitSeals]);
+
+  return {
+    headerUpdate: {
+      sourceChainId,
+      height: base.headerUpdate.height,
+      rawHeaderRlp,
+      headerHash,
+      parentHash: base.headerUpdate.parentHash,
+      stateRoot: syntheticStateRoot,
+      extraData: fullExtraData,
+    },
+    validatorSet: base.validatorSet,
+    parsedExtraData: parseQbftExtraData(fullExtraData),
+    derived: {
+      rawHeaderHash: headerHash,
+      validatorsHash: base.derived.validatorsHash,
+    },
+    block: {
+      ...base.block,
+      stateRoot: syntheticStateRoot,
+      extraData: fullExtraData,
+      hash: headerHash,
+    },
   };
 }

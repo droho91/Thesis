@@ -3,6 +3,7 @@ import {
   healthPayload,
   runActionPayload,
   runFlowPayload,
+  resetSeededPayload,
   statusPayload,
   tracePayload,
 } from "./ibc-lite-demo-service.mjs";
@@ -52,6 +53,10 @@ export async function handleDemoApi(req, res, url) {
       return sendJson(res, 200, await deploySeedPayload());
     }
 
+    if (req.method === "POST" && url.pathname === "/api/reset-seeded") {
+      return sendJson(res, 200, await resetSeededPayload());
+    }
+
     if (req.method === "POST" && url.pathname === "/api/action") {
       const body = await readRequestJson(req);
       const result = await runActionPayload(body.action);
@@ -65,6 +70,6 @@ export async function handleDemoApi(req, res, url) {
 
     return sendJson(res, 404, { ok: false, error: "Unknown API endpoint" });
   } catch (error) {
-    return sendJson(res, 500, { ok: false, error: error.message, output: error.message });
+    return sendJson(res, error.statusCode || 500, error.payload || { ok: false, error: error.message, output: error.message });
   }
 }

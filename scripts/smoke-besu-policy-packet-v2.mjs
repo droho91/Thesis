@@ -33,6 +33,8 @@ const SOURCE_CHANNEL_ID = ethers.encodeBytes32String("channel-a");
 const DESTINATION_CHANNEL_ID = ethers.encodeBytes32String("channel-b");
 const CHANNEL_VERSION = ethers.hexlify(ethers.toUtf8Bytes("ics-v2"));
 const CONNECTION_PREFIX = ethers.hexlify(ethers.toUtf8Bytes("ibc"));
+const VIEW_RETRY_ATTEMPTS = Math.max(1, Number(process.env.BESU_VIEW_RETRY_ATTEMPTS || "6"));
+const VIEW_RETRY_DELAY_MS = Math.max(0, Number(process.env.BESU_VIEW_RETRY_DELAY_MS || "750"));
 let CURRENT_PHASE = "bootstrap";
 
 function packetId(packet) {
@@ -99,7 +101,13 @@ function bytes32MappingSlot(key, slot) {
 }
 
 function rlpWord(word) {
-  return ethers.hexlify(ethers.concat([new Uint8Array([0xa0]), ethers.getBytes(word)]));
+  const bytes = ethers.getBytes(word);
+  let firstNonZero = 0;
+  while (firstNonZero < bytes.length && bytes[firstNonZero] === 0) firstNonZero++;
+  const trimmed = bytes.slice(firstNonZero);
+  if (trimmed.length === 0) return "0x80";
+  if (trimmed.length === 1 && trimmed[0] < 0x80) return ethers.hexlify(trimmed);
+  return ethers.hexlify(ethers.concat([new Uint8Array([0x80 + trimmed.length]), trimmed]));
 }
 
 async function buildPacketProofs(provider, packetStoreAddress, packet, trustedHeight, stateRoot) {
@@ -212,11 +220,57 @@ function shortError(error) {
   );
 }
 
+function sleep(ms) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+function isRetryableBesuViewError(error) {
+  const text = [
+    error?.code,
+    error?.shortMessage,
+    error?.message,
+    error?.info?.error?.message,
+    error?.error?.message,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return /CALL_EXCEPTION|UNKNOWN_ERROR|missing revert data|Internal error|World state unavailable|could not coalesce/i.test(
+    text
+  );
+}
+
+async function readView(label, read) {
+  let lastError;
+  for (let attempt = 1; attempt <= VIEW_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= VIEW_RETRY_ATTEMPTS || !isRetryableBesuViewError(error)) break;
+      console.warn(
+        `[policy:v2] read ${label} failed (${shortError(error)}); retrying ${attempt}/${VIEW_RETRY_ATTEMPTS - 1}`
+      );
+      await sleep(VIEW_RETRY_DELAY_MS);
+    }
+  }
+
+  const wrapped = new Error(`[policy:v2] read ${label} failed: ${shortError(lastError)}`);
+  wrapped.shortMessage = wrapped.message;
+  wrapped.cause = lastError;
+  wrapped.info = lastError?.info;
+  throw wrapped;
+}
+
+function logPhase(message) {
+  console.log(`[policy:v2] ${message}`);
+}
+
 async function main() {
   CURRENT_PHASE = "wait-runtime";
   await waitForBesuRuntimeReady();
 
   CURRENT_PHASE = "connect-rpcs";
+  logPhase("connecting wallets and RPC providers");
   const sourceProvider = new ethers.JsonRpcProvider(CHAIN_A_RPC);
   const destinationProvider = new ethers.JsonRpcProvider(CHAIN_B_RPC);
   const sourceSigner = await signerForRpc(CHAIN_A_RPC, SOURCE_CHAIN_KEY, 0);
@@ -241,6 +295,7 @@ async function main() {
   const appArtifact = await loadArtifact("v2/apps/PolicyControlledTransferAppV2.sol", "PolicyControlledTransferAppV2");
 
   CURRENT_PHASE = "deploy";
+  logPhase("deploying policy packet stack");
   const sourceLightClient = await deploy(lightClientArtifact, sourceSigner, [sourceSender]);
   const sourceLightClientAddress = await sourceLightClient.getAddress();
   const destinationLightClient = await deploy(lightClientArtifact, destinationSigner, [destinationUser]);
@@ -336,6 +391,7 @@ async function main() {
   const appBAddress = await appB.getAddress();
 
   CURRENT_PHASE = "configure-roles-and-routes";
+  logPhase("configuring roles, policy allowlists, oracle prices, and packet routes");
   await (await escrowA.grantApp(appAAddress)).wait();
   await (await voucherB.grantApp(appBAddress)).wait();
   await (await policyA.grantRole(await policyA.POLICY_APP_ROLE(), escrowAAddress)).wait();
@@ -368,6 +424,7 @@ async function main() {
   await (await destinationPacketHandler.setTrustedPacketStore(SOURCE_CHAIN_ID, packetStoreAAddress)).wait();
 
   CURRENT_PHASE = "connection-handshake";
+  logPhase("opening proof-checked connection");
   const connectionHandshake = await openProofCheckedConnection({
     sourceProvider,
     destinationProvider,
@@ -384,6 +441,7 @@ async function main() {
     prefix: CONNECTION_PREFIX,
   });
   CURRENT_PHASE = "channel-handshake";
+  logPhase("opening proof-checked channel");
   const channelHandshake = await openProofCheckedChannel({
     sourceProvider,
     destinationProvider,
@@ -406,10 +464,12 @@ async function main() {
   });
 
   CURRENT_PHASE = "seed-canonical-balance";
+  logPhase("minting source balance");
   await (await canonicalAsset.mint(sourceSender, 200n)).wait();
   await (await canonicalAsset.approve(escrowAAddress, 200n)).wait();
 
   CURRENT_PHASE = "approved-send";
+  logPhase("sending approved cross-chain packet");
   const approvedSendReceipt = await (
     await appA.sendTransfer(DESTINATION_CHAIN_ID, destinationUser, 100n, 0, 0)
   ).wait();
@@ -431,6 +491,7 @@ async function main() {
   };
 
   CURRENT_PHASE = "approved-trust-and-proof";
+  logPhase("building source packet proof");
   const approvedHeader = await trustRemoteHeaderAt({
     lightClient: destinationLightClient,
     provider: sourceProvider,
@@ -442,10 +503,11 @@ async function main() {
     sourceProvider,
     packetStoreAAddress,
     approvedPacket,
-    approvedCommitHeight,
+    approvedHeader.headerUpdate.height,
     approvedHeader.headerUpdate.stateRoot
   );
   CURRENT_PHASE = "approved-receive";
+  logPhase("receiving approved packet on Bank B");
   const approvedRecvReceipt = await (
     await destinationPacketHandler.recvPacketFromStorageProof(
       approvedPacket,
@@ -457,6 +519,7 @@ async function main() {
   const voucherBalanceApproved = await voucherB.balanceOf(destinationUser);
 
   CURRENT_PHASE = "approved-acknowledgement";
+  logPhase("acknowledging approved packet back on Bank A");
   const ackHeight = BigInt(approvedRecvReceipt.blockNumber);
   const ackHeader = await trustRemoteHeaderAt({
     lightClient: sourceLightClient,
@@ -471,7 +534,7 @@ async function main() {
     destinationPacketHandlerAddress,
     approvedPacketId,
     approvedAckHash,
-    ackHeight,
+    ackHeader.headerUpdate.height,
     ackHeader.headerUpdate.stateRoot
   );
   await (
@@ -485,35 +548,60 @@ async function main() {
   const sourceAckHash = await appA.acknowledgementHashByPacket(approvedPacketId);
 
   CURRENT_PHASE = "risk-deposit-and-borrow";
+  logPhase("depositing voucher collateral and borrowing bCASH");
   await (await debtAssetB.mint(lendingPoolBAddress, 500n)).wait();
   await (await voucherB.approve(lendingPoolBAddress, 100n)).wait();
   await (await lendingPoolB.depositCollateral(100n)).wait();
-  const maxBorrowBefore = await lendingPoolB.maxBorrow(destinationUser);
+  const maxBorrowBefore = await readView("maxBorrow", () => lendingPoolB.maxBorrow(destinationUser));
   const borrowAmount = 140n;
   await (await lendingPoolB.borrow(borrowAmount)).wait();
-  const healthBeforeShock = await lendingPoolB.healthFactorBps(destinationUser);
-  const debtAfterBorrow = await lendingPoolB.debtBalance(destinationUser);
-  const collateralAfterDeposit = await lendingPoolB.collateralBalance(destinationUser);
+  const healthBeforeShock = await readView("healthFactorBps before shock", () =>
+    lendingPoolB.healthFactorBps(destinationUser)
+  );
+  const debtAfterBorrow = await readView("debtBalance after borrow", () => lendingPoolB.debtBalance(destinationUser));
+  const collateralAfterDeposit = await readView("collateralBalance after deposit", () =>
+    lendingPoolB.collateralBalance(destinationUser)
+  );
 
   CURRENT_PHASE = "risk-price-shock-and-liquidate";
+  logPhase("shocking voucher price and liquidating unhealthy position");
   await (await oracleB.setPrice(voucherBAddress, ethers.parseUnits("0.5", 18))).wait();
-  const healthAfterShock = await lendingPoolB.healthFactorBps(destinationUser);
-  const liquidatableAfterShock = await lendingPoolB.isLiquidatable(destinationUser);
-  const maxLiquidationRepay = await lendingPoolB.maxLiquidationRepay(destinationUser);
+  const healthAfterShock = await readView("healthFactorBps after shock", () =>
+    lendingPoolB.healthFactorBps(destinationUser)
+  );
+  const liquidatableAfterShock = await readView("isLiquidatable after shock", () =>
+    lendingPoolB.isLiquidatable(destinationUser)
+  );
+  const maxLiquidationRepay = await readView("maxLiquidationRepay", () =>
+    lendingPoolB.maxLiquidationRepay(destinationUser)
+  );
   const liquidationRepay = 40n;
-  const seizedCollateralPreview = await lendingPoolB.previewLiquidation(destinationUser, liquidationRepay);
+  const seizedCollateralPreview = await readView("previewLiquidation", () =>
+    lendingPoolB.previewLiquidation(destinationUser, liquidationRepay)
+  );
   await (await debtAssetB.mint(destinationLiquidator, liquidationRepay)).wait();
   const lendingPoolForLiquidator = lendingPoolB.connect(destinationLiquidatorSigner);
   const debtForLiquidator = debtAssetB.connect(destinationLiquidatorSigner);
   await (await debtForLiquidator.approve(lendingPoolBAddress, liquidationRepay)).wait();
   await (await lendingPoolForLiquidator.liquidate(destinationUser, liquidationRepay)).wait();
-  const debtAfterLiquidation = await lendingPoolB.debtBalance(destinationUser);
-  const collateralAfterLiquidation = await lendingPoolB.collateralBalance(destinationUser);
-  const liquidatorVoucherBalance = await voucherB.balanceOf(destinationLiquidator);
-  const policyDebtOutstanding = await policyB.accountDebtOutstanding(destinationUser, debtAssetBAddress);
-  const policyCollateralOutstanding = await policyB.collateralOutstanding(voucherBAddress);
+  const debtAfterLiquidation = await readView("debtBalance after liquidation", () =>
+    lendingPoolB.debtBalance(destinationUser)
+  );
+  const collateralAfterLiquidation = await readView("collateralBalance after liquidation", () =>
+    lendingPoolB.collateralBalance(destinationUser)
+  );
+  const liquidatorVoucherBalance = await readView("liquidator voucher balance", () =>
+    voucherB.balanceOf(destinationLiquidator)
+  );
+  const policyDebtOutstanding = await readView("policy account debt outstanding", () =>
+    policyB.accountDebtOutstanding(destinationUser, debtAssetBAddress)
+  );
+  const policyCollateralOutstanding = await readView("policy collateral outstanding", () =>
+    policyB.collateralOutstanding(voucherBAddress)
+  );
 
   CURRENT_PHASE = "denied-send";
+  logPhase("sending policy-denied packet");
   await (await policyB.setAccountAllowed(destinationUser, false)).wait();
   const deniedTimeoutHeight = BigInt(await destinationProvider.getBlockNumber());
   const deniedSendReceipt = await (
@@ -537,6 +625,7 @@ async function main() {
   };
 
   CURRENT_PHASE = "denied-trust-and-proof";
+  logPhase("building denied packet proof");
   const deniedHeader = await trustRemoteHeaderAt({
     lightClient: destinationLightClient,
     provider: sourceProvider,
@@ -548,11 +637,12 @@ async function main() {
     sourceProvider,
     packetStoreAAddress,
     deniedPacket,
-    deniedCommitHeight,
+    deniedHeader.headerUpdate.height,
     deniedHeader.headerUpdate.stateRoot
   );
 
   CURRENT_PHASE = "denied-receive";
+  logPhase("checking destination policy denial");
   let deniedReason = "unknown";
   try {
     await destinationPacketHandler.recvPacketFromStorageProof(
@@ -566,6 +656,7 @@ async function main() {
   }
 
   CURRENT_PHASE = "timeout-proof";
+  logPhase("building timeout absence proof");
   const timeoutHeader = await trustRemoteHeaderAt({
     lightClient: sourceLightClient,
     provider: destinationProvider,
@@ -577,10 +668,11 @@ async function main() {
     destinationProvider,
     destinationPacketHandlerAddress,
     deniedPacketId,
-    deniedTimeoutHeight,
+    timeoutHeader.headerUpdate.height,
     timeoutHeader.headerUpdate.stateRoot
   );
   CURRENT_PHASE = "timeout-execute";
+  logPhase("executing timeout refund");
   const timeoutReceipt = await (
     await sourcePacketHandler.timeoutPacketFromStorageProof(
       deniedPacket,
@@ -595,6 +687,7 @@ async function main() {
   const finalEscrowed = await escrowA.totalEscrowed();
 
   CURRENT_PHASE = "write-report";
+  logPhase("writing smoke report");
   const output = {
     status: "ok",
     phase: "complete",

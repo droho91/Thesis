@@ -36,6 +36,30 @@ function statusName(value) {
   return CLIENT_STATUS[Number(value)] || String(value ?? "-");
 }
 
+function progressStatusName(progress, key) {
+  return progress?.[`${key}Name`] || statusName(progress?.[key]);
+}
+
+function clientPairLabel(progress) {
+  return `${progressStatusName(progress, "statusAOnB")} / ${progressStatusName(progress, "statusBOnA")}`;
+}
+
+function evidenceLabel(misbehaviour, security) {
+  const liveEvidence = security?.evidenceAOnB || security?.evidenceBOnA;
+  if (security?.frozen && liveEvidence) {
+    return `frozen height ${liveEvidence.height} / ${compact(liveEvidence.evidenceHash)}`;
+  }
+  if (misbehaviour?.frozen) {
+    return `frozen height ${misbehaviour.height || "-"} / ${compact(misbehaviour.evidenceHash)}`;
+  }
+  if (misbehaviour?.recovered) {
+    const recoveredAt = misbehaviour.recoveredAtHeight || "-";
+    const previous = misbehaviour.previousEvidenceHeight || misbehaviour.height || "-";
+    return `recovered height ${recoveredAt} / prior ${previous}`;
+  }
+  return "none";
+}
+
 function setRoute(id, state, text) {
   const node = document.getElementById(id);
   if (!node) return;
@@ -75,8 +99,8 @@ export function renderRoadmap(status) {
   const reverseWritten = positive(progress.packetSequenceB);
   const reverseTrusted = positive(progress.trustedBOnA);
   const unlocked = Boolean(trace.reverse?.packetId);
-  const frozen = Number(progress.statusAOnB) === 2;
-  const recovering = Number(progress.statusAOnB) === 3;
+  const frozen = Number(progress.statusAOnB) === 2 || Number(progress.statusBOnA) === 2;
+  const recovering = Number(progress.statusAOnB) === 3 || Number(progress.statusBOnA) === 3;
   const recovered = Boolean(trace.misbehaviour?.recovered);
 
   setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? "packet written" : "ready");
@@ -138,9 +162,12 @@ export function renderStatus(status) {
   deploymentStatus?.classList.add("is-live");
   deploymentStatus?.classList.remove("is-offline");
   const runtime = status.runtime || {};
+  const activeOperation = status.controller?.activeOperation;
   setText(
     "deploymentStatus",
-    status.stackVersion === "v2"
+    activeOperation
+      ? `Controller busy / ${activeOperation.label}`
+      : status.stackVersion === "v2"
       ? "Besu v2 runtime active / native header + storage proof path"
       : runtime.besuFirst
       ? `Besu runtime active${runtime.proofPolicy === "storage-required" ? " / storage proof required" : ""}`
@@ -153,8 +180,8 @@ export function renderStatus(status) {
   setText("poolCollateral", `${status.balances.poolCollateral} vA`);
   setText("poolDebt", `${status.balances.poolDebt} bCASH`);
   setText("poolLiquidity", `${status.balances.poolLiquidity} bCASH`);
-  setText("statusAOnB", statusName(status.progress.statusAOnB));
-  setText("statusBOnA", statusName(status.progress.statusBOnA));
+  setText("statusAOnB", progressStatusName(status.progress, "statusAOnB"));
+  setText("statusBOnA", progressStatusName(status.progress, "statusBOnA"));
 
   const forward = status.trace?.forward || {};
   const reverse = status.trace?.reverse || {};
@@ -162,10 +189,10 @@ export function renderStatus(status) {
   const trustedA = status.trust?.aOnB || {};
   const security = status.security || {};
   const safetyState = security.frozen
-    ? "Frozen"
+    ? `Frozen / ${clientPairLabel(status.progress)}`
     : security.recovering
-      ? "Recovering"
-      : `${statusName(status.progress.statusAOnB)} / ${statusName(status.progress.statusBOnA)}`;
+      ? `Recovering / ${clientPairLabel(status.progress)}`
+      : clientPairLabel(status.progress);
 
   setText("packetSequenceA", status.progress.packetSequenceA);
   setText("headerHeightA", status.progress.headerHeightA);
@@ -189,7 +216,12 @@ export function renderStatus(status) {
   setText("headerHeightB", status.progress.headerHeightB);
   setText("trustedBOnA", status.progress.trustedBOnA);
   setText("forwardConsumedState", security.forwardConsumed ? "yes" : "no");
-  setText("replayBlockedState", security.replayBlocked ? "blocked" : "pending");
+  setText(
+    "replayBlockedState",
+    security.replayBlocked
+      ? `blocked${security.replayProofHeight ? ` @ ${security.replayProofHeight}` : ""}`
+      : "pending"
+  );
   setText(
     "nonMembershipState",
     security.nonMembership
@@ -201,10 +233,7 @@ export function renderStatus(status) {
   setText("safetyState", safetyState);
   setText("forwardPacketId", compact(forward.packetId));
   setText("reversePacketId", compact(reverse.packetId));
-  setText(
-    "misbehaviourState",
-    misbehaviour.recovered ? `recovered epoch ${misbehaviour.epochId}` : misbehaviour.frozen ? `frozen seq ${misbehaviour.sequence}` : "none"
-  );
+  setText("misbehaviourState", evidenceLabel(misbehaviour, security));
   renderRoadmap(status);
 }
 

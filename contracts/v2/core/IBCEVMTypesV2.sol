@@ -24,6 +24,27 @@ library IBCEVMTypesV2 {
     }
 
     function rlpEncodeWord(bytes32 word) internal pure returns (bytes memory) {
-        return abi.encodePacked(bytes1(uint8(0x80 + 32)), word);
+        uint256 value = uint256(word);
+        if (value == 0) {
+            return hex"80";
+        }
+
+        uint256 length;
+        uint256 cursor = value;
+        while (cursor != 0) {
+            length++;
+            cursor >>= 8;
+        }
+
+        if (length == 1 && uint8(value) < 0x80) {
+            return abi.encodePacked(bytes1(uint8(value)));
+        }
+
+        bytes memory encoded = new bytes(length + 1);
+        encoded[0] = bytes1(uint8(0x80 + length));
+        for (uint256 i = 0; i < length; i++) {
+            encoded[length - i] = bytes1(uint8(value >> (i * 8)));
+        }
+        return encoded;
     }
 }

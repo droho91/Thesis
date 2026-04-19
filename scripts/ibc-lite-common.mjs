@@ -72,11 +72,13 @@ async function loadBesuJson(chainKey, file) {
 }
 
 async function networkTransactionCount(signer, address) {
-  const [latest, pending] = await Promise.all([
+  const [latest, pending, rpcLatest, rpcPending] = await Promise.all([
     signer.provider.getTransactionCount(address, "latest"),
     signer.provider.getTransactionCount(address, "pending"),
+    signer.provider.send("eth_getTransactionCount", [address, "latest"]),
+    signer.provider.send("eth_getTransactionCount", [address, "pending"]),
   ]);
-  return Math.max(latest, pending);
+  return Math.max(latest, pending, Number(BigInt(rpcLatest)), Number(BigInt(rpcPending)));
 }
 
 function isNonceExpired(error) {
@@ -104,6 +106,23 @@ function withManagedNonce(signer, label) {
     value: true,
   });
 
+  async function sendWithNonce(transaction, nonce) {
+    const txRequest =
+      transaction.gasPrice == null &&
+      transaction.maxFeePerGas == null &&
+      transaction.maxPriorityFeePerGas == null
+        ? { type: 0, gasPrice: 0n, ...transaction, nonce }
+        : { ...transaction, nonce };
+
+    if (typeof signer.signTransaction !== "function") {
+      return originalSendTransaction(txRequest);
+    }
+
+    const populated = await signer.populateTransaction(txRequest);
+    const signed = await signer.signTransaction(populated);
+    return signer.provider.broadcastTransaction(signed);
+  }
+
   signer.sendTransaction = async (transaction) => {
     const address = await signer.getAddress();
     const currentNonce = await networkTransactionCount(signer, address);
@@ -118,7 +137,7 @@ function withManagedNonce(signer, label) {
     nextNonce += 1;
 
     try {
-      return await originalSendTransaction({ ...transaction, nonce });
+      return await sendWithNonce(transaction, nonce);
     } catch (error) {
       if (!isNonceExpired(error)) throw error;
 
@@ -128,7 +147,7 @@ function withManagedNonce(signer, label) {
       if (process.env.LOG_NONCES === "true") {
         console.log(`[nonce] ${label} ${address} refreshed from ${nonce} to ${refreshedNonce}`);
       }
-      return originalSendTransaction({ ...transaction, nonce: refreshedNonce });
+      return sendWithNonce(transaction, refreshedNonce);
     }
   };
 

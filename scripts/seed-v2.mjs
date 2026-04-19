@@ -21,6 +21,7 @@ const LIQUIDATION_CLOSE_FACTOR_BPS = BigInt(process.env.LIQUIDATION_CLOSE_FACTOR
 const LIQUIDATION_BONUS_BPS = BigInt(process.env.LIQUIDATION_BONUS_BPS || "500");
 const SEED_TX_GAS_LIMIT = BigInt(process.env.SEED_TX_GAS_LIMIT || "1000000");
 const TX_WAIT_TIMEOUT_MS = Number(process.env.TX_WAIT_TIMEOUT_MS || 120000);
+const SEED_TX_SEND_RETRIES = Number(process.env.SEED_TX_SEND_RETRIES || 2);
 
 async function contractAt(config, chainKey, address, artifact, signerIndex = 0) {
   const signer = await signerForV2(config, chainKey, signerIndex);
@@ -42,6 +43,14 @@ function errorSummary(error) {
     .join(" | ");
 }
 
+function isRetryableSendError(error) {
+  return /BAD_DATA|null.*hash|fetch failed|ECONNRESET|ETIMEDOUT|timeout/i.test(errorSummary(error));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function waitForReceipt(tx, label) {
   const timeout = new Promise((_, reject) => {
     setTimeout(() => {
@@ -58,10 +67,18 @@ async function waitForReceipt(tx, label) {
 async function txStep(label, send) {
   console.log(`[v2 seed] ${label}`);
   let tx;
-  try {
-    tx = await send();
-  } catch (error) {
-    throw new Error(`[v2 seed] ${label} send failed: ${errorSummary(error)}`);
+  for (let attempt = 0; attempt <= SEED_TX_SEND_RETRIES; attempt++) {
+    try {
+      tx = await send();
+      if (tx?.hash) break;
+      throw new Error("RPC returned an empty transaction response.");
+    } catch (error) {
+      if (attempt >= SEED_TX_SEND_RETRIES || !isRetryableSendError(error)) {
+        throw new Error(`[v2 seed] ${label} send failed: ${errorSummary(error)}`);
+      }
+      console.log(`[v2 seed] ${label} send retry ${attempt + 1}/${SEED_TX_SEND_RETRIES}: ${errorSummary(error)}`);
+      await sleep(1000 * (attempt + 1));
+    }
   }
   console.log(`[v2 seed] ${label} tx=${tx.hash}`);
   return waitForReceipt(tx, label);

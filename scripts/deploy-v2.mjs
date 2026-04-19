@@ -77,6 +77,29 @@ async function loadV2Artifacts() {
   };
 }
 
+function artifactFingerprint(artifacts) {
+  const names = [
+    "lightClient",
+    "connectionKeeper",
+    "channelKeeper",
+    "packetHandler",
+    "packetStore",
+    "bankToken",
+    "policy",
+    "oracle",
+    "escrow",
+    "voucher",
+    "lendingPool",
+    "transferApp",
+  ];
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bytes32[]"],
+      [names.map((name) => ethers.keccak256(artifacts[name].deployedBytecode || artifacts[name].bytecode || "0x"))]
+    )
+  );
+}
+
 async function deployTransport({ chainId, owner, artifacts }) {
   const ownerAddress = await owner.getAddress();
   const lightClient = await deployStep("BesuLightClient", artifacts.lightClient, owner, [ownerAddress]);
@@ -220,11 +243,15 @@ async function configureStack({ chainA, chainB, bankA, bankB, chainIdA, chainIdB
   );
 }
 
-async function buildConfig({ runtime, chainIdA, chainIdB, ownerA, ownerB, chainA, chainB, bankA, bankB }) {
+async function buildConfig({ runtime, artifacts, chainIdA, chainIdB, ownerA, ownerB, chainA, chainB, bankA, bankB }) {
   const ownerAAddress = await ownerA.getAddress();
   const ownerBAddress = await ownerB.getAddress();
   return toConfigValue({
     version: "v2",
+    build: {
+      artifactFingerprint: artifactFingerprint(artifacts),
+      storageWordRlp: "canonical-trimmed-v1",
+    },
     runtime: {
       ...runtime,
       configPath: V2_CONFIG_PATH,
@@ -320,7 +347,7 @@ export async function runDeployV2() {
 
   await configureStack({ chainA, chainB, bankA, bankB, chainIdA, chainIdB });
 
-  const config = await buildConfig({ runtime, chainIdA, chainIdB, ownerA, ownerB, chainA, chainB, bankA, bankB });
+  const config = await buildConfig({ runtime, artifacts, chainIdA, chainIdB, ownerA, ownerB, chainA, chainB, bankA, bankB });
   await saveV2Config(config);
 
   console.log(`[v2] deployed Bank A stack on chainId=${chainIdA}`);

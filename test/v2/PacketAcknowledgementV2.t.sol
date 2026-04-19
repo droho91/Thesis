@@ -7,6 +7,18 @@ import {IBCPacketLibV2} from "../../contracts/v2/core/IBCPacketLibV2.sol";
 import {PacketHandlerV2Fixture} from "./helpers/PacketHandlerV2Fixture.sol";
 
 contract PacketAcknowledgementV2Test is PacketHandlerV2Fixture {
+    function testStorageProofBuilderUsesCanonicalRlpForLeadingZeroWord() public view {
+        bytes32 storageWord = bytes32(uint256(0x1234));
+        BuiltSingleStorageProof memory built =
+            _buildSingleStorageProof(address(0xB0B), bytes32("slot"), storageWord);
+
+        assertEq(built.expectedTrieValue, IBCEVMTypesV2.rlpEncodeWord(storageWord));
+        assertEq(built.expectedTrieValue, hex"821234");
+        assertEq(IBCEVMTypesV2.rlpEncodeWord(bytes32(0)), hex"80");
+        assertEq(IBCEVMTypesV2.rlpEncodeWord(bytes32(uint256(0x7f))), hex"7f");
+        assertEq(IBCEVMTypesV2.rlpEncodeWord(bytes32(uint256(0x80))), hex"8180");
+    }
+
     function testAcknowledgePacketFromStorageProofMarksSourceAcknowledged() public {
         IBCPacketLibV2.Packet memory packet = _packet();
         bytes32 packetId = IBCPacketLibV2.packetId(packet);

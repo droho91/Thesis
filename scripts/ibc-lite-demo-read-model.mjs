@@ -29,6 +29,24 @@ function zeroHash(value) {
   return !hash32(value) || value === ethers.ZeroHash;
 }
 
+const CLIENT_STATUS_NAMES = ["Uninitialized", "Active", "Frozen", "Recovering"];
+
+function clientStatusName(value) {
+  return CLIENT_STATUS_NAMES[Number(value)] || String(value ?? "-");
+}
+
+function normalizeEvidence(evidence) {
+  if (!evidence || evidence.evidenceHash === ethers.ZeroHash) return null;
+  return {
+    sourceChainId: evidence.sourceChainId.toString(),
+    height: evidence.height.toString(),
+    trustedHeaderHash: evidence.trustedHeaderHash,
+    conflictingHeaderHash: evidence.conflictingHeaderHash,
+    evidenceHash: evidence.evidenceHash,
+    detectedAt: evidence.detectedAt.toString(),
+  };
+}
+
 function normalizeFlowTrace(flow) {
   if (!flow || typeof flow !== "object" || Array.isArray(flow)) return flow;
   return {
@@ -59,6 +77,7 @@ export function normalizeTrace(trace) {
 }
 
 function normalizeV2TraceForUi(trace) {
+  const risk = trace.risk || {};
   return {
     ...trace,
     forward: {
@@ -71,14 +90,14 @@ function normalizeV2TraceForUi(trace) {
       proofMode: "storage",
     },
     lending: {
-      collateralDeposited: true,
-      collateral: trace.risk?.collateralAfterLiquidation,
-      borrowed: true,
-      debt: trace.risk?.debtAfterLiquidation,
-      repaid: false,
-      collateralWithdrawn: false,
-      completed: false,
-      liquidated: true,
+      collateralDeposited: Boolean(risk.collateralDeposited),
+      collateral: risk.collateralAfterLiquidation ?? risk.collateralDeposited,
+      borrowed: Boolean(risk.borrowed),
+      debt: risk.debtAfterLiquidation ?? risk.borrowed,
+      repaid: Boolean(risk.repaid),
+      collateralWithdrawn: Boolean(risk.collateralWithdrawn),
+      completed: Boolean(risk.completed),
+      liquidated: Boolean(risk.liquidationRepaid || risk.debtAfterLiquidation),
     },
     reverse: {
       ...(trace.reverse || {}),
@@ -631,6 +650,8 @@ async function readDemoStatusV2(health) {
     statusBOnA,
     activeEpochAOnB,
     activeEpochBOnA,
+    evidenceAOnB,
+    evidenceBOnA,
   ] = await Promise.all([
     canonical.balanceOf(sourceUser),
     escrow.totalEscrowed(),
@@ -647,8 +668,14 @@ async function readDemoStatusV2(health) {
     lightClientA.status(chainIdB),
     lightClientB.latestValidatorEpoch(chainIdA),
     lightClientA.latestValidatorEpoch(chainIdB),
+    lightClientB.frozenEvidence(chainIdA),
+    lightClientA.frozenEvidence(chainIdB),
   ]);
 
+  const statusAOnBNumber = Number(statusAOnB);
+  const statusBOnANumber = Number(statusBOnA);
+  const frozenEvidenceAOnB = normalizeEvidence(evidenceAOnB);
+  const frozenEvidenceBOnA = normalizeEvidence(evidenceBOnA);
   const [trustedAOnBSummary, trustedBOnASummary, forwardConsumed, forwardAcknowledged, deniedTimedOut] =
     await Promise.all([
       trustedHeaderSummary(lightClientB, chainIdA, trustedAOnB),
@@ -681,8 +708,10 @@ async function readDemoStatusV2(health) {
       headerHeightB: trustedBOnA.toString(),
       trustedAOnB: trustedAOnB.toString(),
       trustedBOnA: trustedBOnA.toString(),
-      statusAOnB: Number(statusAOnB),
-      statusBOnA: Number(statusBOnA),
+      statusAOnB: statusAOnBNumber,
+      statusBOnA: statusBOnANumber,
+      statusAOnBName: clientStatusName(statusAOnBNumber),
+      statusBOnAName: clientStatusName(statusBOnANumber),
       activeEpochAOnB: activeEpochAOnB.toString(),
       activeEpochBOnA: activeEpochBOnA.toString(),
       consensusHashAOnB: trustedAOnBSummary?.consensusHash || ethers.ZeroHash,
@@ -700,10 +729,13 @@ async function readDemoStatusV2(health) {
       forwardAcknowledged,
       deniedTimedOut,
       replayBlocked: Boolean(forwardConsumed || trace?.security?.replayBlocked),
+      replayProofHeight: trace?.security?.replayProofHeight || null,
       nonMembershipImplemented: true,
       nonMembership: trace?.security?.nonMembership || null,
-      frozen: Number(statusAOnB) === 2 || Number(statusBOnA) === 2,
-      recovering: false,
+      frozen: statusAOnBNumber === 2 || statusBOnANumber === 2,
+      recovering: statusAOnBNumber === 3 || statusBOnANumber === 3,
+      evidenceAOnB: frozenEvidenceAOnB,
+      evidenceBOnA: frozenEvidenceBOnA,
     },
     trace,
   };

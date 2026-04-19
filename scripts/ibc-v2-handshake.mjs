@@ -5,6 +5,8 @@ const HANDSHAKE_TX_GAS_LIMIT = BigInt(process.env.HANDSHAKE_TX_GAS_LIMIT || proc
 const HANDSHAKE_TX_WAIT_TIMEOUT_MS = Number(
   process.env.HANDSHAKE_TX_WAIT_TIMEOUT_MS || process.env.TX_WAIT_TIMEOUT_MS || 120000
 );
+const HEADER_WAIT_TIMEOUT_MS = Number(process.env.V2_HEADER_WAIT_TIMEOUT_MS || "120000");
+const HEADER_WAIT_INTERVAL_MS = Number(process.env.V2_HEADER_WAIT_INTERVAL_MS || "2000");
 
 function debugHandshake() {
   return process.env.DEBUG_HANDSHAKE === "true" || process.env.DEBUG_DEMO_FLOW === "true";
@@ -12,6 +14,10 @@ function debugHandshake() {
 
 function txOptions() {
   return { gasLimit: HANDSHAKE_TX_GAS_LIMIT };
+}
+
+function sleep(ms) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
 async function waitForTx(tx, label) {
@@ -47,12 +53,64 @@ function trustedAnchorFrom(result) {
   };
 }
 
+function isVerifiableHeader(result) {
+  return result.headerUpdate.headerHash.toLowerCase() === result.derived.rawHeaderHash.toLowerCase();
+}
+
+async function buildVerifiableBesuHeaderUpdate({
+  provider,
+  minimumHeight,
+  sourceChainId,
+  validatorEpoch,
+}) {
+  const minHeight = BigInt(minimumHeight);
+  const start = Date.now();
+  let lastMismatch = null;
+
+  while (Date.now() - start < HEADER_WAIT_TIMEOUT_MS) {
+    const latestHeight = BigInt(await provider.getBlockNumber());
+    if (latestHeight < minHeight) {
+      await sleep(HEADER_WAIT_INTERVAL_MS);
+      continue;
+    }
+
+    const candidate = await buildBesuHeaderUpdate({
+      provider,
+      blockTag: ethers.toQuantity(latestHeight),
+      sourceChainId,
+      validatorEpoch,
+    });
+    if (isVerifiableHeader(candidate)) {
+      return candidate;
+    }
+
+    lastMismatch =
+      `height ${candidate.headerUpdate.height.toString()} rpcHash=${candidate.headerUpdate.headerHash} ` +
+      `sealHash=${candidate.derived.rawHeaderHash}`;
+    if (debugHandshake()) {
+      console.log(`[v2 handshake] waiting for verifiable Besu header after ${lastMismatch}`);
+    }
+    await sleep(HEADER_WAIT_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `[v2 handshake] timed out waiting for a verifiable Besu header at or after ${minHeight.toString()}` +
+      (lastMismatch ? `; last mismatch: ${lastMismatch}` : "")
+  );
+}
+
 function chainClientId(chainId) {
   return ethers.zeroPadValue(ethers.toBeHex(chainId), 32);
 }
 
 function rlpWord(word) {
-  return ethers.hexlify(ethers.concat([new Uint8Array([0xa0]), ethers.getBytes(word)]));
+  const bytes = ethers.getBytes(word);
+  let firstNonZero = 0;
+  while (firstNonZero < bytes.length && bytes[firstNonZero] === 0) firstNonZero++;
+  const trimmed = bytes.slice(firstNonZero);
+  if (trimmed.length === 0) return "0x80";
+  if (trimmed.length === 1 && trimmed[0] < 0x80) return ethers.hexlify(trimmed);
+  return ethers.hexlify(ethers.concat([new Uint8Array([0x80 + trimmed.length]), trimmed]));
 }
 
 async function buildWordStorageProof({
@@ -103,8 +161,41 @@ export async function trustRemoteHeaderAt({
   }
 
   let currentHeight = BigInt(await lightClient.latestTrustedHeight(sourceChainId));
+  if (currentHeight >= height) {
+    const current = await buildBesuHeaderUpdate({
+      provider,
+      blockTag: ethers.toQuantity(currentHeight),
+      sourceChainId,
+      validatorEpoch,
+    });
+    if (isVerifiableHeader(current)) {
+      return current;
+    }
+
+    const target = await buildVerifiableBesuHeaderUpdate({
+      provider,
+      minimumHeight: currentHeight + 1n,
+      sourceChainId,
+      validatorEpoch,
+    });
+    await txStep("update Besu light client", () =>
+      lightClient.updateClient(target.headerUpdate, target.validatorSet, txOptions())
+    );
+    return target;
+  }
+
+  const target = await buildVerifiableBesuHeaderUpdate({
+    provider,
+    minimumHeight: height,
+    sourceChainId,
+    validatorEpoch,
+  });
+
   if (currentHeight === 0n) {
-    const anchorHeight = height - 1n;
+    const anchorHeight = target.headerUpdate.height - 1n;
+    if (anchorHeight === 0n) {
+      throw new Error("Cannot initialize a v2 trust anchor from block zero.");
+    }
     const anchor = await buildBesuHeaderUpdate({
       provider,
       blockTag: ethers.toQuantity(anchorHeight),
@@ -117,25 +208,13 @@ export async function trustRemoteHeaderAt({
     currentHeight = anchorHeight;
   }
 
-  let latest;
-  if (currentHeight < height) {
-    latest = await buildBesuHeaderUpdate({
-      provider,
-      blockTag: ethers.toQuantity(height),
-      sourceChainId,
-      validatorEpoch,
-    });
+  if (currentHeight < target.headerUpdate.height) {
     await txStep("update Besu light client", () =>
-      lightClient.updateClient(latest.headerUpdate, latest.validatorSet, txOptions())
+      lightClient.updateClient(target.headerUpdate, target.validatorSet, txOptions())
     );
   }
 
-  return latest ?? buildBesuHeaderUpdate({
-    provider,
-    blockTag: ethers.toQuantity(height),
-    sourceChainId,
-    validatorEpoch,
-  });
+  return target;
 }
 
 async function buildConnectionCommitmentProof({
@@ -218,7 +297,7 @@ export async function openProofCheckedConnection({
     keeperAddress: sourceConnectionKeeperAddress,
     connectionId: sourceConnectionId,
     sourceChainId,
-    trustedHeight: sourceInitHeight,
+    trustedHeight: sourceInitHeader.headerUpdate.height,
     stateRoot: sourceInitHeader.headerUpdate.stateRoot,
   });
 
@@ -249,7 +328,7 @@ export async function openProofCheckedConnection({
     keeperAddress: destinationConnectionKeeperAddress,
     connectionId: destinationConnectionId,
     sourceChainId: destinationChainId,
-    trustedHeight: destinationTryHeight,
+    trustedHeight: destinationTryHeader.headerUpdate.height,
     stateRoot: destinationTryHeader.headerUpdate.stateRoot,
   });
 
@@ -276,7 +355,7 @@ export async function openProofCheckedConnection({
     keeperAddress: sourceConnectionKeeperAddress,
     connectionId: sourceConnectionId,
     sourceChainId,
-    trustedHeight: sourceAckHeight,
+    trustedHeight: sourceAckHeader.headerUpdate.height,
     stateRoot: sourceAckHeader.headerUpdate.stateRoot,
   });
 
@@ -291,8 +370,11 @@ export async function openProofCheckedConnection({
 
   return {
     sourceInitHeight: sourceInitHeight.toString(),
+    sourceInitProofHeight: sourceInitHeader.headerUpdate.height.toString(),
     destinationTryHeight: destinationTryHeight.toString(),
+    destinationTryProofHeight: destinationTryHeader.headerUpdate.height.toString(),
     sourceAckHeight: sourceAckHeight.toString(),
+    sourceAckProofHeight: sourceAckHeader.headerUpdate.height.toString(),
     destinationConfirmHeight: BigInt(destinationConfirmReceipt.blockNumber).toString(),
   };
 }
@@ -344,7 +426,7 @@ export async function openProofCheckedChannel({
     keeperAddress: sourceChannelKeeperAddress,
     channelId: sourceChannelId,
     sourceChainId,
-    trustedHeight: sourceInitHeight,
+    trustedHeight: sourceInitHeader.headerUpdate.height,
     stateRoot: sourceInitHeader.headerUpdate.stateRoot,
   });
 
@@ -377,7 +459,7 @@ export async function openProofCheckedChannel({
     keeperAddress: destinationChannelKeeperAddress,
     channelId: destinationChannelId,
     sourceChainId: destinationChainId,
-    trustedHeight: destinationTryHeight,
+    trustedHeight: destinationTryHeader.headerUpdate.height,
     stateRoot: destinationTryHeader.headerUpdate.stateRoot,
   });
 
@@ -404,7 +486,7 @@ export async function openProofCheckedChannel({
     keeperAddress: sourceChannelKeeperAddress,
     channelId: sourceChannelId,
     sourceChainId,
-    trustedHeight: sourceAckHeight,
+    trustedHeight: sourceAckHeader.headerUpdate.height,
     stateRoot: sourceAckHeader.headerUpdate.stateRoot,
   });
 
@@ -419,8 +501,11 @@ export async function openProofCheckedChannel({
 
   return {
     sourceInitHeight: sourceInitHeight.toString(),
+    sourceInitProofHeight: sourceInitHeader.headerUpdate.height.toString(),
     destinationTryHeight: destinationTryHeight.toString(),
+    destinationTryProofHeight: destinationTryHeader.headerUpdate.height.toString(),
     sourceAckHeight: sourceAckHeight.toString(),
+    sourceAckProofHeight: sourceAckHeader.headerUpdate.height.toString(),
     destinationConfirmHeight: BigInt(destinationConfirmReceipt.blockNumber).toString(),
   };
 }

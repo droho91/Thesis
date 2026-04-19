@@ -253,8 +253,9 @@ async function main() {
     targetHeight: destinationHeight,
     validatorEpoch: 1n,
   });
+  const timeoutProofHeight = destinationHeader.headerUpdate.height;
 
-  const trustedTimestamp = await sourceLightClient.trustedTimestamp(DESTINATION_CHAIN_ID, destinationHeight);
+  const trustedTimestamp = await sourceLightClient.trustedTimestamp(DESTINATION_CHAIN_ID, timeoutProofHeight);
   if (BigInt(trustedTimestamp) < timeoutTimestamp) {
     throw new Error(
       `Trusted destination timestamp ${trustedTimestamp} did not reach timeout ${timeoutTimestamp}.`
@@ -265,7 +266,7 @@ async function main() {
     destinationProvider,
     destinationPacketHandlerAddress,
     packetIdValue,
-    destinationHeight,
+    timeoutProofHeight,
     destinationHeader.headerUpdate.stateRoot
   );
 
@@ -300,7 +301,7 @@ async function main() {
     destinationChainId: DESTINATION_CHAIN_ID.toString(),
     connectionHandshake,
     channelHandshake,
-    timeoutProofHeight: destinationHeight.toString(),
+    timeoutProofHeight: timeoutProofHeight.toString(),
     timeoutProofHeaderHash: destinationHeader.headerUpdate.headerHash,
     timeoutTimestamp: timeoutTimestamp.toString(),
     trustedTimestamp: trustedTimestamp.toString(),
@@ -321,7 +322,7 @@ async function main() {
     `Opened proof-checked v2 channel ${ethers.decodeBytes32String(SOURCE_CHANNEL_ID)} <-> ${ethers.decodeBytes32String(DESTINATION_CHANNEL_ID)}`
   );
   console.log(`Committed packet ${packetIdValue} on chain A with timestamp timeout ${timeoutTimestamp}`);
-  console.log(`Verified absent receipt on chain B at height ${destinationHeight} with trusted timestamp ${trustedTimestamp}`);
+  console.log(`Verified absent receipt on chain B at height ${timeoutProofHeight} with trusted timestamp ${trustedTimestamp}`);
   console.log(`Timed out packet on chain A with callback count ${timeoutCount}`);
   console.log(`Saved timestamp-timeout smoke report to ${OUT_FILE}`);
 }

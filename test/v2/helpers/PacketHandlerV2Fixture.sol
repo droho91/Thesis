@@ -34,6 +34,14 @@ contract MockBesuLightClient is IBesuLightClient {
         return BesuLightClientTypes.ClientStatus.Active;
     }
 
+    function beginRecovery(uint256) external pure {}
+
+    function recoverClient(
+        uint256,
+        BesuLightClientTypes.TrustedHeader calldata,
+        BesuLightClientTypes.ValidatorSet calldata
+    ) external pure {}
+
     function initializeTrustAnchor(
         uint256,
         BesuLightClientTypes.TrustedHeader calldata,

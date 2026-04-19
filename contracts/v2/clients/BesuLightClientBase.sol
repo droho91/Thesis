@@ -45,6 +45,14 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
         bytes32 conflictingHeaderHash,
         bytes32 evidenceHash
     );
+    event ClientRecoveryStarted(uint256 indexed sourceChainId, uint256 indexed frozenHeight, bytes32 evidenceHash);
+    event ClientRecovered(
+        uint256 indexed sourceChainId,
+        uint256 indexed height,
+        bytes32 headerHash,
+        uint256 validatorEpoch,
+        bytes32 validatorsHash
+    );
 
     constructor(address admin) {
         require(admin != address(0), "ADMIN_ZERO");
@@ -54,6 +62,53 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
 
     function status(uint256 sourceChainId) external view returns (BesuLightClientTypes.ClientStatus) {
         return clientStatuses[sourceChainId];
+    }
+
+    function beginRecovery(uint256 sourceChainId) external onlyRole(CLIENT_ADMIN_ROLE) {
+        require(clientStatuses[sourceChainId] == BesuLightClientTypes.ClientStatus.Frozen, "CLIENT_NOT_FROZEN");
+        BesuLightClientTypes.MisbehaviourEvidence memory evidence = frozenEvidence[sourceChainId];
+        require(evidence.evidenceHash != bytes32(0), "FROZEN_EVIDENCE_MISSING");
+
+        clientStatuses[sourceChainId] = BesuLightClientTypes.ClientStatus.Recovering;
+        emit ClientRecoveryStarted(sourceChainId, evidence.height, evidence.evidenceHash);
+    }
+
+    function recoverClient(
+        uint256 sourceChainId,
+        BesuLightClientTypes.TrustedHeader calldata trustedAnchor,
+        BesuLightClientTypes.ValidatorSet calldata validatorSet_
+    ) external onlyRole(CLIENT_ADMIN_ROLE) {
+        require(clientStatuses[sourceChainId] == BesuLightClientTypes.ClientStatus.Recovering, "CLIENT_NOT_RECOVERING");
+        require(trustedAnchor.sourceChainId == sourceChainId, "TRUST_CHAIN_MISMATCH");
+        require(trustedAnchor.exists, "TRUST_HEADER_MISSING");
+        require(trustedAnchor.height > 0, "TRUST_HEIGHT_ZERO");
+        require(trustedAnchor.headerHash != bytes32(0), "TRUST_HEADER_HASH_ZERO");
+        require(trustedAnchor.stateRoot != bytes32(0), "TRUST_STATE_ROOT_ZERO");
+        require(trustedAnchor.timestamp != 0, "TRUST_TIMESTAMP_ZERO");
+        require(validatorSet_.validators.length > 0, "VALIDATOR_SET_EMPTY");
+
+        BesuLightClientTypes.MisbehaviourEvidence memory evidence = frozenEvidence[sourceChainId];
+        require(evidence.evidenceHash != bytes32(0), "FROZEN_EVIDENCE_MISSING");
+        require(trustedAnchor.height > evidence.height, "RECOVERY_HEIGHT_NOT_FORWARD");
+        require(trustedAnchor.height > latestTrustedHeight[sourceChainId], "RECOVERY_HEIGHT_NOT_LATEST");
+
+        bytes32 validatorsHash = BesuQBFTExtraDataLib.validatorsHash(validatorSet_.validators);
+        require(trustedAnchor.validatorsHash == validatorsHash, "VALIDATORS_HASH_MISMATCH");
+
+        _storeValidatorSet(sourceChainId, validatorSet_);
+        trustedHeaders[sourceChainId][trustedAnchor.height] = trustedAnchor;
+        latestTrustedHeight[sourceChainId] = trustedAnchor.height;
+        latestValidatorEpoch[sourceChainId] = validatorSet_.epoch;
+        delete frozenEvidence[sourceChainId];
+        clientStatuses[sourceChainId] = BesuLightClientTypes.ClientStatus.Active;
+
+        emit ClientRecovered(
+            sourceChainId,
+            trustedAnchor.height,
+            trustedAnchor.headerHash,
+            validatorSet_.epoch,
+            validatorsHash
+        );
     }
 
     function initializeTrustAnchor(
@@ -104,13 +159,6 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
         require(parsedHeader.stateRoot == update.stateRoot, "HEADER_STATE_ROOT_MISMATCH");
         require(parsedHeader.number == update.height, "HEADER_HEIGHT_FIELD_MISMATCH");
 
-        BesuLightClientTypes.TrustedHeader storage latest = trustedHeaders[sourceChainId][latestTrustedHeight[sourceChainId]];
-        require(latest.exists, "TRUST_ANCHOR_MISSING");
-        require(update.height > latest.height, "HEIGHT_NOT_FORWARD");
-        if (update.height == latest.height + 1) {
-            require(update.parentHash == latest.headerHash, "PARENT_HASH_MISMATCH");
-        }
-
         BesuLightClientTypes.ParsedExtraData memory parsed = BesuQBFTExtraDataLib.parse(update.extraData);
         BesuLightClientTypes.ParsedExtraData memory sealParsed = BesuQBFTExtraDataLib.parse(parsedHeader.extraData);
         _requireSealHeaderExtraDataMatches(parsed, sealParsed);
@@ -133,6 +181,13 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
         if (existing.exists && existing.headerHash != trustedHeaderHash) {
             _freeze(sourceChainId, update.height, existing.headerHash, trustedHeaderHash);
             return trustedHeaderHash;
+        }
+
+        BesuLightClientTypes.TrustedHeader storage latest = trustedHeaders[sourceChainId][latestTrustedHeight[sourceChainId]];
+        require(latest.exists, "TRUST_ANCHOR_MISSING");
+        require(update.height > latest.height, "HEIGHT_NOT_FORWARD");
+        if (update.height == latest.height + 1) {
+            require(update.parentHash == latest.headerHash, "PARENT_HASH_MISMATCH");
         }
 
         trustedHeaders[sourceChainId][update.height] = nextTrustedHeader;

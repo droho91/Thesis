@@ -3,8 +3,10 @@ import { markControllerOffline, renderLatestActivity, renderRoadmap, renderStatu
 const buttons = [...document.querySelectorAll("button")];
 const actionButtons = [...document.querySelectorAll("[data-action]")];
 const deploySeedButton = document.getElementById("deploySeed");
+const resetSeededButton = document.getElementById("resetSeeded");
 const refreshButton = document.getElementById("refreshState");
 const ACTIVITY_STORAGE_KEY = "ibc-lite-latest-activity";
+const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Recovering"];
 let currentStatus = null;
 
 function setBusy(busy) {
@@ -33,6 +35,11 @@ function formatClock(isoString) {
 
 function snapshotStatus(status) {
   if (!status?.deployed) return {};
+  const statusAOnB =
+    status.progress?.statusAOnBName || CLIENT_STATUS[Number(status.progress?.statusAOnB)] || status.progress?.statusAOnB;
+  const statusBOnA =
+    status.progress?.statusBOnAName || CLIENT_STATUS[Number(status.progress?.statusBOnA)] || status.progress?.statusBOnA;
+  const misbehaviour = status.trace?.misbehaviour || {};
   return {
     packetSequenceA: status.progress?.packetSequenceA,
     headerHeightA: status.progress?.headerHeightA,
@@ -51,9 +58,16 @@ function snapshotStatus(status) {
       ? "Frozen"
       : status.security?.recovering
         ? "Recovering"
-        : `${status.progress?.statusAOnB}/${status.progress?.statusBOnA}`,
-    replayBlocked: String(Boolean(status.security?.replayBlocked)),
+        : `${statusAOnB}/${statusBOnA}`,
+    replayBlocked: status.security?.replayBlocked
+      ? `blocked${status.security?.replayProofHeight ? ` @ ${status.security.replayProofHeight}` : ""}`
+      : "pending",
     nonMembership: status.security?.nonMembership ? `seq ${status.security.nonMembership.absentSequence}` : null,
+    misbehaviour: misbehaviour.frozen
+      ? `frozen ${misbehaviour.height || "-"}`
+      : misbehaviour.recovered
+        ? `recovered ${misbehaviour.recoveredAtHeight || "-"}`
+        : null,
   };
 }
 
@@ -74,6 +88,7 @@ const FACT_LABELS = {
   safetyState: "Client safety state",
   replayBlocked: "Replay protection",
   nonMembership: "Non-membership proof",
+  misbehaviour: "Misbehaviour evidence",
 };
 
 function collectChanges(before, after) {
@@ -107,7 +122,8 @@ function actionTitle(action) {
     replayForward: "Attempted forward replay",
     checkNonMembership: "Verified non-membership",
     fullFlow: "Completed full proof-backed flow",
-    deploySeed: "Prepared runtime and demo balances",
+    deploySeed: "Prepared or reused runtime",
+    resetSeeded: "Fresh reset to seeded baseline",
     refresh: "Refreshed live state",
   };
   return titles[action] || action;
@@ -172,7 +188,10 @@ async function requestJson(path, options = {}) {
   });
   const payload = await response.json();
   if (!response.ok || payload.ok === false) {
-    throw new Error([payload.error, payload.output].filter(Boolean).join("\n\n"));
+    const error = new Error([payload.error, payload.output].filter(Boolean).join("\n\n"));
+    error.statusCode = response.status;
+    error.payload = payload;
+    throw error;
   }
   return payload;
 }
@@ -185,21 +204,43 @@ async function refreshStatus() {
 
 async function runDeploySeed() {
   setBusy(true);
-  setText("lastMessage", "Deploying contracts and seeding balances...");
+  setText("lastMessage", "Preparing demo runtime...");
   setOutput(
-    "Compiling contracts, deploying to both Besu bank chains, and seeding demo balances.\n\nThis can take a little while on first run."
+    "Checking whether the v2 stack is already deployed and seeded. If it is ready, this skips the slow setup path."
   );
   try {
     const payload = await requestJson("/api/deploy-seed", { method: "POST" });
     renderStatus(payload.status);
-    pushActivity("deploySeed", "Contracts were deployed and demo balances were seeded on the live Besu runtime.", payload.status);
+    pushActivity("deploySeed", "The v2 runtime is ready for live demo actions.", payload.status);
     currentStatus = payload.status;
-    setText("lastMessage", "Deployment and seed complete.");
+    setText("lastMessage", "Demo runtime ready.");
     setOutput(payload.output);
   } catch (error) {
-    setText("lastMessage", "Deploy + Seed failed.");
+    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Prepare / Reuse failed.");
     setOutput(error.message);
     pushFailedActivity("deploySeed", error);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function runResetSeeded() {
+  setBusy(true);
+  setText("lastMessage", "Running fresh reset to seeded baseline...");
+  setOutput(
+    "Creating a fresh v2 deployment, seeding policy/oracle/risk state, and clearing the demo trace. Run this before the live demo window."
+  );
+  try {
+    const payload = await requestJson("/api/reset-seeded", { method: "POST" });
+    renderStatus(payload.status);
+    pushActivity("resetSeeded", "A fresh v2 runtime was deployed and seeded for a clean demo baseline.", payload.status);
+    currentStatus = payload.status;
+    setText("lastMessage", "Fresh reset complete.");
+    setOutput(payload.output);
+  } catch (error) {
+    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Reset to Seeded failed.");
+    setOutput(error.message);
+    pushFailedActivity("resetSeeded", error);
   } finally {
     setBusy(false);
   }
@@ -220,7 +261,7 @@ async function runAction(action) {
     setText("lastMessage", payload.message);
     setOutput(payload.message);
   } catch (error) {
-    setText("lastMessage", `${action} failed.`);
+    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : `${action} failed.`);
     setOutput(error.message);
     pushFailedActivity(action, error);
   } finally {
@@ -229,6 +270,7 @@ async function runAction(action) {
 }
 
 deploySeedButton?.addEventListener("click", runDeploySeed);
+resetSeededButton?.addEventListener("click", runResetSeeded);
 refreshButton?.addEventListener("click", async () => {
   setBusy(true);
   try {

@@ -60,7 +60,7 @@ contract PacketProofBuilderV2 {
         pure
         returns (BuiltSingleStorageProof memory built)
     {
-        bytes memory expectedTrieValue = _rlpEncodeBytes(abi.encodePacked(storageWord));
+        bytes memory expectedTrieValue = _rlpEncodeStorageWord(storageWord);
         bytes memory storageLeaf = _rlpEncodeList(
             _pair(
                 _compactPath(_nibbles(abi.encodePacked(keccak256(abi.encodePacked(storageKey)))), true),
@@ -98,8 +98,8 @@ contract PacketProofBuilderV2 {
         uint256 commonPrefix = _commonPrefixLength(pathA, pathB);
         require(commonPrefix < pathA.length, "IDENTICAL_STORAGE_PATHS");
 
-        valueA = _rlpEncodeBytes(abi.encodePacked(wordA));
-        valueB = _rlpEncodeBytes(abi.encodePacked(wordB));
+        valueA = _rlpEncodeStorageWord(wordA);
+        valueB = _rlpEncodeStorageWord(wordB);
 
         bytes memory leafA = _rlpEncodeList(
             _pair(_compactPath(_slice(pathA, commonPrefix + 1, pathA.length - commonPrefix - 1), true), valueA)
@@ -147,6 +147,26 @@ contract PacketProofBuilderV2 {
         items[2] = _rlpEncodeBytes(abi.encodePacked(storageRoot));
         items[3] = _rlpEncodeBytes(abi.encodePacked(keccak256("")));
         return _rlpEncodeList(items);
+    }
+
+    function _rlpEncodeStorageWord(bytes32 word) internal pure returns (bytes memory) {
+        uint256 value = uint256(word);
+        if (value == 0) {
+            return _rlpEncodeBytes("");
+        }
+
+        uint256 length;
+        uint256 cursor = value;
+        while (cursor != 0) {
+            length++;
+            cursor >>= 8;
+        }
+
+        bytes memory trimmed = new bytes(length);
+        for (uint256 i = 0; i < length; i++) {
+            trimmed[length - 1 - i] = bytes1(uint8(value >> (i * 8)));
+        }
+        return _rlpEncodeBytes(trimmed);
     }
 
     function _pair(bytes memory a, bytes memory b) internal pure returns (bytes[] memory items) {

@@ -101,7 +101,13 @@ function bytes32MappingSlot(key, slot) {
 }
 
 function rlpWord(word) {
-  return ethers.hexlify(ethers.concat([new Uint8Array([0xa0]), ethers.getBytes(word)]));
+  const bytes = ethers.getBytes(word);
+  let firstNonZero = 0;
+  while (firstNonZero < bytes.length && bytes[firstNonZero] === 0) firstNonZero++;
+  const trimmed = bytes.slice(firstNonZero);
+  if (trimmed.length === 0) return "0x80";
+  if (trimmed.length === 1 && trimmed[0] < 0x80) return ethers.hexlify(trimmed);
+  return ethers.hexlify(ethers.concat([new Uint8Array([0x80 + trimmed.length]), trimmed]));
 }
 
 async function buildPacketProofs(provider, packetStoreAddress, packet, trustedHeight, stateRoot) {
@@ -326,7 +332,7 @@ async function main() {
     sourceProvider,
     packetStoreAddress,
     packet,
-    trustedHeight,
+    latest.headerUpdate.height,
     latest.headerUpdate.stateRoot
   );
 
@@ -361,7 +367,7 @@ async function main() {
     destinationPacketHandlerAddress,
     packetIdValue,
     acknowledgementHash,
-    acknowledgementHeight,
+    acknowledgementHeader.headerUpdate.height,
     acknowledgementHeader.headerUpdate.stateRoot
   );
   await (
@@ -406,9 +412,9 @@ async function main() {
     destinationChainId: DESTINATION_CHAIN_ID.toString(),
     connectionHandshake,
     channelHandshake,
-    trustedHeight: trustedHeight.toString(),
+    trustedHeight: latest.headerUpdate.height.toString(),
     headerHash: latest.headerUpdate.headerHash,
-    acknowledgementHeight: acknowledgementHeight.toString(),
+    acknowledgementHeight: acknowledgementHeader.headerUpdate.height.toString(),
     acknowledgementHeaderHash: acknowledgementHeader.headerUpdate.headerHash,
     packetId: packetIdValue,
     packetLeaf: proofs.leaf,

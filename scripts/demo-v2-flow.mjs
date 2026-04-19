@@ -6,6 +6,7 @@ import {
   openProofCheckedConnection,
   trustRemoteHeaderAt,
 } from "./ibc-v2-handshake.mjs";
+import { buildBesuHeaderUpdate, buildConflictingBesuHeaderUpdate } from "./besu-header-v2.mjs";
 import {
   loadArtifact,
   normalizeRuntime,
@@ -29,6 +30,19 @@ const PACKET_LEAF_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.Packet
 const PACKET_COMMITMENT_PATH_TYPEHASH = ethers.keccak256(ethers.toUtf8Bytes("IBCLite.PacketCommitmentPath.v2"));
 const ACKNOWLEDGEMENT_HASHES_SLOT = 3n;
 const PACKET_RECEIPTS_SLOT = 2n;
+const CONNECTION_STATE = Object.freeze({
+  Uninitialized: 0,
+  Init: 1,
+  TryOpen: 2,
+  Open: 3,
+});
+const CHANNEL_STATE = Object.freeze({
+  Uninitialized: 0,
+  Init: 1,
+  TryOpen: 2,
+  Open: 3,
+  Closed: 4,
+});
 
 const FORWARD_AMOUNT = ethers.parseUnits(process.env.V2_DEMO_FORWARD_AMOUNT || "100", 18);
 const DENIED_AMOUNT = ethers.parseUnits(process.env.V2_DEMO_DENIED_AMOUNT || "40", 18);
@@ -51,8 +65,17 @@ function chainId(config, chainKey) {
   return BigInt(config.chains[chainKey].chainId);
 }
 
+function chainClientId(chainIdValue) {
+  return ethers.zeroPadValue(ethers.toBeHex(chainIdValue), 32);
+}
+
 function asBigInt(value) {
   return typeof value === "bigint" ? value : BigInt(value);
+}
+
+function stateName(states, value) {
+  const numberValue = Number(value);
+  return Object.entries(states).find(([, enumValue]) => enumValue === numberValue)?.[0] ?? `Unknown(${numberValue})`;
 }
 
 function units(value) {
@@ -62,6 +85,19 @@ function units(value) {
 function compact(value) {
   if (!value) return "-";
   return value.length > 22 ? `${value.slice(0, 12)}...${value.slice(-8)}` : value;
+}
+
+function trustedAnchorFromHeader(result) {
+  return {
+    sourceChainId: result.headerUpdate.sourceChainId,
+    height: result.headerUpdate.height,
+    headerHash: result.headerUpdate.headerHash,
+    parentHash: result.headerUpdate.parentHash,
+    stateRoot: result.headerUpdate.stateRoot,
+    timestamp: BigInt(result.block.timestamp),
+    validatorsHash: result.derived.validatorsHash,
+    exists: true,
+  };
 }
 
 function packetId(packet) {
@@ -128,7 +164,13 @@ function bytes32MappingSlot(key, slot) {
 }
 
 function rlpWord(word) {
-  return ethers.hexlify(ethers.concat([new Uint8Array([0xa0]), ethers.getBytes(word)]));
+  const bytes = ethers.getBytes(word);
+  let firstNonZero = 0;
+  while (firstNonZero < bytes.length && bytes[firstNonZero] === 0) firstNonZero++;
+  const trimmed = bytes.slice(firstNonZero);
+  if (trimmed.length === 0) return "0x80";
+  if (trimmed.length === 1 && trimmed[0] < 0x80) return ethers.hexlify(trimmed);
+  return ethers.hexlify(ethers.concat([new Uint8Array([0x80 + trimmed.length]), trimmed]));
 }
 
 function shortError(error) {
@@ -207,8 +249,9 @@ function toLegacyUiTrace(trace) {
       proofMode: trace.reverse?.proofMode ?? (trace.timeout ? "storage-absence" : undefined),
     },
     misbehaviour: {
-      frozen: false,
-      recovered: false,
+      frozen: Boolean(trace.misbehaviour?.frozen),
+      recovered: Boolean(trace.misbehaviour?.recovered),
+      ...(trace.misbehaviour || {}),
     },
     security: {
       nonMembershipImplemented: true,
@@ -340,6 +383,81 @@ async function buildReceiptAbsenceProof({
   };
 }
 
+async function buildWordStorageProof({
+  provider,
+  account,
+  storageKey,
+  expectedWord,
+  sourceChainId,
+  trustedHeight,
+  stateRoot,
+}) {
+  const proof = await provider.send("eth_getProof", [account, [storageKey], ethers.toQuantity(trustedHeight)]);
+  if (!proof?.storageProof?.length) {
+    throw new Error("eth_getProof did not return a storage proof.");
+  }
+
+  const storageEntry =
+    proof.storageProof.find((entry) => entry.key.toLowerCase() === storageKey.toLowerCase()) ?? proof.storageProof[0];
+  if (!storageEntry) {
+    throw new Error("Could not match eth_getProof entry to the requested storage slot.");
+  }
+  if (BigInt(storageEntry.value) !== BigInt(expectedWord)) {
+    throw new Error(`Storage proof value mismatch: expected ${expectedWord}, got ${storageEntry.value}.`);
+  }
+
+  return {
+    sourceChainId,
+    trustedHeight,
+    stateRoot,
+    account,
+    storageKey,
+    expectedValue: rlpWord(expectedWord),
+    accountProof: proof.accountProof,
+    storageProof: storageEntry.proof,
+  };
+}
+
+async function buildConnectionCommitmentProof({
+  provider,
+  keeper,
+  keeperAddress,
+  connectionId,
+  sourceChainId,
+  trustedHeight,
+  stateRoot,
+}) {
+  return buildWordStorageProof({
+    provider,
+    account: keeperAddress,
+    storageKey: await keeper.connectionCommitmentStorageSlot(connectionId),
+    expectedWord: await keeper.connectionCommitments(connectionId),
+    sourceChainId,
+    trustedHeight,
+    stateRoot,
+  });
+}
+
+async function buildChannelCommitmentProof({
+  provider,
+  keeper,
+  keeperAddress,
+  channelId,
+  sourceChainId,
+  trustedHeight,
+  stateRoot,
+}) {
+  return buildWordStorageProof({
+    provider,
+    account: keeperAddress,
+    storageKey: await keeper.channelCommitmentStorageSlot(channelId),
+    expectedWord: await keeper.channelCommitments(channelId),
+    sourceChainId,
+    trustedHeight,
+    stateRoot,
+  });
+}
+
 async function loadV2Artifacts() {
   return {
     lightClient: await loadArtifact("v2/clients/BesuLightClient.sol", "BesuLightClient"),
@@ -424,25 +542,234 @@ async function ensureSeededConfig(config) {
   }
 }
 
-async function openOrReuseHandshake(config, ctx) {
+async function txIfNeeded(label, isReady, send) {
+  if (await isReady()) return;
+  await txStep(label, send);
+}
+
+async function ensureRiskSeeded(config, ctx) {
   const sourceChainId = chainId(config, "A");
-  const destinationChainId = chainId(config, "B");
-  const constants = config.constants;
-  const sourceConnectionId = constants.sourceConnectionId;
-  const destinationConnectionId = constants.destinationConnectionId;
-  const sourceChannelId = constants.sourceChannelId;
-  const destinationChannelId = constants.destinationChannelId;
+  const initialVoucherPrice = BigInt(config.seed.initialVoucherPriceE18);
+  const debtPrice = BigInt(config.seed.debtPriceE18);
+  const voucherExposureCap = BigInt(config.seed.voucherExposureCap);
+  const collateralCap = BigInt(config.seed.collateralCap);
+  const debtAssetBorrowCap = BigInt(config.seed.debtAssetBorrowCap);
+  const accountBorrowCap = BigInt(config.seed.accountBorrowCap);
+  const collateralFactorBps = BigInt(config.seed.collateralFactorBps);
+  const collateralHaircutBps = BigInt(config.seed.collateralHaircutBps);
+  const liquidationCloseFactorBps = BigInt(config.seed.liquidationCloseFactorBps);
+  const liquidationBonusBps = BigInt(config.seed.liquidationBonusBps);
+  const poolLiquidity = BigInt(config.seed.poolLiquidity);
+  const liquidatorDebtBalance = BigInt(config.seed.liquidatorDebtBalance);
 
-  const [sourceConnectionOpen, destinationConnectionOpen] = await Promise.all([
-    ctx.A.connectionKeeper.isConnectionOpen(sourceConnectionId),
-    ctx.B.connectionKeeper.isConnectionOpen(destinationConnectionId),
+  await txIfNeeded(
+    "allow destination user",
+    () => ctx.B.policy.accountAllowed(ctx.destinationUserAddress),
+    () => ctx.B.policy.setAccountAllowed(ctx.destinationUserAddress, true, txOptions())
+  );
+  await txIfNeeded(
+    "allow Bank A source chain on Bank B",
+    () => ctx.B.policy.sourceChainAllowed(sourceChainId),
+    () => ctx.B.policy.setSourceChainAllowed(sourceChainId, true, txOptions())
+  );
+  await txIfNeeded(
+    "allow canonical mint asset on Bank B",
+    () => ctx.B.policy.mintAssetAllowed(config.chains.A.canonicalToken),
+    () => ctx.B.policy.setMintAssetAllowed(config.chains.A.canonicalToken, true, txOptions())
+  );
+  await txIfNeeded(
+    "allow voucher collateral asset",
+    () => ctx.B.policy.collateralAssetAllowed(config.chains.B.voucherToken),
+    () => ctx.B.policy.setCollateralAssetAllowed(config.chains.B.voucherToken, true, txOptions())
+  );
+  await txIfNeeded(
+    "allow debt asset",
+    () => ctx.B.policy.debtAssetAllowed(config.chains.B.debtToken),
+    () => ctx.B.policy.setDebtAssetAllowed(config.chains.B.debtToken, true, txOptions())
+  );
+  await txIfNeeded(
+    "set voucher exposure cap",
+    async () => (await ctx.B.policy.voucherExposureCap(config.chains.A.canonicalToken)) === voucherExposureCap,
+    () => ctx.B.policy.setVoucherExposureCap(config.chains.A.canonicalToken, voucherExposureCap, txOptions())
+  );
+  await txIfNeeded(
+    "set collateral cap",
+    async () => (await ctx.B.policy.collateralCap(config.chains.B.voucherToken)) === collateralCap,
+    () => ctx.B.policy.setCollateralCap(config.chains.B.voucherToken, collateralCap, txOptions())
+  );
+  await txIfNeeded(
+    "set debt asset borrow cap",
+    async () => (await ctx.B.policy.debtAssetBorrowCap(config.chains.B.debtToken)) === debtAssetBorrowCap,
+    () => ctx.B.policy.setDebtAssetBorrowCap(config.chains.B.debtToken, debtAssetBorrowCap, txOptions())
+  );
+  await txIfNeeded(
+    "set destination user borrow cap",
+    async () => (await ctx.B.policy.accountBorrowCap(ctx.destinationUserAddress)) === accountBorrowCap,
+    () => ctx.B.policy.setAccountBorrowCap(ctx.destinationUserAddress, accountBorrowCap, txOptions())
+  );
+
+  await txIfNeeded(
+    "reset voucher price",
+    async () => (await ctx.B.oracle.assetPriceE18(config.chains.B.voucherToken)) === initialVoucherPrice,
+    () => ctx.B.oracle.setPrice(config.chains.B.voucherToken, initialVoucherPrice, txOptions())
+  );
+  await txIfNeeded(
+    "reset debt price",
+    async () => (await ctx.B.oracle.assetPriceE18(config.chains.B.debtToken)) === debtPrice,
+    () => ctx.B.oracle.setPrice(config.chains.B.debtToken, debtPrice, txOptions())
+  );
+  await txIfNeeded(
+    "configure lending oracle",
+    async () => (await ctx.B.lendingPoolAdmin.valuationOracle()).toLowerCase() === config.chains.B.oracle.toLowerCase(),
+    () => ctx.B.lendingPoolAdmin.setValuationOracle(config.chains.B.oracle, txOptions())
+  );
+  await txIfNeeded(
+    "configure collateral factor",
+    async () => (await ctx.B.lendingPoolAdmin.collateralFactorBps()) === collateralFactorBps,
+    () => ctx.B.lendingPoolAdmin.setCollateralFactor(collateralFactorBps, txOptions())
+  );
+  await txIfNeeded(
+    "configure collateral haircut",
+    async () => (await ctx.B.lendingPoolAdmin.collateralHaircutBps()) === collateralHaircutBps,
+    () => ctx.B.lendingPoolAdmin.setCollateralHaircut(collateralHaircutBps, txOptions())
+  );
+  await txIfNeeded(
+    "configure liquidation",
+    async () =>
+      (await ctx.B.lendingPoolAdmin.liquidationCloseFactorBps()) === liquidationCloseFactorBps &&
+      (await ctx.B.lendingPoolAdmin.liquidationBonusBps()) === liquidationBonusBps,
+    () => ctx.B.lendingPoolAdmin.setLiquidationConfig(liquidationCloseFactorBps, liquidationBonusBps, txOptions())
+  );
+  await txIfNeeded(
+    "grant liquidator role",
+    async () => ctx.B.lendingPoolAdmin.hasRole(await ctx.B.lendingPoolAdmin.LIQUIDATOR_ROLE(), ctx.liquidatorAddress),
+    async () => ctx.B.lendingPoolAdmin.grantRole(await ctx.B.lendingPoolAdmin.LIQUIDATOR_ROLE(), ctx.liquidatorAddress, txOptions())
+  );
+  await txIfNeeded(
+    "fund Bank B lending pool",
+    async () => (await ctx.B.debtAdmin.balanceOf(config.chains.B.lendingPool)) >= poolLiquidity,
+    async () =>
+      ctx.B.debtAdmin.mint(
+        config.chains.B.lendingPool,
+        poolLiquidity - (await ctx.B.debtAdmin.balanceOf(config.chains.B.lendingPool)),
+        txOptions()
+      )
+  );
+  await txIfNeeded(
+    "fund liquidator",
+    async () => (await ctx.B.debtAdmin.balanceOf(ctx.liquidatorAddress)) >= liquidatorDebtBalance,
+    async () =>
+      ctx.B.debtAdmin.mint(
+        ctx.liquidatorAddress,
+        liquidatorDebtBalance - (await ctx.B.debtAdmin.balanceOf(ctx.liquidatorAddress)),
+        txOptions()
+      )
+  );
+}
+
+async function readConnectionStates(ctx, sourceConnectionId, destinationConnectionId) {
+  const [source, destination] = await Promise.all([
+    ctx.A.connectionKeeper.connection(sourceConnectionId),
+    ctx.B.connectionKeeper.connection(destinationConnectionId),
   ]);
+  return {
+    source,
+    destination,
+    sourceState: Number(source.state),
+    destinationState: Number(destination.state),
+    sourceStateName: stateName(CONNECTION_STATE, source.state),
+    destinationStateName: stateName(CONNECTION_STATE, destination.state),
+  };
+}
 
-  let connectionHandshake = { reused: false };
-  if (sourceConnectionOpen && destinationConnectionOpen) {
-    connectionHandshake = { reused: true };
-  } else if (!sourceConnectionOpen && !destinationConnectionOpen) {
-    connectionHandshake = {
+async function readChannelStates(ctx, sourceChannelId, destinationChannelId) {
+  const [source, destination] = await Promise.all([
+    ctx.A.channelKeeper.channel(sourceChannelId),
+    ctx.B.channelKeeper.channel(destinationChannelId),
+  ]);
+  return {
+    source,
+    destination,
+    sourceState: Number(source.state),
+    destinationState: Number(destination.state),
+    sourceStateName: stateName(CHANNEL_STATE, source.state),
+    destinationStateName: stateName(CHANNEL_STATE, destination.state),
+  };
+}
+
+async function currentConnectionProof({
+  provider,
+  lightClient,
+  keeper,
+  keeperAddress,
+  connectionId,
+  sourceChainId,
+}) {
+  const proofAnchor = await trustCurrentHeaderForProof({ lightClient, provider, sourceChainId });
+  return {
+    height: proofAnchor.height,
+    proof: await buildConnectionCommitmentProof({
+      provider,
+      keeper,
+      keeperAddress,
+      connectionId,
+      sourceChainId,
+      trustedHeight: proofAnchor.height,
+      stateRoot: proofAnchor.header.headerUpdate.stateRoot,
+    }),
+  };
+}
+
+async function currentChannelProof({
+  provider,
+  lightClient,
+  keeper,
+  keeperAddress,
+  channelId,
+  sourceChainId,
+}) {
+  const proofAnchor = await trustCurrentHeaderForProof({ lightClient, provider, sourceChainId });
+  return {
+    height: proofAnchor.height,
+    proof: await buildChannelCommitmentProof({
+      provider,
+      keeper,
+      keeperAddress,
+      channelId,
+      sourceChainId,
+      trustedHeight: proofAnchor.height,
+      stateRoot: proofAnchor.header.headerUpdate.stateRoot,
+    }),
+  };
+}
+
+function cannotRepairHandshake(kind, states) {
+  throw new Error(
+    `V2 ${kind} handshake is partially open in an unsupported state: ` +
+      `source=${states.sourceStateName}, destination=${states.destinationStateName}. ` +
+      "Use Fresh Reset if this deployment was interrupted across incompatible steps."
+  );
+}
+
+async function openOrRepairConnectionHandshake(config, ctx, params) {
+  const {
+    sourceChainId,
+    destinationChainId,
+    sourceConnectionId,
+    destinationConnectionId,
+    prefix,
+  } = params;
+
+  let states = await readConnectionStates(ctx, sourceConnectionId, destinationConnectionId);
+  if (states.sourceState === CONNECTION_STATE.Open && states.destinationState === CONNECTION_STATE.Open) {
+    return { reused: true };
+  }
+
+  if (
+    states.sourceState === CONNECTION_STATE.Uninitialized &&
+    states.destinationState === CONNECTION_STATE.Uninitialized
+  ) {
+    return {
       reused: false,
       ...(await openProofCheckedConnection({
         sourceProvider: ctx.providerA,
@@ -457,12 +784,126 @@ async function openOrReuseHandshake(config, ctx) {
         destinationChainId,
         sourceConnectionId,
         destinationConnectionId,
-        prefix: constants.connectionPrefix,
+        prefix,
       })),
     };
-  } else {
-    throw new Error("V2 connection handshake is partially open. Redeploy v2 or finish recovery before running demo:v2.");
   }
+
+  console.log(
+    `[v2 demo] repairing connection handshake source=${states.sourceStateName} destination=${states.destinationStateName}`
+  );
+  const result = {
+    reused: false,
+    repaired: true,
+    sourceStartState: states.sourceStateName,
+    destinationStartState: states.destinationStateName,
+    repairSteps: [],
+  };
+
+  if (states.sourceState === CONNECTION_STATE.Init && states.destinationState === CONNECTION_STATE.Uninitialized) {
+    const sourceInit = await currentConnectionProof({
+      provider: ctx.providerA,
+      lightClient: ctx.B.lightClient,
+      keeper: ctx.A.connectionKeeper,
+      keeperAddress: config.chains.A.connectionKeeper,
+      connectionId: sourceConnectionId,
+      sourceChainId,
+    });
+    const receipt = await txStep("repair connection open try on destination", () =>
+      ctx.B.connectionKeeper.connectionOpenTry(
+        destinationConnectionId,
+        chainClientId(sourceChainId),
+        chainClientId(destinationChainId),
+        sourceConnectionId,
+        0,
+        prefix,
+        config.chains.A.connectionKeeper,
+        sourceInit.proof,
+        txOptions()
+      )
+    );
+    result.repairSteps.push({
+      step: "destination-try",
+      txHash: receipt.hash,
+      proofHeight: sourceInit.height.toString(),
+      blockNumber: BigInt(receipt.blockNumber).toString(),
+    });
+    states = await readConnectionStates(ctx, sourceConnectionId, destinationConnectionId);
+  }
+
+  if (states.sourceState === CONNECTION_STATE.Init && states.destinationState === CONNECTION_STATE.TryOpen) {
+    const destinationTry = await currentConnectionProof({
+      provider: ctx.providerB,
+      lightClient: ctx.A.lightClient,
+      keeper: ctx.B.connectionKeeper,
+      keeperAddress: config.chains.B.connectionKeeper,
+      connectionId: destinationConnectionId,
+      sourceChainId: destinationChainId,
+    });
+    const receipt = await txStep("repair connection open ack on source", () =>
+      ctx.A.connectionKeeper.connectionOpenAck(
+        sourceConnectionId,
+        destinationConnectionId,
+        config.chains.B.connectionKeeper,
+        destinationTry.proof,
+        txOptions()
+      )
+    );
+    result.repairSteps.push({
+      step: "source-ack",
+      txHash: receipt.hash,
+      proofHeight: destinationTry.height.toString(),
+      blockNumber: BigInt(receipt.blockNumber).toString(),
+    });
+    states = await readConnectionStates(ctx, sourceConnectionId, destinationConnectionId);
+  }
+
+  if (states.sourceState === CONNECTION_STATE.Open && states.destinationState === CONNECTION_STATE.TryOpen) {
+    const sourceOpen = await currentConnectionProof({
+      provider: ctx.providerA,
+      lightClient: ctx.B.lightClient,
+      keeper: ctx.A.connectionKeeper,
+      keeperAddress: config.chains.A.connectionKeeper,
+      connectionId: sourceConnectionId,
+      sourceChainId,
+    });
+    const receipt = await txStep("repair connection open confirm on destination", () =>
+      ctx.B.connectionKeeper.connectionOpenConfirm(
+        destinationConnectionId,
+        config.chains.A.connectionKeeper,
+        sourceOpen.proof,
+        txOptions()
+      )
+    );
+    result.repairSteps.push({
+      step: "destination-confirm",
+      txHash: receipt.hash,
+      proofHeight: sourceOpen.height.toString(),
+      blockNumber: BigInt(receipt.blockNumber).toString(),
+    });
+    states = await readConnectionStates(ctx, sourceConnectionId, destinationConnectionId);
+  }
+
+  if (states.sourceState !== CONNECTION_STATE.Open || states.destinationState !== CONNECTION_STATE.Open) {
+    cannotRepairHandshake("connection", states);
+  }
+
+  result.sourceEndState = states.sourceStateName;
+  result.destinationEndState = states.destinationStateName;
+  return result;
+}
+
+async function openOrRepairChannelHandshake(config, ctx, params) {
+  const {
+    sourceChainId,
+    destinationChainId,
+    sourceConnectionId,
+    destinationConnectionId,
+    sourceChannelId,
+    destinationChannelId,
+    ordering,
+    version,
+  } = params;
 
   const [sourceChannelOpen, destinationChannelOpen] = await Promise.all([
     ctx.A.channelKeeper.isPacketRouteOpenForChannel(
@@ -481,11 +922,16 @@ async function openOrReuseHandshake(config, ctx) {
     ),
   ]);
 
-  let channelHandshake = { reused: false };
+  let states = await readChannelStates(ctx, sourceChannelId, destinationChannelId);
   if (sourceChannelOpen && destinationChannelOpen) {
-    channelHandshake = { reused: true };
-  } else if (!sourceChannelOpen && !destinationChannelOpen) {
-    channelHandshake = {
+    return { reused: true };
+  }
+
+  if (
+    states.sourceState === CHANNEL_STATE.Uninitialized &&
+    states.destinationState === CHANNEL_STATE.Uninitialized
+  ) {
+    return {
       reused: false,
       ...(await openProofCheckedChannel({
         sourceProvider: ctx.providerA,
@@ -504,13 +950,161 @@ async function openOrReuseHandshake(config, ctx) {
         destinationChannelId,
         sourcePort: config.chains.A.transferApp,
         destinationPort: config.chains.B.transferApp,
-        ordering: Number(constants.orderValue),
-        version: constants.channelVersion,
+        ordering,
+        version,
       })),
     };
-  } else {
-    throw new Error("V2 channel handshake is partially open. Redeploy v2 or finish recovery before running demo:v2.");
   }
+
+  console.log(
+    `[v2 demo] repairing channel handshake source=${states.sourceStateName} destination=${states.destinationStateName}`
+  );
+  const result = {
+    reused: false,
+    repaired: true,
+    sourceStartState: states.sourceStateName,
+    destinationStartState: states.destinationStateName,
+    repairSteps: [],
+  };
+
+  if (states.sourceState === CHANNEL_STATE.Init && states.destinationState === CHANNEL_STATE.Uninitialized) {
+    const sourceInit = await currentChannelProof({
+      provider: ctx.providerA,
+      lightClient: ctx.B.lightClient,
+      keeper: ctx.A.channelKeeper,
+      keeperAddress: config.chains.A.channelKeeper,
+      channelId: sourceChannelId,
+      sourceChainId,
+    });
+    const receipt = await txStep("repair channel open try on destination", () =>
+      ctx.B.channelKeeper.channelOpenTry(
+        destinationChannelId,
+        destinationConnectionId,
+        sourceChainId,
+        config.chains.A.transferApp,
+        config.chains.B.transferApp,
+        sourceChannelId,
+        ordering,
+        version,
+        config.chains.A.channelKeeper,
+        sourceInit.proof,
+        txOptions()
+      )
+    );
+    result.repairSteps.push({
+      step: "destination-try",
+      txHash: receipt.hash,
+      proofHeight: sourceInit.height.toString(),
+      blockNumber: BigInt(receipt.blockNumber).toString(),
+    });
+    states = await readChannelStates(ctx, sourceChannelId, destinationChannelId);
+  }
+
+  if (states.sourceState === CHANNEL_STATE.Init && states.destinationState === CHANNEL_STATE.TryOpen) {
+    const destinationTry = await currentChannelProof({
+      provider: ctx.providerB,
+      lightClient: ctx.A.lightClient,
+      keeper: ctx.B.channelKeeper,
+      keeperAddress: config.chains.B.channelKeeper,
+      channelId: destinationChannelId,
+      sourceChainId: destinationChainId,
+    });
+    const receipt = await txStep("repair channel open ack on source", () =>
+      ctx.A.channelKeeper.channelOpenAck(
+        sourceChannelId,
+        destinationChannelId,
+        config.chains.B.channelKeeper,
+        destinationTry.proof,
+        txOptions()
+      )
+    );
+    result.repairSteps.push({
+      step: "source-ack",
+      txHash: receipt.hash,
+      proofHeight: destinationTry.height.toString(),
+      blockNumber: BigInt(receipt.blockNumber).toString(),
+    });
+    states = await readChannelStates(ctx, sourceChannelId, destinationChannelId);
+  }
+
+  if (states.sourceState === CHANNEL_STATE.Open && states.destinationState === CHANNEL_STATE.TryOpen) {
+    const sourceOpen = await currentChannelProof({
+      provider: ctx.providerA,
+      lightClient: ctx.B.lightClient,
+      keeper: ctx.A.channelKeeper,
+      keeperAddress: config.chains.A.channelKeeper,
+      channelId: sourceChannelId,
+      sourceChainId,
+    });
+    const receipt = await txStep("repair channel open confirm on destination", () =>
+      ctx.B.channelKeeper.channelOpenConfirm(
+        destinationChannelId,
+        config.chains.A.channelKeeper,
+        sourceOpen.proof,
+        txOptions()
+      )
+    );
+    result.repairSteps.push({
+      step: "destination-confirm",
+      txHash: receipt.hash,
+      proofHeight: sourceOpen.height.toString(),
+      blockNumber: BigInt(receipt.blockNumber).toString(),
+    });
+    states = await readChannelStates(ctx, sourceChannelId, destinationChannelId);
+  }
+
+  const [sourceRouteOpenAfter, destinationRouteOpenAfter] = await Promise.all([
+    ctx.A.channelKeeper.isPacketRouteOpenForChannel(
+      destinationChainId,
+      config.chains.B.transferApp,
+      config.chains.A.transferApp,
+      sourceChannelId,
+      destinationChannelId
+    ),
+    ctx.B.channelKeeper.isPacketRouteOpenForChannel(
+      sourceChainId,
+      config.chains.A.transferApp,
+      config.chains.B.transferApp,
+      destinationChannelId,
+      sourceChannelId
+    ),
+  ]);
+  if (!sourceRouteOpenAfter || !destinationRouteOpenAfter) {
+    cannotRepairHandshake("channel", states);
+  }
+
+  result.sourceEndState = states.sourceStateName;
+  result.destinationEndState = states.destinationStateName;
+  return result;
+}
+
+async function openOrReuseHandshake(config, ctx) {
+  const sourceChainId = chainId(config, "A");
+  const destinationChainId = chainId(config, "B");
+  const constants = config.constants;
+  const sourceConnectionId = constants.sourceConnectionId;
+  const destinationConnectionId = constants.destinationConnectionId;
+  const sourceChannelId = constants.sourceChannelId;
+  const destinationChannelId = constants.destinationChannelId;
+
+  const connectionHandshake = await openOrRepairConnectionHandshake(config, ctx, {
+    sourceChainId,
+    destinationChainId,
+    sourceConnectionId,
+    destinationConnectionId,
+    prefix: constants.connectionPrefix,
+  });
+
+  const channelHandshake = await openOrRepairChannelHandshake(config, ctx, {
+    sourceChainId,
+    destinationChainId,
+    sourceConnectionId,
+    destinationConnectionId,
+    sourceChannelId,
+    destinationChannelId,
+    ordering: Number(constants.orderValue),
+    version: constants.channelVersion,
+  });
 
   config.status = {
     ...(config.status || {}),
@@ -619,8 +1213,8 @@ function baseTrace(config, ctx) {
 async function writeTracePatch(config, ctx, patch, latestOperation) {
   const previous = await readExistingTrace();
   const trace = {
-    ...baseTrace(config, ctx),
     ...previous,
+    ...baseTrace(config, ctx),
     generatedAt: new Date().toISOString(),
   };
   for (const [key, value] of Object.entries(patch)) {
@@ -640,6 +1234,17 @@ async function writeTracePatch(config, ctx, patch, latestOperation) {
   trace.latestOperation = latestOperation;
   await writeTrace(trace);
   return trace;
+}
+
+function handshakeTrace(config, connectionHandshake, channelHandshake) {
+  return {
+    connection: connectionHandshake,
+    channel: channelHandshake,
+    sourceConnectionId: config.constants.sourceConnectionId,
+    destinationConnectionId: config.constants.destinationConnectionId,
+    sourceChannelId: config.constants.sourceChannelId,
+    destinationChannelId: config.constants.destinationChannelId,
+  };
 }
 
 function amountFromTrace(value, fallback) {
@@ -662,6 +1267,12 @@ async function prepareStepContext() {
 async function ensureForwardPacket(config, ctx, sourceChainId, destinationChainId) {
   const trace = await readExistingTrace();
   if (trace.forward?.packetId && trace.forward?.sequence && trace.forward?.commitHeight) {
+    const committed = await ctx.A.packetStore.committedPacket(trace.forward.packetId).catch(() => false);
+    if (!committed) {
+      await runV2DemoStep("lock", { prepared: { config, ctx, sourceChainId, destinationChainId } });
+      return ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
+    }
+
     const amount = amountFromTrace(trace.forward, FORWARD_AMOUNT);
     return {
       trace,
@@ -683,6 +1294,21 @@ async function ensureForwardPacket(config, ctx, sourceChainId, destinationChainI
 
   await runV2DemoStep("lock", { prepared: { config, ctx, sourceChainId, destinationChainId } });
   return ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
+}
+
+async function ensureForwardPacketReceived(config, ctx, sourceChainId, destinationChainId) {
+  await openOrReuseHandshake(config, ctx);
+  let forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
+  const received = await ctx.B.packetHandler.packetReceipts(forward.packetId).catch(() => false);
+  if (received) return forward;
+
+  await runV2DemoStep("proveForwardMint", { prepared: { config, ctx, sourceChainId, destinationChainId } });
+  forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
+  const receivedAfterProof = await ctx.B.packetHandler.packetReceipts(forward.packetId);
+  if (!receivedAfterProof) {
+    throw new Error("Forward packet is still not received, so replay cannot be tested.");
+  }
+  return forward;
 }
 
 async function ensureReversePacket(config, ctx, sourceChainId, destinationChainId) {
@@ -730,6 +1356,31 @@ async function trustReverseHeader(config, ctx, destinationChainId, commitHeight)
   });
 }
 
+async function trustCurrentHeaderForProof({ lightClient, provider, sourceChainId, minimumHeight = 0n }) {
+  const targetHeight = BigInt(await provider.getBlockNumber());
+  if (targetHeight < minimumHeight) {
+    throw new Error(
+      `Current source head ${targetHeight.toString()} is below required proof height ${minimumHeight.toString()}.`
+    );
+  }
+
+  const header = await trustRemoteHeaderAt({
+    lightClient,
+    provider,
+    sourceChainId,
+    targetHeight,
+    validatorEpoch: 1n,
+  });
+
+  const trustedHeight = BigInt(header.headerUpdate.height);
+  if (trustedHeight < minimumHeight) {
+    throw new Error(
+      `Trusted source height ${trustedHeight.toString()} is below required proof height ${minimumHeight.toString()}.`
+    );
+  }
+  return { height: trustedHeight, header };
+}
+
 function isKnownReplay(error) {
   const text = shortError(error);
   return text.includes("PACKET_ALREADY_RECEIVED") || text.includes("PACKET_ALREADY_ACKNOWLEDGED");
@@ -746,12 +1397,7 @@ export async function runV2DemoStep(action, options = {}) {
   if (action === "lock") {
     setPhase("step-lock-open-handshake");
     const { connectionHandshake, channelHandshake } = await openOrReuseHandshake(config, ctx);
-    await txStep("step allow destination user", () =>
-      ctx.B.policy.setAccountAllowed(ctx.destinationUserAddress, true, txOptions())
-    );
-    await txStep("step reset voucher price", () =>
-      ctx.B.oracle.setPrice(config.chains.B.voucherToken, BigInt(config.seed.initialVoucherPriceE18), txOptions())
-    );
+    await ensureRiskSeeded(config, ctx);
     await txStep("step approve escrow", () =>
       ctx.A.canonicalTokenUser.approve(config.chains.A.escrowVault, FORWARD_AMOUNT + DENIED_AMOUNT, txOptions())
     );
@@ -777,12 +1423,7 @@ export async function runV2DemoStep(action, options = {}) {
       ctx,
       {
         handshake: {
-          connection: connectionHandshake,
-          channel: channelHandshake,
-          sourceConnectionId: config.constants.sourceConnectionId,
-          destinationConnectionId: config.constants.destinationConnectionId,
-          sourceChannelId: config.constants.sourceChannelId,
-          destinationChannelId: config.constants.destinationChannelId,
+          ...handshakeTrace(config, connectionHandshake, channelHandshake),
         },
         forward: {
           operation: "Bank A escrow lock -> Bank B voucher mint",
@@ -815,7 +1456,7 @@ export async function runV2DemoStep(action, options = {}) {
       ctx,
       {
         forward: {
-          trustedHeight: forward.commitHeight.toString(),
+          trustedHeight: header.headerUpdate.height.toString(),
           trustedHeaderHash: header.headerUpdate.headerHash,
           trustedStateRoot: header.headerUpdate.stateRoot,
         },
@@ -823,24 +1464,30 @@ export async function runV2DemoStep(action, options = {}) {
       {
         phase: "forward-header-trusted",
         label: action === "finalizeForwardHeader" ? "Read finalized Besu header" : "Updated Bank B Besu light client",
-        summary: `Bank B now trusts Bank A Besu header #${forward.commitHeight}.`,
+        summary: `Bank B now trusts Bank A Besu header #${header.headerUpdate.height.toString()}.`,
       }
     );
-    console.log(`Trusted Bank A header #${forward.commitHeight} on Bank B`);
+    console.log(`Trusted Bank A header #${header.headerUpdate.height.toString()} on Bank B`);
     return trace;
   }
 
   if (action === "proveForwardMint") {
     setPhase("step-prove-forward");
+    const { connectionHandshake, channelHandshake } = await openOrReuseHandshake(config, ctx);
     const forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
-    const header = await trustForwardHeader(config, ctx, sourceChainId, forward.commitHeight);
+    const proofAnchor = await trustCurrentHeaderForProof({
+      lightClient: ctx.B.lightClient,
+      provider: ctx.providerA,
+      sourceChainId,
+      minimumHeight: forward.commitHeight,
+    });
     const proofs = await buildPacketProofs({
       provider: ctx.providerA,
       packetStoreAddress: config.chains.A.packetStore,
       packet: forward.packet,
       sourceChainId,
-      trustedHeight: forward.commitHeight,
-      stateRoot: header.headerUpdate.stateRoot,
+      trustedHeight: proofAnchor.height,
+      stateRoot: proofAnchor.header.headerUpdate.stateRoot,
     });
 
     let recvReceipt = null;
@@ -855,12 +1502,11 @@ export async function runV2DemoStep(action, options = {}) {
     const receiveHeight = recvReceipt ? BigInt(recvReceipt.blockNumber) : BigInt(await ctx.providerB.getBlockNumber());
     const ackHash = await ctx.B.packetHandler.acknowledgementHashes(forward.packetId);
     if (ackHash !== ethers.ZeroHash) {
-      const ackHeader = await trustRemoteHeaderAt({
+      const ackAnchor = await trustCurrentHeaderForProof({
         lightClient: ctx.A.lightClient,
         provider: ctx.providerB,
         sourceChainId: destinationChainId,
-        targetHeight: receiveHeight,
-        validatorEpoch: 1n,
+        minimumHeight: receiveHeight,
       });
       const acknowledgement = ethers.solidityPacked(["string", "bytes32"], ["ok:", forward.packetId]);
       const { acknowledgementSlot, proof: ackProof } = await buildAcknowledgementProof({
@@ -869,8 +1515,8 @@ export async function runV2DemoStep(action, options = {}) {
         packetIdValue: forward.packetId,
         acknowledgementHash: ackHash,
         sourceChainId: destinationChainId,
-        trustedHeight: receiveHeight,
-        stateRoot: ackHeader.headerUpdate.stateRoot,
+        trustedHeight: ackAnchor.height,
+        stateRoot: ackAnchor.header.headerUpdate.stateRoot,
       });
       try {
         await txStep("step acknowledge forward packet", () =>
@@ -891,17 +1537,21 @@ export async function runV2DemoStep(action, options = {}) {
         config,
         ctx,
         {
+          handshake: {
+            ...handshakeTrace(config, connectionHandshake, channelHandshake),
+          },
           forward: {
             packetLeafSlot: proofs.leafSlot,
             packetPathSlot: proofs.pathSlot,
             receiveTxHash: recvReceipt?.hash,
             receiveHeight: receiveHeight.toString(),
-            trustedHeight: forward.commitHeight.toString(),
-            trustedHeaderHash: header.headerUpdate.headerHash,
-            trustedStateRoot: header.headerUpdate.stateRoot,
+            trustedHeight: proofAnchor.height.toString(),
+            trustedHeaderHash: proofAnchor.header.headerUpdate.headerHash,
+            trustedStateRoot: proofAnchor.header.headerUpdate.stateRoot,
             destinationAckHash: ackHash,
             sourceAckHash,
             acknowledgementSlot,
+            acknowledgementTrustedHeight: ackAnchor.height.toString(),
             voucherBalanceAfterReceive: units(voucherBalance),
             proofMode: "storage",
           },
@@ -920,6 +1570,7 @@ export async function runV2DemoStep(action, options = {}) {
 
   if (action === "depositCollateral") {
     setPhase("step-deposit-collateral");
+    await ensureRiskSeeded(config, ctx);
     const balance = await ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress);
     if (balance < FORWARD_AMOUNT) throw new Error("Bank B user needs a proven voucher before depositing collateral.");
     const currentCollateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
@@ -946,9 +1597,19 @@ export async function runV2DemoStep(action, options = {}) {
 
   if (action === "borrow") {
     setPhase("step-borrow");
+    await ensureRiskSeeded(config, ctx);
     const debt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
     if (debt < BORROW_AMOUNT) {
-      await txStep("step borrow debt asset", () => ctx.B.lendingPoolUser.borrow(BORROW_AMOUNT - debt, txOptions()));
+      const borrowDelta = BORROW_AMOUNT - debt;
+      const availableBeforeBorrow = await ctx.B.lendingPoolAdmin.availableToBorrow(ctx.destinationUserAddress);
+      if (availableBeforeBorrow < borrowDelta) {
+        const collateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
+        throw new Error(
+          `BORROW_LIMIT: available ${units(availableBeforeBorrow)} bCASH, need ${units(borrowDelta)}; ` +
+            `collateral=${units(collateral)} vA, existingDebt=${units(debt)} bCASH.`
+        );
+      }
+      await txStep("step borrow debt asset", () => ctx.B.lendingPoolUser.borrow(borrowDelta, txOptions()));
     }
     const debtAfterBorrow = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
     const healthBeforeShock = await ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress);
@@ -1072,7 +1733,7 @@ export async function runV2DemoStep(action, options = {}) {
       ctx,
       {
         reverse: {
-          trustedHeight: reverse.commitHeight.toString(),
+          trustedHeight: header.headerUpdate.height.toString(),
           trustedHeaderHash: header.headerUpdate.headerHash,
           trustedStateRoot: header.headerUpdate.stateRoot,
         },
@@ -1080,22 +1741,28 @@ export async function runV2DemoStep(action, options = {}) {
       {
         phase: "reverse-header-trusted",
         label: action === "finalizeReverseHeader" ? "Read finalized Bank B header" : "Updated Bank A Besu light client",
-        summary: `Bank A now trusts Bank B Besu header #${reverse.commitHeight}.`,
+        summary: `Bank A now trusts Bank B Besu header #${header.headerUpdate.height.toString()}.`,
       }
     );
   }
 
   if (action === "proveReverseUnlock") {
     setPhase("step-prove-reverse");
+    await openOrReuseHandshake(config, ctx);
     const reverse = await ensureReversePacket(config, ctx, sourceChainId, destinationChainId);
-    const header = await trustReverseHeader(config, ctx, destinationChainId, reverse.commitHeight);
+    const proofAnchor = await trustCurrentHeaderForProof({
+      lightClient: ctx.A.lightClient,
+      provider: ctx.providerB,
+      sourceChainId: destinationChainId,
+      minimumHeight: reverse.commitHeight,
+    });
     const proofs = await buildPacketProofs({
       provider: ctx.providerB,
       packetStoreAddress: config.chains.B.packetStore,
       packet: reverse.packet,
       sourceChainId: destinationChainId,
-      trustedHeight: reverse.commitHeight,
-      stateRoot: header.headerUpdate.stateRoot,
+      trustedHeight: proofAnchor.height,
+      stateRoot: proofAnchor.header.headerUpdate.stateRoot,
     });
     let recvReceipt = null;
     try {
@@ -1115,9 +1782,9 @@ export async function runV2DemoStep(action, options = {}) {
           packetLeafSlot: proofs.leafSlot,
           packetPathSlot: proofs.pathSlot,
           receiveTxHash: recvReceipt?.hash,
-          trustedHeight: reverse.commitHeight.toString(),
-          trustedHeaderHash: header.headerUpdate.headerHash,
-          trustedStateRoot: header.headerUpdate.stateRoot,
+          trustedHeight: proofAnchor.height.toString(),
+          trustedHeaderHash: proofAnchor.header.headerUpdate.headerHash,
+          trustedStateRoot: proofAnchor.header.headerUpdate.stateRoot,
           finalSourceBalance: units(finalSourceBalance),
           finalEscrowed: units(finalEscrowed),
           proofMode: "storage",
@@ -1133,15 +1800,20 @@ export async function runV2DemoStep(action, options = {}) {
 
   if (action === "replayForward") {
     setPhase("step-replay-forward");
-    const forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
-    const header = await trustForwardHeader(config, ctx, sourceChainId, forward.commitHeight);
+    const forward = await ensureForwardPacketReceived(config, ctx, sourceChainId, destinationChainId);
+    const proofAnchor = await trustCurrentHeaderForProof({
+      lightClient: ctx.B.lightClient,
+      provider: ctx.providerA,
+      sourceChainId,
+      minimumHeight: forward.commitHeight,
+    });
     const proofs = await buildPacketProofs({
       provider: ctx.providerA,
       packetStoreAddress: config.chains.A.packetStore,
       packet: forward.packet,
       sourceChainId,
-      trustedHeight: forward.commitHeight,
-      stateRoot: header.headerUpdate.stateRoot,
+      trustedHeight: proofAnchor.height,
+      stateRoot: proofAnchor.header.headerUpdate.stateRoot,
     });
     try {
       await ctx.B.packetHandler.recvPacketFromStorageProof.staticCall(forward.packet, proofs.leafProof, proofs.pathProof);
@@ -1152,7 +1824,13 @@ export async function runV2DemoStep(action, options = {}) {
     return writeTracePatch(
       config,
       ctx,
-      { security: { replayBlocked: true, replayCheckedAt: new Date().toISOString() } },
+      {
+        security: {
+          replayBlocked: true,
+          replayCheckedAt: new Date().toISOString(),
+          replayProofHeight: proofAnchor.height.toString(),
+        },
+      },
       {
         phase: "replay-blocked",
         label: "Replay rejected by v2 packet receipt",
@@ -1182,9 +1860,222 @@ export async function runV2DemoStep(action, options = {}) {
     );
   }
 
-  if (action === "freezeClient" || action === "recoverClient") {
-    throw new Error(
-      "This v2 UI action is intentionally not wired yet. The v2 light client freezes on conflicting native headers, but explicit UI recovery is a later migration step."
+  if (action === "freezeClient") {
+    setPhase("step-freeze-client");
+    const existingStatus = Number(await ctx.B.lightClient.status(sourceChainId));
+    if (existingStatus === 2) {
+      const evidence = await ctx.B.lightClient.frozenEvidence(sourceChainId);
+      return writeTracePatch(
+        config,
+        ctx,
+        {
+          misbehaviour: {
+            frozen: true,
+            recovered: false,
+            sourceChainId: sourceChainId.toString(),
+            destinationChainId: destinationChainId.toString(),
+            height: evidence.height.toString(),
+            trustedHeaderHash: evidence.trustedHeaderHash,
+            conflictingHeaderHash: evidence.conflictingHeaderHash,
+            evidenceHash: evidence.evidenceHash,
+            detectedAt: evidence.detectedAt.toString(),
+          },
+          security: {
+            frozen: true,
+          },
+        },
+        {
+          phase: "client-frozen",
+          label: "Submitted conflicting native Besu header",
+          summary: `Bank B already has Bank A frozen at height ${evidence.height.toString()}.`,
+        }
+      );
+    }
+
+    let trustedHeight = BigInt(await ctx.B.lightClient.latestTrustedHeight(sourceChainId));
+    if (trustedHeight === 0n) {
+      trustedHeight = BigInt(await ctx.providerA.getBlockNumber());
+      if (trustedHeight === 0n) {
+        throw new Error("Bank A has not produced any non-genesis blocks yet, so there is no header to trust or freeze.");
+      }
+      await trustForwardHeader(config, ctx, sourceChainId, trustedHeight);
+    }
+
+    const trustedHeader = await ctx.B.lightClient.trustedHeader(sourceChainId, trustedHeight);
+    if (!trustedHeader.exists) {
+      throw new Error(`Bank B does not yet trust a Bank A header at height ${trustedHeight.toString()}.`);
+    }
+
+    const conflict = await buildConflictingBesuHeaderUpdate({
+      provider: ctx.providerA,
+      chainKey: "A",
+      blockTag: ethers.toQuantity(trustedHeight),
+      sourceChainId,
+      validatorEpoch: 1n,
+      conflictStateRoot: ethers.keccak256(
+        ethers.toUtf8Bytes(`v2-demo-conflict:${trustedHeight.toString()}:${Date.now().toString()}`)
+      ),
+    });
+
+    if (conflict.headerUpdate.headerHash === trustedHeader.headerHash) {
+      throw new Error("Conflicting header generation produced the trusted hash; conflict evidence is invalid.");
+    }
+
+    try {
+      await ctx.B.lightClient.updateClient.staticCall(conflict.headerUpdate, conflict.validatorSet, txOptions());
+    } catch (error) {
+      const text = shortError(error);
+      if (text.includes("HEIGHT_NOT_FORWARD")) {
+        throw new Error(
+          "The deployed v2 light client predates the native misbehaviour-freeze patch. Redeploy v2 so conflicting trusted heights freeze instead of failing as stale headers."
+        );
+      }
+      throw error;
+    }
+
+    await txStep("step submit conflicting header update", () =>
+      ctx.B.lightClient.updateClient(conflict.headerUpdate, conflict.validatorSet, txOptions())
+    );
+
+    const [frozenStatus, evidence] = await Promise.all([
+      ctx.B.lightClient.status(sourceChainId),
+      ctx.B.lightClient.frozenEvidence(sourceChainId),
+    ]);
+
+    if (Number(frozenStatus) !== 2) {
+      throw new Error("Conflicting native header was submitted, but the Bank B light client did not freeze.");
+    }
+
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        misbehaviour: {
+          frozen: true,
+          recovered: false,
+          sourceChainId: sourceChainId.toString(),
+          destinationChainId: destinationChainId.toString(),
+          height: evidence.height.toString(),
+          trustedHeaderHash: evidence.trustedHeaderHash,
+          conflictingHeaderHash: evidence.conflictingHeaderHash,
+          evidenceHash: evidence.evidenceHash,
+          detectedAt: evidence.detectedAt.toString(),
+        },
+        security: {
+          frozen: true,
+        },
+      },
+      {
+        phase: "client-frozen",
+        label: "Submitted conflicting native Besu header",
+        summary: `Bank B froze its Bank A client at height ${evidence.height.toString()} after conflicting finalized-header evidence.`,
+      }
+    );
+  }
+
+  if (action === "recoverClient") {
+    setPhase("step-recover-client");
+    const existingStatus = Number(await ctx.B.lightClient.status(sourceChainId));
+    if (existingStatus === 1) {
+      return writeTracePatch(
+        config,
+        ctx,
+        {
+          misbehaviour: {
+            frozen: false,
+            recovered: true,
+          },
+          security: {
+            frozen: false,
+          },
+        },
+        {
+          phase: "client-recovered",
+          label: "Recovered native Besu light client",
+          summary: "Bank B client for Bank A is already active.",
+        }
+      );
+    }
+
+    const evidence = await ctx.B.lightClient.frozenEvidence(sourceChainId);
+    if (existingStatus !== 2 && existingStatus !== 3) {
+      throw new Error("Bank B client for Bank A is not frozen, so there is no recovery action to run.");
+    }
+    if (evidence.evidenceHash === ethers.ZeroHash) {
+      throw new Error("The Bank B client is not carrying frozen evidence, so recovery cannot derive its recovery point.");
+    }
+
+    if (existingStatus === 2) {
+      await txStep("step begin client recovery", () => ctx.B.lightClient.beginRecovery(sourceChainId, txOptions()));
+    }
+
+    let recoveryHeight = BigInt(await ctx.providerA.getBlockNumber());
+    if (recoveryHeight <= evidence.height) {
+      await txStep("step advance Bank A recovery head", () =>
+        ctx.A.policy.setAccountAllowed(ctx.sourceUserAddress, true, txOptions())
+      );
+      recoveryHeight = BigInt(await ctx.providerA.getBlockNumber());
+    }
+    if (recoveryHeight <= evidence.height) {
+      throw new Error(
+        `Bank A did not advance past frozen height ${evidence.height.toString()}, so a new recovery trust anchor could not be created.`
+      );
+    }
+
+    const recoveryHeader = await buildBesuHeaderUpdate({
+      provider: ctx.providerA,
+      blockTag: ethers.toQuantity(recoveryHeight),
+      sourceChainId,
+      validatorEpoch: 1n,
+    });
+
+    await txStep("step recover native Besu client", () =>
+      ctx.B.lightClient.recoverClient(
+        sourceChainId,
+        trustedAnchorFromHeader(recoveryHeader),
+        recoveryHeader.validatorSet,
+        txOptions()
+      )
+    );
+
+    const [recoveredStatus, latestTrustedHeight, clearedEvidence] = await Promise.all([
+      ctx.B.lightClient.status(sourceChainId),
+      ctx.B.lightClient.latestTrustedHeight(sourceChainId),
+      ctx.B.lightClient.frozenEvidence(sourceChainId),
+    ]);
+
+    if (Number(recoveredStatus) !== 1) {
+      throw new Error("Bank B light client did not return to Active after recovery.");
+    }
+    if (latestTrustedHeight !== recoveryHeader.headerUpdate.height) {
+      throw new Error("Recovered trusted height does not match the recovery trust anchor.");
+    }
+    if (clearedEvidence.evidenceHash !== ethers.ZeroHash) {
+      throw new Error("Frozen evidence was not cleared after recovery.");
+    }
+
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        misbehaviour: {
+          frozen: false,
+          recovered: true,
+          recoveredAtHeight: recoveryHeader.headerUpdate.height.toString(),
+          recoveredHeaderHash: recoveryHeader.headerUpdate.headerHash,
+          recoveredStateRoot: recoveryHeader.headerUpdate.stateRoot,
+          previousEvidenceHeight: evidence.height.toString(),
+          previousEvidenceHash: evidence.evidenceHash,
+        },
+        security: {
+          frozen: false,
+        },
+      },
+      {
+        phase: "client-recovered",
+        label: "Recovered native Besu light client",
+        summary: `Bank B re-anchored its Bank A client at height ${recoveryHeader.headerUpdate.height.toString()} and returned it to Active.`,
+      }
     );
   }
 
@@ -1213,12 +2104,7 @@ async function main() {
   const { connectionHandshake, channelHandshake } = await openOrReuseHandshake(config, ctx);
 
   setPhase("prepare-forward-policy-and-allowance");
-  await txStep("allow destination user", () =>
-    ctx.B.policy.setAccountAllowed(ctx.destinationUserAddress, true, txOptions())
-  );
-  await txStep("reset voucher price", () =>
-    ctx.B.oracle.setPrice(config.chains.B.voucherToken, BigInt(config.seed.initialVoucherPriceE18), txOptions())
-  );
+  await ensureRiskSeeded(config, ctx);
   await txStep("approve escrow spend", () =>
     ctx.A.canonicalTokenUser.approve(config.chains.A.escrowVault, FORWARD_AMOUNT + DENIED_AMOUNT, txOptions())
   );
@@ -1248,12 +2134,13 @@ async function main() {
     targetHeight: approvedCommitHeight,
     validatorEpoch: 1n,
   });
+  const approvedProofHeight = approvedHeader.headerUpdate.height;
   const approvedProofs = await buildPacketProofs({
     provider: ctx.providerA,
     packetStoreAddress: config.chains.A.packetStore,
     packet: approvedPacket,
     sourceChainId,
-    trustedHeight: approvedCommitHeight,
+    trustedHeight: approvedProofHeight,
     stateRoot: approvedHeader.headerUpdate.stateRoot,
   });
   const approvedRecvReceipt = await txStep("receive forward packet", () =>
@@ -1276,6 +2163,7 @@ async function main() {
     targetHeight: ackHeight,
     validatorEpoch: 1n,
   });
+  const acknowledgementProofHeight = ackHeader.headerUpdate.height;
   const acknowledgement = ethers.solidityPacked(["string", "bytes32"], ["ok:", approvedPacketId]);
   const { acknowledgementSlot, proof: ackProof } = await buildAcknowledgementProof({
     provider: ctx.providerB,
@@ -1283,7 +2171,7 @@ async function main() {
     packetIdValue: approvedPacketId,
     acknowledgementHash: approvedAckHash,
     sourceChainId: destinationChainId,
-    trustedHeight: ackHeight,
+    trustedHeight: acknowledgementProofHeight,
     stateRoot: ackHeader.headerUpdate.stateRoot,
   });
   const ackReceipt = await txStep("acknowledge forward packet", () =>
@@ -1298,12 +2186,35 @@ async function main() {
   const sourceAckHash = await ctx.A.transferAppUser.acknowledgementHashByPacket(approvedPacketId);
 
   setPhase("risk-deposit-and-borrow");
-  await txStep("approve voucher collateral", () =>
-    ctx.B.voucherUser.approve(config.chains.B.lendingPool, FORWARD_AMOUNT, txOptions())
-  );
-  await txStep("deposit voucher collateral", () => ctx.B.lendingPoolUser.depositCollateral(FORWARD_AMOUNT, txOptions()));
+  await ensureRiskSeeded(config, ctx);
+  const currentCollateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
+  const depositDelta = FORWARD_AMOUNT > currentCollateral ? FORWARD_AMOUNT - currentCollateral : 0n;
+  if (depositDelta > 0n) {
+    const voucherBalance = await ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress);
+    if (voucherBalance < depositDelta) {
+      throw new Error(
+        `Bank B user needs ${units(depositDelta)} free voucher collateral, but only has ${units(voucherBalance)}.`
+      );
+    }
+    await txStep("approve voucher collateral", () =>
+      ctx.B.voucherUser.approve(config.chains.B.lendingPool, depositDelta, txOptions())
+    );
+    await txStep("deposit voucher collateral", () => ctx.B.lendingPoolUser.depositCollateral(depositDelta, txOptions()));
+  }
   const maxBorrowBefore = await ctx.B.lendingPoolAdmin.maxBorrow(ctx.destinationUserAddress);
-  await txStep("borrow debt asset", () => ctx.B.lendingPoolUser.borrow(BORROW_AMOUNT, txOptions()));
+  const availableBeforeBorrow = await ctx.B.lendingPoolAdmin.availableToBorrow(ctx.destinationUserAddress);
+  const debtBeforeBorrow = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
+  const borrowDelta = BORROW_AMOUNT > debtBeforeBorrow ? BORROW_AMOUNT - debtBeforeBorrow : 0n;
+  if (borrowDelta > 0n) {
+    if (availableBeforeBorrow < borrowDelta) {
+      const collateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
+      throw new Error(
+        `BORROW_LIMIT: available ${units(availableBeforeBorrow)} bCASH, need ${units(borrowDelta)}; ` +
+          `maxBorrow=${units(maxBorrowBefore)}, collateral=${units(collateral)} vA, existingDebt=${units(debtBeforeBorrow)}.`
+      );
+    }
+    await txStep("borrow debt asset", () => ctx.B.lendingPoolUser.borrow(borrowDelta, txOptions()));
+  }
   const healthBeforeShock = await ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress);
   const debtAfterBorrow = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
   const collateralAfterDeposit = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
@@ -1366,12 +2277,13 @@ async function main() {
     targetHeight: deniedCommitHeight,
     validatorEpoch: 1n,
   });
+  const deniedProofHeight = deniedHeader.headerUpdate.height;
   const deniedProofs = await buildPacketProofs({
     provider: ctx.providerA,
     packetStoreAddress: config.chains.A.packetStore,
     packet: deniedPacket,
     sourceChainId,
-    trustedHeight: deniedCommitHeight,
+    trustedHeight: deniedProofHeight,
     stateRoot: deniedHeader.headerUpdate.stateRoot,
   });
 
@@ -1396,12 +2308,13 @@ async function main() {
     targetHeight: deniedTimeoutHeight,
     validatorEpoch: 1n,
   });
+  const timeoutProofHeight = timeoutHeader.headerUpdate.height;
   const { receiptSlot, proof: deniedReceiptAbsenceProof } = await buildReceiptAbsenceProof({
     provider: ctx.providerB,
     packetHandlerAddress: config.chains.B.packetHandler,
     packetIdValue: deniedPacketId,
     sourceChainId: destinationChainId,
-    trustedHeight: deniedTimeoutHeight,
+    trustedHeight: timeoutProofHeight,
     stateRoot: timeoutHeader.headerUpdate.stateRoot,
   });
   const timeoutReceipt = await txStep("timeout denied packet", () =>
@@ -1480,12 +2393,13 @@ async function main() {
       acknowledgementTxHash: ackReceipt.hash,
       commitHeight: approvedCommitHeight.toString(),
       receiveHeight: ackHeight.toString(),
-      trustedHeight: approvedCommitHeight.toString(),
+      trustedHeight: approvedProofHeight.toString(),
       trustedHeaderHash: approvedHeader.headerUpdate.headerHash,
       trustedStateRoot: approvedHeader.headerUpdate.stateRoot,
       destinationAckHash: approvedAckHash,
       sourceAckHash,
       acknowledgementSlot,
+      acknowledgementTrustedHeight: acknowledgementProofHeight.toString(),
       voucherBalanceAfterReceive: units(voucherBalanceAfterReceive),
     },
     risk: {
@@ -1517,6 +2431,9 @@ async function main() {
       packetLeafSlot: deniedProofs.leafSlot,
       packetPathSlot: deniedProofs.pathSlot,
       commitHeight: deniedCommitHeight.toString(),
+      trustedHeight: deniedProofHeight.toString(),
+      trustedHeaderHash: deniedHeader.headerUpdate.headerHash,
+      trustedStateRoot: deniedHeader.headerUpdate.stateRoot,
       timeoutHeight: deniedTimeoutHeight.toString(),
       deniedReason,
       timedOut: deniedTimedOut,
@@ -1526,7 +2443,7 @@ async function main() {
       finalEscrowed: units(finalEscrowed),
     },
     timeout: {
-      trustedHeight: deniedTimeoutHeight.toString(),
+      trustedHeight: timeoutProofHeight.toString(),
       trustedHeaderHash: timeoutHeader.headerUpdate.headerHash,
       trustedStateRoot: timeoutHeader.headerUpdate.stateRoot,
       receiptStorageKey: receiptSlot,

@@ -8,6 +8,14 @@ import {BesuLightClientTypes} from "./BesuLightClientTypes.sol";
 interface IBesuLightClient {
     function status(uint256 sourceChainId) external view returns (BesuLightClientTypes.ClientStatus);
 
+    function beginRecovery(uint256 sourceChainId) external;
+
+    function recoverClient(
+        uint256 sourceChainId,
+        BesuLightClientTypes.TrustedHeader calldata trustedHeader,
+        BesuLightClientTypes.ValidatorSet calldata validatorSet
+    ) external;
+
     function initializeTrustAnchor(
         uint256 sourceChainId,
         BesuLightClientTypes.TrustedHeader calldata trustedHeader,

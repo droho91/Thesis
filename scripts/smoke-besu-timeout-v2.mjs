@@ -252,12 +252,13 @@ async function main() {
     targetHeight: destinationHeight,
     validatorEpoch: 1n,
   });
+  const timeoutProofHeight = destinationHeader.headerUpdate.height;
 
   const receiptAbsenceProof = await buildReceiptAbsenceProof(
     destinationProvider,
     destinationPacketHandlerAddress,
     packetIdValue,
-    destinationHeight,
+    timeoutProofHeight,
     destinationHeader.headerUpdate.stateRoot
   );
 
@@ -292,7 +293,7 @@ async function main() {
     destinationChainId: DESTINATION_CHAIN_ID.toString(),
     connectionHandshake,
     channelHandshake,
-    timeoutProofHeight: destinationHeight.toString(),
+    timeoutProofHeight: timeoutProofHeight.toString(),
     timeoutProofHeaderHash: destinationHeader.headerUpdate.headerHash,
     packetId: packetIdValue,
     receiptStorageKey: receiptAbsenceProof.storageKey,
@@ -309,7 +310,7 @@ async function main() {
   );
   console.log(`Opened proof-checked v2 channel ${ethers.decodeBytes32String(SOURCE_CHANNEL_ID)} <-> ${ethers.decodeBytes32String(DESTINATION_CHANNEL_ID)}`);
   console.log(`Committed packet ${packetIdValue} on chain A without receiving it on chain B`);
-  console.log(`Verified absent receipt on chain B at height ${destinationHeight}`);
+  console.log(`Verified absent receipt on chain B at height ${timeoutProofHeight}`);
   console.log(`Timed out packet on chain A with callback count ${timeoutCount}`);
   console.log(`Saved timeout smoke report to ${OUT_FILE}`);
 }
