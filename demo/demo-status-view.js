@@ -140,7 +140,9 @@ export function renderStatus(status) {
   const runtime = status.runtime || {};
   setText(
     "deploymentStatus",
-    runtime.besuFirst
+    status.stackVersion === "v2"
+      ? "Besu v2 runtime active / native header + storage proof path"
+      : runtime.besuFirst
       ? `Besu runtime active${runtime.proofPolicy === "storage-required" ? " / storage proof required" : ""}`
       : "Compatibility runtime active"
   );

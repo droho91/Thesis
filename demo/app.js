@@ -128,6 +128,18 @@ function loadPersistedActivity() {
   }
 }
 
+function activityFromStatus(status) {
+  const operation = status?.trace?.latestOperation;
+  if (!operation) return null;
+  return {
+    title: operation.label || "Latest v2 operation",
+    summary: operation.summary || "The latest trace was loaded from the local v2 run output.",
+    time: status.trace?.generatedAt,
+    timeLabel: formatClock(status.trace?.generatedAt),
+    changes: [{ value: operation.phase ? `phase: ${operation.phase}` : "Trace loaded from the latest v2 run." }],
+  };
+}
+
 function pushActivity(action, summary, nextStatus) {
   const activity = {
     title: actionTitle(action),
@@ -242,6 +254,9 @@ renderLatestActivity(loadPersistedActivity());
 refreshStatus()
   .then((status) => {
     currentStatus = status;
+    if (!loadPersistedActivity()) {
+      renderLatestActivity(activityFromStatus(status));
+    }
   })
   .catch((error) => {
   markControllerOffline();

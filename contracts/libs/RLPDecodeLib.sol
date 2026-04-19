@@ -26,6 +26,34 @@ library RLPDecodeLib {
         }
     }
 
+    function readListItems(bytes memory encoded) internal pure returns (bytes[] memory items) {
+        (uint256 payloadOffset, uint256 payloadLength, bool isList) = _payloadBounds(encoded, 0);
+        require(isList, "RLP_NOT_LIST");
+
+        uint256 cursor = payloadOffset;
+        uint256 end = payloadOffset + payloadLength;
+        uint256 count;
+        while (cursor < end) {
+            cursor += _itemLength(encoded, cursor);
+            count++;
+        }
+        require(cursor == end, "RLP_LIST_LENGTH_MISMATCH");
+
+        items = new bytes[](count);
+        cursor = payloadOffset;
+        for (uint256 i = 0; i < count; i++) {
+            uint256 itemLength = _itemLength(encoded, cursor);
+            items[i] = _slice(encoded, cursor, itemLength);
+            cursor += itemLength;
+        }
+    }
+
+    function readBytes(bytes memory encoded) internal pure returns (bytes memory out) {
+        (uint256 payloadOffset, uint256 payloadLength, bool isList) = _payloadBounds(encoded, 0);
+        require(!isList, "RLP_NOT_BYTES");
+        return _slice(encoded, payloadOffset, payloadLength);
+    }
+
     function toBytes32(bytes memory value) internal pure returns (bytes32 result) {
         require(value.length <= 32, "RLP_BYTES32_TOO_LONG");
         if (value.length == 0) return bytes32(0);

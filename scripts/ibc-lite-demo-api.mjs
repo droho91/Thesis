@@ -1,7 +1,7 @@
-import { runDemoAction } from "./ibc-lite-demo-actions.mjs";
 import {
   deploySeedPayload,
   healthPayload,
+  runActionPayload,
   runFlowPayload,
   statusPayload,
   tracePayload,
@@ -54,8 +54,8 @@ export async function handleDemoApi(req, res, url) {
 
     if (req.method === "POST" && url.pathname === "/api/action") {
       const body = await readRequestJson(req);
-      const result = await runDemoAction(body.action);
-      return sendJson(res, 200, result);
+      const result = await runActionPayload(body.action);
+      return sendJson(res, result.statusCode, result.body);
     }
 
     if (req.method === "POST" && url.pathname === "/api/run-flow") {

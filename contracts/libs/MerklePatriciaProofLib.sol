@@ -64,6 +64,50 @@ library MerklePatriciaProofLib {
         return new bytes(0);
     }
 
+    function verifyAbsence(bytes32 rootHash, bytes memory trieKey, bytes[] memory proof) internal pure returns (bool) {
+        if (rootHash == bytes32(0) || proof.length == 0) return false;
+
+        bytes memory path = HexPrefixLib.toNibbles(trieKey);
+        bytes memory expectedNodeRef = abi.encodePacked(rootHash);
+        uint256 pathOffset;
+
+        for (uint256 i = 0; i < proof.length; i++) {
+            bytes memory node = proof[i];
+            if (!_matchesReference(expectedNodeRef, node, i == 0)) return false;
+
+            bytes[] memory decoded = RLPDecodeLib.readList(node);
+            if (decoded.length == 17) {
+                if (pathOffset == path.length) {
+                    return decoded[16].length == 0;
+                }
+
+                bytes memory nextNodeRef = decoded[uint8(path[pathOffset])];
+                if (nextNodeRef.length == 0) return true;
+                expectedNodeRef = nextNodeRef;
+                pathOffset += 1;
+                continue;
+            }
+
+            if (decoded.length == 2) {
+                (bytes memory partialPath, bool isLeaf) = HexPrefixLib.decodeCompact(decoded[0]);
+                if (!HexPrefixLib.startsWith(path, pathOffset, partialPath)) return true;
+                pathOffset += partialPath.length;
+
+                if (isLeaf) {
+                    return pathOffset != path.length;
+                }
+
+                if (decoded[1].length == 0) return false;
+                expectedNodeRef = decoded[1];
+                continue;
+            }
+
+            return false;
+        }
+
+        return false;
+    }
+
     function _matchesReference(bytes memory expectedNodeRef, bytes memory node, bool isRoot)
         private
         pure

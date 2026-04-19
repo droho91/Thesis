@@ -1,0 +1,321 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {Test} from "forge-std/Test.sol";
+import {BesuLightClient} from "../../contracts/v2/clients/BesuLightClient.sol";
+import {BesuLightClientTypes} from "../../contracts/v2/clients/BesuLightClientTypes.sol";
+import {BesuQBFTExtraDataLib} from "../../contracts/v2/clients/BesuQBFTExtraDataLib.sol";
+
+contract BesuLightClientV2Test is Test {
+    uint256 internal constant SOURCE_CHAIN_ID = 41001;
+    uint256 internal constant EPOCH = 1;
+
+    uint256 internal validatorKey0 = 101;
+    uint256 internal validatorKey1 = 102;
+    uint256 internal validatorKey2 = 103;
+    uint256 internal validatorKey3 = 104;
+    uint256 internal unknownKey = 999;
+
+    BesuLightClient internal client;
+    address[] internal validators;
+
+    function setUp() public {
+        client = new BesuLightClient(address(this));
+        validators.push(vm.addr(validatorKey0));
+        validators.push(vm.addr(validatorKey1));
+        validators.push(vm.addr(validatorKey2));
+        validators.push(vm.addr(validatorKey3));
+
+        bytes32 anchorHash = keccak256("anchor-header");
+        client.initializeTrustAnchor(
+            SOURCE_CHAIN_ID,
+            BesuLightClientTypes.TrustedHeader({
+                sourceChainId: SOURCE_CHAIN_ID,
+                height: 1,
+                headerHash: anchorHash,
+                parentHash: bytes32(0),
+                stateRoot: keccak256("anchor-state-root"),
+                timestamp: 1_700_000_001,
+                validatorsHash: BesuQBFTExtraDataLib.validatorsHash(validators),
+                exists: true
+            }),
+            _validatorSet(1)
+        );
+    }
+
+    function testUpdateClientAcceptsValidCommitSeals() public {
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(2, keccak256("anchor-header"), keccak256("state-root-2"), validators, _signerKeys3());
+
+        bytes32 trustedHeaderHash = client.updateClient(update, _validatorSet(2));
+
+        assertEq(trustedHeaderHash, update.headerHash);
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 2), update.stateRoot);
+        assertEq(client.trustedTimestamp(SOURCE_CHAIN_ID, 2), 1_700_000_002);
+        assertEq(client.latestTrustedHeight(SOURCE_CHAIN_ID), 2);
+    }
+
+    function testUpdateClientRejectsWrongParent() public {
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(2, keccak256("wrong-parent"), keccak256("state-root-2"), validators, _signerKeys3());
+
+        vm.expectRevert(bytes("PARENT_HASH_MISMATCH"));
+        client.updateClient(update, _validatorSet(2));
+    }
+
+    function testUpdateClientAcceptsSkipWithValidCommitSeals() public {
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(10, keccak256("non-adjacent-parent"), keccak256("state-root-10"), validators, _signerKeys3());
+
+        bytes32 trustedHeaderHash = client.updateClient(update, _validatorSet(10));
+
+        assertEq(trustedHeaderHash, update.headerHash);
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 10), update.stateRoot);
+        assertEq(client.trustedTimestamp(SOURCE_CHAIN_ID, 10), 1_700_000_010);
+        assertEq(client.latestTrustedHeight(SOURCE_CHAIN_ID), 10);
+    }
+
+    function testUpdateClientRejectsStaleHeight() public {
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(1, bytes32(0), keccak256("state-root-1"), validators, _signerKeys3());
+
+        vm.expectRevert(bytes("HEIGHT_NOT_FORWARD"));
+        client.updateClient(update, _validatorSet(1));
+    }
+
+    function testUpdateClientRejectsWrongStateRootField() public {
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(2, keccak256("anchor-header"), keccak256("state-root-2"), validators, _signerKeys3());
+        update.stateRoot = keccak256("different-state-root");
+
+        vm.expectRevert(bytes("HEADER_STATE_ROOT_MISMATCH"));
+        client.updateClient(update, _validatorSet(2));
+    }
+
+    function testUpdateClientRejectsInsufficientCommitSeals() public {
+        uint256[] memory signerKeys = new uint256[](2);
+        signerKeys[0] = validatorKey0;
+        signerKeys[1] = validatorKey1;
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(2, keccak256("anchor-header"), keccak256("state-root-2"), validators, signerKeys);
+
+        vm.expectRevert(bytes("INSUFFICIENT_COMMIT_SEALS"));
+        client.updateClient(update, _validatorSet(2));
+    }
+
+    function testUpdateClientRejectsUnknownCommitSealSigner() public {
+        uint256[] memory signerKeys = new uint256[](3);
+        signerKeys[0] = validatorKey0;
+        signerKeys[1] = validatorKey1;
+        signerKeys[2] = unknownKey;
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(2, keccak256("anchor-header"), keccak256("state-root-2"), validators, signerKeys);
+
+        vm.expectRevert(bytes("COMMIT_SEAL_SIGNER_UNKNOWN"));
+        client.updateClient(update, _validatorSet(2));
+    }
+
+    function testUpdateClientRejectsDuplicateCommitSealSigner() public {
+        uint256[] memory signerKeys = new uint256[](3);
+        signerKeys[0] = validatorKey0;
+        signerKeys[1] = validatorKey1;
+        signerKeys[2] = validatorKey1;
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(2, keccak256("anchor-header"), keccak256("state-root-2"), validators, signerKeys);
+
+        vm.expectRevert(bytes("COMMIT_SEAL_DUPLICATE_SIGNER"));
+        client.updateClient(update, _validatorSet(2));
+    }
+
+    function testUpdateClientRejectsMismatchedExtraDataValidatorSet() public {
+        address[] memory extraValidators = new address[](4);
+        extraValidators[0] = validators[0];
+        extraValidators[1] = validators[1];
+        extraValidators[2] = validators[2];
+        extraValidators[3] = vm.addr(unknownKey);
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(2, keccak256("anchor-header"), keccak256("state-root-2"), extraValidators, _signerKeys3());
+
+        vm.expectRevert(bytes("EXTRA_DATA_VALIDATOR_SET_MISMATCH"));
+        client.updateClient(update, _validatorSet(2));
+    }
+
+    function _validatorSet(uint256 activationHeight)
+        internal
+        view
+        returns (BesuLightClientTypes.ValidatorSet memory validatorSet_)
+    {
+        validatorSet_.epoch = EPOCH;
+        validatorSet_.activationHeight = activationHeight;
+        validatorSet_.validators = validators;
+    }
+
+    function _signerKeys3() internal view returns (uint256[] memory signerKeys) {
+        signerKeys = new uint256[](3);
+        signerKeys[0] = validatorKey0;
+        signerKeys[1] = validatorKey1;
+        signerKeys[2] = validatorKey2;
+    }
+
+    function _headerUpdate(
+        uint256 height,
+        bytes32 parentHash,
+        bytes32 stateRoot,
+        address[] memory extraValidators,
+        uint256[] memory signerKeys
+    ) internal returns (BesuLightClientTypes.HeaderUpdate memory update) {
+        bytes memory emptySealExtraData = _qbftExtraData(extraValidators, new bytes[](0));
+        bytes memory sealHeaderRlp = _rawHeader(parentHash, stateRoot, height, emptySealExtraData);
+        bytes32 sealHash = keccak256(sealHeaderRlp);
+
+        bytes[] memory commitSeals = new bytes[](signerKeys.length);
+        for (uint256 i = 0; i < signerKeys.length; i++) {
+            commitSeals[i] = _signature(signerKeys[i], sealHash);
+        }
+
+        bytes memory fullExtraData = _qbftExtraData(extraValidators, commitSeals);
+
+        update = BesuLightClientTypes.HeaderUpdate({
+            sourceChainId: SOURCE_CHAIN_ID,
+            height: height,
+            rawHeaderRlp: sealHeaderRlp,
+            headerHash: sealHash,
+            parentHash: parentHash,
+            stateRoot: stateRoot,
+            extraData: fullExtraData
+        });
+    }
+
+    function _rawHeader(bytes32 parentHash, bytes32 stateRoot, uint256 number, bytes memory extraData)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        bytes[] memory fields = new bytes[](15);
+        fields[0] = _rlpEncodeBytes(abi.encodePacked(parentHash));
+        fields[1] = _rlpEncodeBytes(abi.encodePacked(keccak256("ommers")));
+        fields[2] = _rlpEncodeBytes(abi.encodePacked(address(0xBEEF)));
+        fields[3] = _rlpEncodeBytes(abi.encodePacked(stateRoot));
+        fields[4] = _rlpEncodeBytes(abi.encodePacked(keccak256("tx-root")));
+        fields[5] = _rlpEncodeBytes(abi.encodePacked(keccak256("receipt-root")));
+        fields[6] = _rlpEncodeBytes(new bytes(256));
+        fields[7] = _rlpEncodeBytes("");
+        fields[8] = _rlpEncodeBytes(_uintBytes(number));
+        fields[9] = _rlpEncodeBytes(_uintBytes(30_000_000));
+        fields[10] = _rlpEncodeBytes("");
+        fields[11] = _rlpEncodeBytes(_uintBytes(1_700_000_000 + number));
+        fields[12] = _rlpEncodeBytes(extraData);
+        fields[13] = _rlpEncodeBytes(abi.encodePacked(keccak256("mix-hash")));
+        fields[14] = _rlpEncodeBytes(hex"0000000000000000");
+        return _rlpEncodeList(fields);
+    }
+
+    function _qbftExtraData(address[] memory extraValidators, bytes[] memory commitSeals)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        bytes[] memory validatorItems = new bytes[](extraValidators.length);
+        for (uint256 i = 0; i < extraValidators.length; i++) {
+            validatorItems[i] = _rlpEncodeBytes(abi.encodePacked(extraValidators[i]));
+        }
+
+        bytes[] memory sealItems = new bytes[](commitSeals.length);
+        for (uint256 i = 0; i < commitSeals.length; i++) {
+            sealItems[i] = _rlpEncodeBytes(commitSeals[i]);
+        }
+
+        bytes[] memory items = new bytes[](5);
+        items[0] = _rlpEncodeBytes(abi.encodePacked(bytes32("besu-test")));
+        items[1] = _rlpEncodeList(validatorItems);
+        items[2] = _rlpEncodeList(new bytes[](0));
+        items[3] = _rlpEncodeBytes("");
+        items[4] = _rlpEncodeList(sealItems);
+        return _rlpEncodeList(items);
+    }
+
+    function _signature(uint256 privateKey, bytes32 digest) internal returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+        return bytes.concat(abi.encodePacked(r), abi.encodePacked(s), bytes1(v));
+    }
+
+    function _uintBytes(uint256 value) internal pure returns (bytes memory out) {
+        if (value == 0) return "";
+        uint256 temp = value;
+        uint256 length;
+        while (temp != 0) {
+            length++;
+            temp >>= 8;
+        }
+        out = new bytes(length);
+        for (uint256 i = length; i > 0; i--) {
+            out[i - 1] = bytes1(uint8(value));
+            value >>= 8;
+        }
+    }
+
+    function _rlpEncodeBytes(bytes memory raw) internal pure returns (bytes memory out) {
+        if (raw.length == 1 && uint8(raw[0]) < 0x80) {
+            return raw;
+        }
+
+        if (raw.length <= 55) {
+            out = new bytes(1 + raw.length);
+            out[0] = bytes1(uint8(0x80 + raw.length));
+            for (uint256 i = 0; i < raw.length; i++) {
+                out[i + 1] = raw[i];
+            }
+            return out;
+        }
+
+        bytes memory lengthBytes = _encodeLength(raw.length);
+        out = new bytes(1 + lengthBytes.length + raw.length);
+        out[0] = bytes1(uint8(0xb7 + lengthBytes.length));
+        for (uint256 i = 0; i < lengthBytes.length; i++) {
+            out[i + 1] = lengthBytes[i];
+        }
+        for (uint256 i = 0; i < raw.length; i++) {
+            out[1 + lengthBytes.length + i] = raw[i];
+        }
+    }
+
+    function _rlpEncodeList(bytes[] memory items) internal pure returns (bytes memory out) {
+        bytes memory payload;
+        for (uint256 i = 0; i < items.length; i++) {
+            payload = bytes.concat(payload, items[i]);
+        }
+
+        if (payload.length <= 55) {
+            out = new bytes(1 + payload.length);
+            out[0] = bytes1(uint8(0xc0 + payload.length));
+            for (uint256 i = 0; i < payload.length; i++) {
+                out[i + 1] = payload[i];
+            }
+            return out;
+        }
+
+        bytes memory lengthBytes = _encodeLength(payload.length);
+        out = new bytes(1 + lengthBytes.length + payload.length);
+        out[0] = bytes1(uint8(0xf7 + lengthBytes.length));
+        for (uint256 i = 0; i < lengthBytes.length; i++) {
+            out[i + 1] = lengthBytes[i];
+        }
+        for (uint256 i = 0; i < payload.length; i++) {
+            out[1 + lengthBytes.length + i] = payload[i];
+        }
+    }
+
+    function _encodeLength(uint256 value) internal pure returns (bytes memory out) {
+        uint256 temp = value;
+        uint256 length;
+        while (temp != 0) {
+            length++;
+            temp >>= 8;
+        }
+        out = new bytes(length);
+        for (uint256 i = length; i > 0; i--) {
+            out[i - 1] = bytes1(uint8(value));
+            value >>= 8;
+        }
+    }
+}

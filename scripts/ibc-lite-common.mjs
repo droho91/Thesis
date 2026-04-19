@@ -71,12 +71,80 @@ async function loadBesuJson(chainKey, file) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
+async function networkTransactionCount(signer, address) {
+  const [latest, pending] = await Promise.all([
+    signer.provider.getTransactionCount(address, "latest"),
+    signer.provider.getTransactionCount(address, "pending"),
+  ]);
+  return Math.max(latest, pending);
+}
+
+function isNonceExpired(error) {
+  const text = [
+    error?.code,
+    error?.shortMessage,
+    error?.message,
+    error?.info?.error?.message,
+    error?.error?.message,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return /NONCE_EXPIRED|nonce has already been used|nonce too low/i.test(text);
+}
+
+function withManagedNonce(signer, label) {
+  if (!signer.provider || signer.__ibcLiteManagedNonce) return signer;
+
+  let nextNonce = null;
+  const originalSendTransaction = signer.sendTransaction.bind(signer);
+
+  Object.defineProperty(signer, "__ibcLiteManagedNonce", {
+    configurable: false,
+    enumerable: false,
+    value: true,
+  });
+
+  signer.sendTransaction = async (transaction) => {
+    const address = await signer.getAddress();
+    const currentNonce = await networkTransactionCount(signer, address);
+    if (nextNonce === null || nextNonce < currentNonce) {
+      nextNonce = currentNonce;
+      if (process.env.LOG_NONCES === "true") {
+        console.log(`[nonce] ${label} ${address} starting at ${nextNonce}`);
+      }
+    }
+
+    const nonce = nextNonce;
+    nextNonce += 1;
+
+    try {
+      return await originalSendTransaction({ ...transaction, nonce });
+    } catch (error) {
+      if (!isNonceExpired(error)) throw error;
+
+      const refreshedNonce = await networkTransactionCount(signer, address);
+      if (refreshedNonce <= nonce) throw error;
+      nextNonce = refreshedNonce + 1;
+      if (process.env.LOG_NONCES === "true") {
+        console.log(`[nonce] ${label} ${address} refreshed from ${nonce} to ${refreshedNonce}`);
+      }
+      return originalSendTransaction({ ...transaction, nonce: refreshedNonce });
+    }
+  };
+
+  return signer;
+}
+
 async function besuOperatorWallet(chainKey, provider, index) {
   const operators = await loadBesuJson(chainKey, "operators.json");
   const label = operatorLabel(index);
   const entry = operators.find((operator) => operator.label === label);
   if (!entry) throw new Error(`Could not find Besu operator '${label}' for chain ${chainKey}.`);
-  return new ethers.Wallet(entry.privateKey, provider);
+  const wallet = new ethers.Wallet(entry.privateKey, provider);
+  if (entry.address && ethers.getAddress(entry.address) !== wallet.address) {
+    throw new Error(`Besu operator '${label}' key/address mismatch for chain ${chainKey}.`);
+  }
+  return withManagedNonce(wallet, `${chainKey}:${label}`);
 }
 
 async function besuValidators(chainKey) {
@@ -91,9 +159,9 @@ export async function loadArtifact(sourcePath, contractName) {
   return JSON.parse(await readFile(artifactPath(sourcePath, contractName), "utf8"));
 }
 
-export async function deploy(artifact, signer, args = []) {
+export async function deploy(artifact, signer, args = [], overrides = {}) {
   const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, signer);
-  const contract = await factory.deploy(...args);
+  const contract = await factory.deploy(...args, overrides);
   await contract.waitForDeployment();
   return contract;
 }

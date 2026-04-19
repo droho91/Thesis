@@ -1,0 +1,98 @@
+{
+  "version": "v2",
+  "runtime": {
+    "mode": "besu",
+    "proofPolicy": "storage-required",
+    "besuFirst": true,
+    "allowMerkleFallback": false,
+    "configPath": "C:\\Users\\outta\\Desktop\\Thesis\\Thesis\\.ibc-v2.local.json"
+  },
+  "constants": {
+    "order": "unordered",
+    "orderValue": 1,
+    "connectionPrefix": "0x696263",
+    "channelVersion": "0x6963732d7632",
+    "sourceConnectionId": "0x636f6e6e656374696f6e2d610000000000000000000000000000000000000000",
+    "destinationConnectionId": "0x636f6e6e656374696f6e2d620000000000000000000000000000000000000000",
+    "sourceChannelId": "0x6368616e6e656c2d610000000000000000000000000000000000000000000000",
+    "destinationChannelId": "0x6368616e6e656c2d620000000000000000000000000000000000000000000000"
+  },
+  "chains": {
+    "A": {
+      "rpc": "http://127.0.0.1:8545",
+      "chainId": 41001,
+      "admin": "0x704A9856FD81eC195930b3Bc5e93eCeF2B691e86",
+      "lightClient": "0x4917C9b07bcB5b161154f989a7e196C252862983",
+      "connectionKeeper": "0x8DBBb8C640A9444e728bCb9953725052a169D965",
+      "channelKeeper": "0x1EA86496A1f4C47b90CDF863130322E4e78e1150",
+      "packetHandler": "0xf652221eDDe714A78753019B685Db68fAAA8b210",
+      "packetStore": "0xc17f4869a1986372638b5644332be02CC3e6f2eE",
+      "policyEngine": "0x84F90663E4905833962D17eBC36A249E42ecfa13",
+      "canonicalToken": "0x8E6a3BDCb748Af1b80FB829AdDD7a2eBE12faF63",
+      "escrowVault": "0xeb3f2f96536a5848a1102f2040Aa92D1860d9968",
+      "transferApp": "0xa99a22b98d55512ecfBEf3F83fe72ad7658D88fb"
+    },
+    "B": {
+      "rpc": "http://127.0.0.1:9545",
+      "chainId": 41002,
+      "admin": "0x6C7a39F7EaBd9fBFcc5831842f3564aE388f6319",
+      "lightClient": "0x5f7A680D52C157AFe9b8a263CaDF5dc648747c09",
+      "connectionKeeper": "0xEB92A515b734880ed2663EAc8d5d9F3EA75c7070",
+      "channelKeeper": "0x1D48b2e3b6A6DF8e96bFb3438d72FC6077156B59",
+      "packetHandler": "0x195012948F3Ec84638ea2A53BA682491b9dB73BF",
+      "packetStore": "0x1543E78a3Ab975B144C17A1a5c98015374C37BB5",
+      "policyEngine": "0xddDcC1d9317D603033aCd1bF97A2FC90247DC618",
+      "voucherToken": "0x7cb61F900a1CE7DEB9204136fFAF787251437Cd2",
+      "debtToken": "0x1f8810dEF23f5a8A2432E5BFEc0bfD2c69d66D95",
+      "oracle": "0x475041561351a5Fb6aC5739813c1A77463b6A042",
+      "lendingPool": "0xC2BE9CaDb4dE9ae7d30A7576fe1B31F7A07d23C1",
+      "transferApp": "0x25F3edBDC758Ef79fb6f256dd1ea312b7Ecc0f1A"
+    }
+  },
+  "paths": {
+    "forward": {
+      "source": "A",
+      "destination": "B",
+      "sourceConnectionId": "0x636f6e6e656374696f6e2d610000000000000000000000000000000000000000",
+      "destinationConnectionId": "0x636f6e6e656374696f6e2d620000000000000000000000000000000000000000",
+      "sourceChannelId": "0x6368616e6e656c2d610000000000000000000000000000000000000000000000",
+      "destinationChannelId": "0x6368616e6e656c2d620000000000000000000000000000000000000000000000"
+    },
+    "reverse": {
+      "source": "B",
+      "destination": "A",
+      "sourceConnectionId": "0x636f6e6e656374696f6e2d620000000000000000000000000000000000000000",
+      "destinationConnectionId": "0x636f6e6e656374696f6e2d610000000000000000000000000000000000000000",
+      "sourceChannelId": "0x6368616e6e656c2d620000000000000000000000000000000000000000000000",
+      "destinationChannelId": "0x6368616e6e656c2d610000000000000000000000000000000000000000000000"
+    }
+  },
+  "status": {
+    "deployed": true,
+    "proofCheckedHandshakeOpened": true,
+    "seeded": true
+  },
+  "participants": {
+    "sourceUser": "0xdb1CF16DC3DeD9B7A64243e84459A68865F573f1",
+    "destinationUser": "0x1B990d2F8cD88004FBf7Dbc973dEfefFFd13b263",
+    "liquidator": "0xd327D2a2001CF37cb15A83B4080fD885b47d7C38",
+    "sourceUserIndex": 1,
+    "destinationUserIndex": 1,
+    "liquidatorIndex": 2
+  },
+  "seed": {
+    "sourceUserAmount": "1000000000000000000000",
+    "poolLiquidity": "10000000000000000000000",
+    "liquidatorDebtBalance": "1000000000000000000000",
+    "voucherExposureCap": "1000000000000000000000000",
+    "collateralCap": "1000000000000000000000000",
+    "debtAssetBorrowCap": "1000000000000000000000000",
+    "accountBorrowCap": "2000000000000000000000",
+    "initialVoucherPriceE18": "2000000000000000000",
+    "debtPriceE18": "1000000000000000000",
+    "collateralFactorBps": "8000",
+    "collateralHaircutBps": "9000",
+    "liquidationCloseFactorBps": "5000",
+    "liquidationBonusBps": "500"
+  }
+}
