@@ -121,6 +121,7 @@ function configToml(network, node, enableRpc) {
     `data-path="/network/nodes/${node.name}/data"`,
     `genesis-file="/network/genesis.json"`,
     `node-private-key-file="/network/nodes/${node.name}/key"`,
+    `static-nodes-file="/network/nodes/${node.name}/static-nodes.json"`,
     `p2p-host="0.0.0.0"`,
     `p2p-port=30303`,
     `discovery-enabled=false`,
@@ -133,6 +134,7 @@ function configToml(network, node, enableRpc) {
     `rpc-ws-enabled=false`,
     `min-gas-price=0`,
     `sync-mode="FULL"`,
+    `sync-min-peers=0`,
     `metrics-enabled=true`,
     `metrics-host="0.0.0.0"`,
     `metrics-port=9546`,
@@ -208,7 +210,7 @@ async function renderNetwork(network) {
     await mkdir(resolve(nodeRoot, "data"), { recursive: true });
     await writeText(resolve(nodeRoot, "key"), `${node.privateKeyRaw}\n`);
     await writeText(resolve(nodeRoot, "address"), `${node.address}\n`);
-    await writeJson(resolve(nodeRoot, "data", "static-nodes.json"), staticNodes);
+    await writeJson(resolve(nodeRoot, "static-nodes.json"), staticNodes);
     await writeText(resolve(nodeRoot, "config.toml"), configToml(network, node, index === 0));
   }
 }

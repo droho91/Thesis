@@ -26,31 +26,31 @@
       "rpc": "http://127.0.0.1:8545",
       "chainId": 41001,
       "admin": "0x704A9856FD81eC195930b3Bc5e93eCeF2B691e86",
-      "lightClient": "0xb10EEcB8aa9EeA853669Eac18bfD2009D0C95973",
-      "connectionKeeper": "0x9483C08E5806cdAB32b541a6816D9C94cdC68966",
-      "channelKeeper": "0x59BfCfDf669cbAc73fC4eF63A71161Cbe3C469Ad",
-      "packetHandler": "0x73eb1E95742Ef9000091D52bD539Af1922Ba18dc",
-      "packetStore": "0x5D1C5FEFc0108479b84D2aED7bF15de9a7232559",
-      "policyEngine": "0x3dd1d0412b2f055B354DCf51D5adfaEd5F02ec15",
-      "canonicalToken": "0xCf786bD6E7e2a7De704b27768689183BeF66E738",
-      "escrowVault": "0xd9a470F1731bb549b2d1697e2CE243500819F011",
-      "transferApp": "0x56Aff3EC7ee32B2e5A635843D0B06d8C57093Ff5"
+      "lightClient": "0x824C28AbD6b1a3ab1827F0e2013E35a33029b84A",
+      "connectionKeeper": "0x214aF4d4a3Bd962acDbbC870DAB12a5F51677a79",
+      "channelKeeper": "0x7CA61c18C63DfC34a055C01699620212501d735a",
+      "packetHandler": "0x57b64f3db3172cC8Eb01b4680609D9564878a2D2",
+      "packetStore": "0x29eb6C0D0545762a58Cfa4fD864417e4ed028590",
+      "policyEngine": "0x98672EDdb843bB400658F4Be238e69d8CFd28F7D",
+      "canonicalToken": "0x97638b399081f3C3f218fa160d90ec241b3B97c6",
+      "escrowVault": "0x1025Ff6A6BDf917606e60502F1425Ee842647707",
+      "transferApp": "0x2C2027927764DDA6716A97dB10B0fae5B3a09Ca7"
     },
     "B": {
       "rpc": "http://127.0.0.1:9545",
       "chainId": 41002,
       "admin": "0x6C7a39F7EaBd9fBFcc5831842f3564aE388f6319",
-      "lightClient": "0x7A8c475ca37811bae8B50cDa912057CBb0cad60A",
-      "connectionKeeper": "0x4200D28920bAafFd47c1dC0C86b6136374EA6fcd",
-      "channelKeeper": "0xb32d2467c97814772BBA19678f24661595770414",
-      "packetHandler": "0x55D5657c66DE9612388B77482f8BA7f951EA3Bff",
-      "packetStore": "0x70fA315dDDa8A09CB7c0e50B5542451AEe497914",
-      "policyEngine": "0xb467F9c7a2375183003e6Ce56199a67Fab07e654",
-      "voucherToken": "0x679A66E02d746CC2c52814193494e01280374403",
-      "debtToken": "0x5fE6C3639e060D9A608B6a47A4aB3F1ecE61A6f5",
-      "oracle": "0x0E4dF1eB27555d936A27F2DC62d38644f845A330",
-      "lendingPool": "0xde50E387d845198f1bF1CCe18ac203b583697ba5",
-      "transferApp": "0xB3c02cC86818E74E90A8606Adc2a54baA91E8404"
+      "lightClient": "0xad3d01bB6B2bf6960F92f8791723C564182adF0d",
+      "connectionKeeper": "0x8B32287052fe6c91c2DB3F9c3F621D95e3335550",
+      "channelKeeper": "0x2952146A6A5BCf002c25e15375FE5d9A2baC9E3A",
+      "packetHandler": "0xA15c270b0a4f0045e47e2c6DF887D5b9B22c2abc",
+      "packetStore": "0xF467264d11CDcD178095E3a3B661CF07961Db5DF",
+      "policyEngine": "0x7Cfd94ee6D3C79EeaA7E4991D18b4468C9ACaEb2",
+      "voucherToken": "0x1d2Ab3E6d1db150a2dCc79BD31C907Bc48bf11be",
+      "debtToken": "0x717fCF1D4A181E6A41E3488f6C4c1C1f98BA3a11",
+      "oracle": "0xf65DC0e2D52bA9d13a624Afa0b65d296E9Abcda8",
+      "lendingPool": "0xE6139644d7Bb5A42A27501751829383abAca434B",
+      "transferApp": "0xC5E88c89CC5941875A30cBB7c43674d360E76705"
     }
   },
   "paths": {
@@ -73,7 +73,7 @@
   },
   "status": {
     "deployed": true,
-    "proofCheckedHandshakeOpened": false,
+    "proofCheckedHandshakeOpened": true,
     "seeded": true
   },
   "participants": {

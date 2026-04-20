@@ -766,22 +766,24 @@ async function main() {
   console.log(`Saved policy packet smoke report to ${OUT_FILE}`);
 }
 
-main().catch(async (error) => {
-  try {
-    await writeSmokeFailureReport(OUT_FILE, error, {
-      phase: typeof CURRENT_PHASE === "string" && CURRENT_PHASE.length > 0 ? CURRENT_PHASE : "unknown",
-    });
-  } catch (writeError) {
-    console.error("Failed to write failure report:", writeError);
-  }
+main()
+  .then(() => process.exit(0))
+  .catch(async (error) => {
+    try {
+      await writeSmokeFailureReport(OUT_FILE, error, {
+        phase: typeof CURRENT_PHASE === "string" && CURRENT_PHASE.length > 0 ? CURRENT_PHASE : "unknown",
+      });
+    } catch (writeError) {
+      console.error("Failed to write failure report:", writeError);
+    }
 
-  error.phase =
-    typeof error?.phase === "string" && error.phase.length > 0
-      ? error.phase
-      : typeof CURRENT_PHASE === "string" && CURRENT_PHASE.length > 0
-        ? CURRENT_PHASE
-        : "unknown";
-  console.error(`Policy packet smoke failed during phase: ${error.phase}`);
-  console.error(error);
-  process.exit(1);
-});
+    error.phase =
+      typeof error?.phase === "string" && error.phase.length > 0
+        ? error.phase
+        : typeof CURRENT_PHASE === "string" && CURRENT_PHASE.length > 0
+          ? CURRENT_PHASE
+          : "unknown";
+    console.error(`Policy packet smoke failed during phase: ${error.phase}`);
+    console.error(error);
+    process.exit(1);
+  });

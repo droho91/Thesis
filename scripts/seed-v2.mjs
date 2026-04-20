@@ -1,6 +1,8 @@
 import { ethers } from "ethers";
-import { loadArtifact, normalizeRuntime, waitForBesuRuntimeReady } from "./ibc-lite-common.mjs";
+import { defaultBesuRuntimeEnv, loadArtifact, normalizeRuntime, waitForBesuRuntimeReady } from "./ibc-lite-common.mjs";
 import { loadV2Config, saveV2Config, signerForV2, V2_CONFIG_PATH } from "./ibc-v2-config.mjs";
+
+defaultBesuRuntimeEnv();
 
 const SOURCE_USER_INDEX = Number(process.env.SOURCE_USER_INDEX || process.env.USER_INDEX || 1);
 const DESTINATION_USER_INDEX = Number(process.env.DESTINATION_USER_INDEX || process.env.USER_INDEX || 1);

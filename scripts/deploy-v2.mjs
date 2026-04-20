@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import {
   CHAIN_A_RPC,
   CHAIN_B_RPC,
+  defaultBesuRuntimeEnv,
   deploy,
   loadArtifact,
   normalizeRuntime,
@@ -10,6 +11,8 @@ import {
   waitForBesuRuntimeReady,
 } from "./ibc-lite-common.mjs";
 import { saveV2Config, toConfigValue, V2_CONFIG_PATH } from "./ibc-v2-config.mjs";
+
+defaultBesuRuntimeEnv();
 
 const SOURCE_CONNECTION_ID = ethers.encodeBytes32String(process.env.SOURCE_CONNECTION_ID || "connection-a");
 const DESTINATION_CONNECTION_ID = ethers.encodeBytes32String(process.env.DESTINATION_CONNECTION_ID || "connection-b");

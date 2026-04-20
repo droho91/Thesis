@@ -32,6 +32,19 @@ function positive(value) {
   return Number(value || "0") > 0;
 }
 
+function present(value) {
+  return value != null && value !== "";
+}
+
+function heightAtLeast(value, minimum) {
+  if (!present(value) || !present(minimum)) return false;
+  try {
+    return BigInt(value) >= BigInt(minimum);
+  } catch {
+    return false;
+  }
+}
+
 function statusName(value) {
   return CLIENT_STATUS[Number(value)] || String(value ?? "-");
 }
@@ -84,28 +97,37 @@ export function renderRoadmap(status) {
   const balances = status.balances || {};
   const trace = status.trace || {};
   const runtime = status.runtime || {};
-  const escrowed = positive(balances.escrow) || positive(progress.packetSequenceA);
-  const headerFinalized = positive(progress.headerHeightA);
-  const trusted = positive(progress.trustedAOnB);
-  const proven = Boolean(trace.forward?.packetId) || positive(balances.voucher);
+  const security = status.security || {};
+  const forward = trace.forward || {};
+  const reverse = trace.reverse || {};
+  const escrowed = present(forward.commitHeight) || present(forward.packetId) || positive(balances.escrow);
+  const headerFinalized = present(forward.finalizedHeight) || present(forward.trustedHeight);
+  const trusted =
+    present(forward.commitHeight) &&
+    (heightAtLeast(forward.trustedHeight, forward.commitHeight) ||
+      heightAtLeast(progress.trustedAOnB, forward.commitHeight));
+  const proven = Boolean(forward.receiveTxHash || forward.proofMode || security.forwardConsumed) || positive(balances.voucher);
   const forwardProofMode = trace.forward?.proofMode;
-  const lending = trace.lending || {};
+  const lending = trace.risk || trace.lending || {};
   const lendingStarted =
     Boolean(lending.collateralDeposited || lending.borrowed || lending.repaid || lending.collateralWithdrawn || lending.completed) ||
     positive(balances.poolCollateral) ||
     positive(balances.poolDebt) ||
     positive(balances.bankB);
   const lendingComplete = Boolean(lending.completed || lending.collateralWithdrawn);
-  const reverseWritten = positive(progress.packetSequenceB);
-  const reverseTrusted = positive(progress.trustedBOnA);
-  const unlocked = Boolean(trace.reverse?.packetId);
+  const reverseWritten = present(reverse.commitHeight) || present(reverse.packetId);
+  const reverseTrusted =
+    present(reverse.commitHeight) &&
+    (heightAtLeast(reverse.trustedHeight, reverse.commitHeight) ||
+      heightAtLeast(progress.trustedBOnA, reverse.commitHeight));
+  const unlocked = Boolean(reverse.receiveTxHash || reverse.proofMode || reverse.finalSourceBalance);
   const frozen = Number(progress.statusAOnB) === 2 || Number(progress.statusBOnA) === 2;
   const recovering = Number(progress.statusAOnB) === 3 || Number(progress.statusBOnA) === 3;
   const recovered = Boolean(trace.misbehaviour?.recovered);
 
   setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? "packet written" : "ready");
-  setRoute("routeHeader", headerFinalized ? "done" : escrowed ? "active" : "", headerFinalized ? "header sealed" : "waiting");
-  setRoute("routeClient", trusted ? "done" : headerFinalized ? "active" : "", trusted ? "trusted remote" : "waiting");
+  setRoute("routeHeader", headerFinalized ? "done" : escrowed ? "active" : "", headerFinalized ? "header read" : "waiting");
+  setRoute("routeClient", trusted ? "done" : headerFinalized ? "active" : "", trusted ? "trusted packet header" : "waiting");
   const proofLabel =
     forwardProofMode === "storage"
       ? "storage proof"

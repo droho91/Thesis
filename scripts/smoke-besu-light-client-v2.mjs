@@ -1,7 +1,15 @@
 import { resolve } from "node:path";
 import { ethers } from "ethers";
 import { buildBesuHeaderUpdate } from "./besu-header-v2.mjs";
-import { CHAIN_A_RPC, CHAIN_B_RPC, deploy, loadArtifact, signerForRpc, waitForBesuRuntimeReady } from "./ibc-lite-common.mjs";
+import {
+  CHAIN_A_RPC,
+  CHAIN_B_RPC,
+  deploy,
+  loadArtifact,
+  signerForRpc,
+  waitForBesuRuntimeReady,
+  waitForProviderBlockHeight,
+} from "./ibc-lite-common.mjs";
 import { writeSmokeFailureReport, writeSmokeReport } from "./smoke-report.mjs";
 
 const SOURCE_CHAIN_ID = BigInt(process.env.SOURCE_CHAIN_ID || "41001");
@@ -32,11 +40,8 @@ async function main() {
   CURRENT_PHASE = "load-artifact";
   const artifact = await loadArtifact("v2/clients/BesuLightClient.sol", "BesuLightClient");
 
-  CURRENT_PHASE = "read-latest-block";
-  const latestBlock = await sourceProvider.send("eth_getBlockByNumber", ["latest", false]);
-  if (!latestBlock) throw new Error("Could not read latest Besu block.");
-  const latestHeight = BigInt(latestBlock.number);
-  if (latestHeight == 0n) throw new Error("Need at least two blocks to run the v2 smoke test.");
+  CURRENT_PHASE = "wait-source-blocks";
+  const latestHeight = await waitForProviderBlockHeight(sourceProvider, 1n, { label: "Bank A" });
 
   CURRENT_PHASE = "build-header-updates";
   const parentHeight = latestHeight - 1n;

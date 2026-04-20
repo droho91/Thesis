@@ -33,6 +33,12 @@ export function normalizeRuntime(config = {}) {
   };
 }
 
+export function defaultBesuRuntimeEnv() {
+  process.env.USE_BESU_KEYS ||= "true";
+  process.env.RUNTIME_MODE ||= "besu";
+  process.env.PROOF_POLICY ||= "storage-required";
+}
+
 function useBesuKeys() {
   return process.env.USE_BESU_KEYS === "true";
 }
@@ -94,11 +100,32 @@ function isNonceExpired(error) {
   return /NONCE_EXPIRED|nonce has already been used|nonce too low/i.test(text);
 }
 
+function transientSendErrorSummary(error) {
+  return [
+    error?.code,
+    error?.shortMessage,
+    error?.info?.error?.message,
+    error?.error?.message,
+    error?.message,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function isTransientBesuSendError(error) {
+  return /BAD_DATA|null.*hash|fetch failed|ECONNRESET|ETIMEDOUT|timeout/i.test(transientSendErrorSummary(error));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function withManagedNonce(signer, label) {
   if (!signer.provider || signer.__ibcLiteManagedNonce) return signer;
 
   let nextNonce = null;
   const originalSendTransaction = signer.sendTransaction.bind(signer);
+  const sendRetries = Math.max(0, Number(process.env.BESU_TX_SEND_RETRIES || process.env.TX_SEND_RETRIES || 2));
 
   Object.defineProperty(signer, "__ibcLiteManagedNonce", {
     configurable: false,
@@ -123,6 +150,23 @@ function withManagedNonce(signer, label) {
     return signer.provider.broadcastTransaction(signed);
   }
 
+  async function sendWithRetries(transaction, nonce) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await sendWithNonce(transaction, nonce);
+      } catch (error) {
+        if (attempt >= sendRetries || !isTransientBesuSendError(error)) throw error;
+        const delayMs = 1000 * (attempt + 1);
+        if (process.env.DEBUG_BESU_TX_RETRY === "true") {
+          console.log(
+            `[tx-retry] ${label} nonce ${nonce} retry ${attempt + 1}/${sendRetries}: ${transientSendErrorSummary(error)}`
+          );
+        }
+        await sleep(delayMs);
+      }
+    }
+  }
+
   signer.sendTransaction = async (transaction) => {
     const address = await signer.getAddress();
     const currentNonce = await networkTransactionCount(signer, address);
@@ -137,7 +181,7 @@ function withManagedNonce(signer, label) {
     nextNonce += 1;
 
     try {
-      return await sendWithNonce(transaction, nonce);
+      return await sendWithRetries(transaction, nonce);
     } catch (error) {
       if (!isNonceExpired(error)) throw error;
 
@@ -147,7 +191,7 @@ function withManagedNonce(signer, label) {
       if (process.env.LOG_NONCES === "true") {
         console.log(`[nonce] ${label} ${address} refreshed from ${nonce} to ${refreshedNonce}`);
       }
-      return sendWithNonce(transaction, refreshedNonce);
+      return sendWithRetries(transaction, refreshedNonce);
     }
   };
 
@@ -271,6 +315,42 @@ export async function waitForBesuRuntimeReady({
 } = {}) {
   await waitForRpcReady(CHAIN_A_RPC, { label: "Bank A RPC", timeoutMs, intervalMs });
   await waitForRpcReady(CHAIN_B_RPC, { label: "Bank B RPC", timeoutMs, intervalMs });
+}
+
+export async function waitForProviderBlockHeight(
+  provider,
+  minHeight,
+  {
+    label = "RPC",
+    timeoutMs = Number(process.env.BLOCK_WAIT_TIMEOUT_MS || process.env.RPC_WAIT_TIMEOUT_MS || 120000),
+    intervalMs = 2000,
+  } = {}
+) {
+  const targetHeight = BigInt(minHeight);
+  const start = Date.now();
+  let lastHeight = null;
+  let lastError = "block height not available yet";
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const height = BigInt(await provider.getBlockNumber());
+      lastHeight = height;
+      if (height >= targetHeight) {
+        console.log(`[wait] ${label} reached block ${height.toString()}`);
+        return height;
+      }
+      lastError = `latest block ${height.toString()} below required ${targetHeight.toString()}`;
+    } catch (error) {
+      lastError = error.message;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
+  }
+
+  const heightText = lastHeight == null ? "unknown" : lastHeight.toString();
+  throw new Error(
+    `[wait] ${label} did not reach block ${targetHeight.toString()} within ${timeoutMs / 1000}s. ` +
+      `Last height: ${heightText}. Last error: ${lastError}`
+  );
 }
 
 export function headerProducerAddress(chainConfig) {

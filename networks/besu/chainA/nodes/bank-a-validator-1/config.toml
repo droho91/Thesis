@@ -1,6 +1,7 @@
 data-path="/network/nodes/bank-a-validator-1/data"
 genesis-file="/network/genesis.json"
 node-private-key-file="/network/nodes/bank-a-validator-1/key"
+static-nodes-file="/network/nodes/bank-a-validator-1/static-nodes.json"
 p2p-host="0.0.0.0"
 p2p-port=30303
 discovery-enabled=false
@@ -13,6 +14,7 @@ host-allowlist=["*"]
 rpc-ws-enabled=false
 min-gas-price=0
 sync-mode="FULL"
+sync-min-peers=0
 metrics-enabled=true
 metrics-host="0.0.0.0"
 metrics-port=9546

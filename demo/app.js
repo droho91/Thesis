@@ -73,7 +73,7 @@ function snapshotStatus(status) {
 
 const FACT_LABELS = {
   packetSequenceA: "Bank A packet sequence",
-  headerHeightA: "Bank A finalized headers",
+  headerHeightA: "Bank A source head",
   trustedAOnB: "Bank B trusted Bank A header",
   voucherBalance: "Voucher balance",
   bankBBalance: "Borrowed bCASH",
@@ -81,7 +81,7 @@ const FACT_LABELS = {
   poolDebt: "Pool debt",
   escrowBalance: "Escrowed aBANK",
   packetSequenceB: "Bank B packet sequence",
-  headerHeightB: "Bank B finalized headers",
+  headerHeightB: "Bank B source head",
   trustedBOnA: "Bank A trusted Bank B header",
   forwardPacketId: "Forward packet receipt",
   reversePacketId: "Reverse packet receipt",
@@ -105,17 +105,17 @@ function collectChanges(before, after) {
 
 function actionTitle(action) {
   const titles = {
-    lock: "Locked canonical asset on Bank A",
-    finalizeForwardHeader: "Finalized Bank A header",
-    updateForwardClient: "Updated Bank B client",
+    lock: "Locked aBANK and committed packet",
+    finalizeForwardHeader: "Read Bank A packet header",
+    updateForwardClient: "Trusted Bank A on Bank B",
     proveForwardMint: "Executed forward storage proof",
     depositCollateral: "Deposited voucher collateral",
     borrow: "Borrowed Bank B credit",
     repay: "Repaid Bank B credit",
     withdrawCollateral: "Withdrew voucher collateral",
     burn: "Burned voucher on Bank B",
-    finalizeReverseHeader: "Finalized Bank B header",
-    updateReverseClient: "Updated Bank A client",
+    finalizeReverseHeader: "Read Bank B packet header",
+    updateReverseClient: "Trusted Bank B on Bank A",
     proveReverseUnlock: "Executed reverse storage proof",
     freezeClient: "Submitted conflicting update",
     recoverClient: "Recovered frozen client",

@@ -8,6 +8,7 @@ import {
 } from "./ibc-v2-handshake.mjs";
 import { buildBesuHeaderUpdate, buildConflictingBesuHeaderUpdate } from "./besu-header-v2.mjs";
 import {
+  defaultBesuRuntimeEnv,
   loadArtifact,
   normalizeRuntime,
   waitForBesuRuntimeReady,
@@ -19,6 +20,8 @@ import {
   signerForV2,
   V2_CONFIG_PATH,
 } from "./ibc-v2-config.mjs";
+
+defaultBesuRuntimeEnv();
 
 const OUT_JSON_PATH = resolve(process.cwd(), process.env.V2_DEMO_TRACE_JSON || "demo/latest-v2-run.json");
 const OUT_JS_PATH = resolve(process.cwd(), process.env.V2_DEMO_TRACE_JS || "demo/latest-v2-run.js");
@@ -1269,8 +1272,7 @@ async function ensureForwardPacket(config, ctx, sourceChainId, destinationChainI
   if (trace.forward?.packetId && trace.forward?.sequence && trace.forward?.commitHeight) {
     const committed = await ctx.A.packetStore.committedPacket(trace.forward.packetId).catch(() => false);
     if (!committed) {
-      await runV2DemoStep("lock", { prepared: { config, ctx, sourceChainId, destinationChainId } });
-      return ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
+      throw new Error("Forward packet is missing from Bank A. Run Lock aBANK before the header or proof steps.");
     }
 
     const amount = amountFromTrace(trace.forward, FORWARD_AMOUNT);
@@ -1292,23 +1294,15 @@ async function ensureForwardPacket(config, ctx, sourceChainId, destinationChainI
     };
   }
 
-  await runV2DemoStep("lock", { prepared: { config, ctx, sourceChainId, destinationChainId } });
-  return ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
+  throw new Error("No forward packet exists yet. Run Lock aBANK before the header or proof steps.");
 }
 
 async function ensureForwardPacketReceived(config, ctx, sourceChainId, destinationChainId) {
-  await openOrReuseHandshake(config, ctx);
-  let forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
+  const forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
   const received = await ctx.B.packetHandler.packetReceipts(forward.packetId).catch(() => false);
   if (received) return forward;
 
-  await runV2DemoStep("proveForwardMint", { prepared: { config, ctx, sourceChainId, destinationChainId } });
-  forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
-  const receivedAfterProof = await ctx.B.packetHandler.packetReceipts(forward.packetId);
-  if (!receivedAfterProof) {
-    throw new Error("Forward packet is still not received, so replay cannot be tested.");
-  }
-  return forward;
+  throw new Error("Forward packet is not received on Bank B yet. Run Prove + Mint before Replay Forward.");
 }
 
 async function ensureReversePacket(config, ctx, sourceChainId, destinationChainId) {
@@ -1346,6 +1340,15 @@ async function trustForwardHeader(config, ctx, sourceChainId, commitHeight) {
   });
 }
 
+async function readForwardHeader(ctx, sourceChainId, commitHeight) {
+  return buildBesuHeaderUpdate({
+    provider: ctx.providerA,
+    blockTag: ethers.toQuantity(commitHeight),
+    sourceChainId,
+    validatorEpoch: 1n,
+  });
+}
+
 async function trustReverseHeader(config, ctx, destinationChainId, commitHeight) {
   return trustRemoteHeaderAt({
     lightClient: ctx.A.lightClient,
@@ -1354,6 +1357,36 @@ async function trustReverseHeader(config, ctx, destinationChainId, commitHeight)
     targetHeight: commitHeight,
     validatorEpoch: 1n,
   });
+}
+
+async function readReverseHeader(ctx, destinationChainId, commitHeight) {
+  return buildBesuHeaderUpdate({
+    provider: ctx.providerB,
+    blockTag: ethers.toQuantity(commitHeight),
+    sourceChainId: destinationChainId,
+    validatorEpoch: 1n,
+  });
+}
+
+async function requireTrustedProofAnchor({ lightClient, sourceChainId, minimumHeight, sourceLabel, destinationLabel }) {
+  const requiredHeight = BigInt(minimumHeight);
+  const trustedHeight = BigInt(await lightClient.latestTrustedHeight(sourceChainId));
+  if (trustedHeight < requiredHeight) {
+    throw new Error(
+      `${destinationLabel} does not yet trust ${sourceLabel} at packet height ${requiredHeight.toString()}. ` +
+        `Run the client update step before executing the storage proof.`
+    );
+  }
+
+  const header = await lightClient.trustedHeader(sourceChainId, trustedHeight);
+  if (!header.exists) {
+    throw new Error(`${destinationLabel} trusted height ${trustedHeight.toString()} is missing from the light client.`);
+  }
+  return {
+    height: trustedHeight,
+    headerHash: header.headerHash,
+    stateRoot: header.stateRoot,
+  };
 }
 
 async function trustCurrentHeaderForProof({ lightClient, provider, sourceChainId, minimumHeight = 0n }) {
@@ -1447,8 +1480,32 @@ export async function runV2DemoStep(action, options = {}) {
     return trace;
   }
 
-  if (action === "finalizeForwardHeader" || action === "updateForwardClient") {
-    setPhase(`step-${action}`);
+  if (action === "finalizeForwardHeader") {
+    setPhase("step-finalizeForwardHeader");
+    const forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
+    const header = await readForwardHeader(ctx, sourceChainId, forward.commitHeight);
+    const trace = await writeTracePatch(
+      config,
+      ctx,
+      {
+        forward: {
+          finalizedHeight: header.headerUpdate.height.toString(),
+          finalizedHeaderHash: header.headerUpdate.headerHash,
+          finalizedStateRoot: header.headerUpdate.stateRoot,
+        },
+      },
+      {
+        phase: "forward-header-read",
+        label: "Read Bank A packet header",
+        summary: `Read Bank A Besu header #${header.headerUpdate.height.toString()}; Bank B still needs a client update before proof execution.`,
+      }
+    );
+    console.log(`Read Bank A header #${header.headerUpdate.height.toString()} for the forward packet`);
+    return trace;
+  }
+
+  if (action === "updateForwardClient") {
+    setPhase("step-updateForwardClient");
     const forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
     const header = await trustForwardHeader(config, ctx, sourceChainId, forward.commitHeight);
     const trace = await writeTracePatch(
@@ -1463,7 +1520,7 @@ export async function runV2DemoStep(action, options = {}) {
       },
       {
         phase: "forward-header-trusted",
-        label: action === "finalizeForwardHeader" ? "Read finalized Besu header" : "Updated Bank B Besu light client",
+        label: "Updated Bank B Besu light client",
         summary: `Bank B now trusts Bank A Besu header #${header.headerUpdate.height.toString()}.`,
       }
     );
@@ -1475,11 +1532,12 @@ export async function runV2DemoStep(action, options = {}) {
     setPhase("step-prove-forward");
     const { connectionHandshake, channelHandshake } = await openOrReuseHandshake(config, ctx);
     const forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
-    const proofAnchor = await trustCurrentHeaderForProof({
+    const proofAnchor = await requireTrustedProofAnchor({
       lightClient: ctx.B.lightClient,
-      provider: ctx.providerA,
       sourceChainId,
       minimumHeight: forward.commitHeight,
+      sourceLabel: "Bank A",
+      destinationLabel: "Bank B",
     });
     const proofs = await buildPacketProofs({
       provider: ctx.providerA,
@@ -1487,7 +1545,7 @@ export async function runV2DemoStep(action, options = {}) {
       packet: forward.packet,
       sourceChainId,
       trustedHeight: proofAnchor.height,
-      stateRoot: proofAnchor.header.headerUpdate.stateRoot,
+      stateRoot: proofAnchor.stateRoot,
     });
 
     let recvReceipt = null;
@@ -1546,8 +1604,8 @@ export async function runV2DemoStep(action, options = {}) {
             receiveTxHash: recvReceipt?.hash,
             receiveHeight: receiveHeight.toString(),
             trustedHeight: proofAnchor.height.toString(),
-            trustedHeaderHash: proofAnchor.header.headerUpdate.headerHash,
-            trustedStateRoot: proofAnchor.header.headerUpdate.stateRoot,
+            trustedHeaderHash: proofAnchor.headerHash,
+            trustedStateRoot: proofAnchor.stateRoot,
             destinationAckHash: ackHash,
             sourceAckHash,
             acknowledgementSlot,
@@ -1724,8 +1782,30 @@ export async function runV2DemoStep(action, options = {}) {
     );
   }
 
-  if (action === "finalizeReverseHeader" || action === "updateReverseClient") {
-    setPhase(`step-${action}`);
+  if (action === "finalizeReverseHeader") {
+    setPhase("step-finalizeReverseHeader");
+    const reverse = await ensureReversePacket(config, ctx, sourceChainId, destinationChainId);
+    const header = await readReverseHeader(ctx, destinationChainId, reverse.commitHeight);
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        reverse: {
+          finalizedHeight: header.headerUpdate.height.toString(),
+          finalizedHeaderHash: header.headerUpdate.headerHash,
+          finalizedStateRoot: header.headerUpdate.stateRoot,
+        },
+      },
+      {
+        phase: "reverse-header-read",
+        label: "Read Bank B packet header",
+        summary: `Read Bank B Besu header #${header.headerUpdate.height.toString()}; Bank A still needs a client update before proof execution.`,
+      }
+    );
+  }
+
+  if (action === "updateReverseClient") {
+    setPhase("step-updateReverseClient");
     const reverse = await ensureReversePacket(config, ctx, sourceChainId, destinationChainId);
     const header = await trustReverseHeader(config, ctx, destinationChainId, reverse.commitHeight);
     return writeTracePatch(
@@ -1740,7 +1820,7 @@ export async function runV2DemoStep(action, options = {}) {
       },
       {
         phase: "reverse-header-trusted",
-        label: action === "finalizeReverseHeader" ? "Read finalized Bank B header" : "Updated Bank A Besu light client",
+        label: "Updated Bank A Besu light client",
         summary: `Bank A now trusts Bank B Besu header #${header.headerUpdate.height.toString()}.`,
       }
     );
@@ -1750,11 +1830,12 @@ export async function runV2DemoStep(action, options = {}) {
     setPhase("step-prove-reverse");
     await openOrReuseHandshake(config, ctx);
     const reverse = await ensureReversePacket(config, ctx, sourceChainId, destinationChainId);
-    const proofAnchor = await trustCurrentHeaderForProof({
+    const proofAnchor = await requireTrustedProofAnchor({
       lightClient: ctx.A.lightClient,
-      provider: ctx.providerB,
       sourceChainId: destinationChainId,
       minimumHeight: reverse.commitHeight,
+      sourceLabel: "Bank B",
+      destinationLabel: "Bank A",
     });
     const proofs = await buildPacketProofs({
       provider: ctx.providerB,
@@ -1762,7 +1843,7 @@ export async function runV2DemoStep(action, options = {}) {
       packet: reverse.packet,
       sourceChainId: destinationChainId,
       trustedHeight: proofAnchor.height,
-      stateRoot: proofAnchor.header.headerUpdate.stateRoot,
+      stateRoot: proofAnchor.stateRoot,
     });
     let recvReceipt = null;
     try {
@@ -1783,8 +1864,8 @@ export async function runV2DemoStep(action, options = {}) {
           packetPathSlot: proofs.pathSlot,
           receiveTxHash: recvReceipt?.hash,
           trustedHeight: proofAnchor.height.toString(),
-          trustedHeaderHash: proofAnchor.header.headerUpdate.headerHash,
-          trustedStateRoot: proofAnchor.header.headerUpdate.stateRoot,
+          trustedHeaderHash: proofAnchor.headerHash,
+          trustedStateRoot: proofAnchor.stateRoot,
           finalSourceBalance: units(finalSourceBalance),
           finalEscrowed: units(finalEscrowed),
           proofMode: "storage",

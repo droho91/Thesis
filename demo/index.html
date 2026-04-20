@@ -19,11 +19,11 @@
             <h1>Verified bank-chain communication</h1>
             <p class="hero-text">
               This demo is organized around the trust path first. A voucher appears only after a
-              finalized header updates the remote client, the execution root becomes trusted, and a
-              packet storage proof executes exactly once.
+              source header is read, the remote client trusts that execution root, and a packet
+              storage proof executes exactly once.
             </p>
             <ul class="hero-tags" aria-label="Protocol guarantees">
-              <li>Finalized header</li>
+              <li>Source header</li>
               <li>Trusted execution root</li>
               <li>Storage proof execution</li>
               <li>Replay blocked</li>
@@ -51,7 +51,7 @@
               <dd id="packetSequenceA">-</dd>
             </div>
             <div>
-              <dt>Finalized headers</dt>
+              <dt>Source head</dt>
               <dd id="headerHeightA">-</dd>
             </div>
           </dl>
@@ -152,7 +152,7 @@
             </article>
             <article id="routeHeader">
               <span>02</span>
-              <strong>Finalized header</strong>
+              <strong>Header read</strong>
               <small id="routeHeaderText">waiting</small>
             </article>
             <article id="routeClient">
@@ -205,14 +205,14 @@
                 <p class="flow-kicker">Forward path</p>
                 <h3>Lock on Bank A, then prove on Bank B</h3>
                 <p>
-                  Commit the packet, finalize the header, update the remote client, and execute the
-                  storage proof before the voucher can exist on Bank B.
+                  Lock opens or reuses the route, then commits the packet. Read the source header,
+                  trust it on Bank B, and execute the storage proof before the voucher can exist.
                 </p>
               </div>
               <div class="flow-actions">
                 <button class="button-primary" data-action="lock" type="button">Lock aBANK</button>
-                <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Finalize A Header</button>
-                <button class="button-secondary" data-action="updateForwardClient" type="button">Update B Client</button>
+                <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Read A Header</button>
+                <button class="button-secondary" data-action="updateForwardClient" type="button">Trust A on B</button>
                 <button class="button-run" data-action="proveForwardMint" type="button">Prove + Mint</button>
               </div>
             </section>
@@ -239,14 +239,14 @@
                 <p class="flow-kicker">Reverse path</p>
                 <h3>Burn the voucher and unescrow on Bank A</h3>
                 <p>
-                  The return trip mirrors the forward path: commit on Bank B, trust the new header
-                  on Bank A, and then unlock the escrowed asset.
+                  The return trip mirrors the forward path: commit on Bank B, read the source
+                  header, trust it on Bank A, and then unlock the escrowed asset.
                 </p>
               </div>
               <div class="flow-actions">
                 <button class="button-danger" data-action="burn" type="button">Burn Voucher</button>
-                <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Finalize B Header</button>
-                <button class="button-secondary" data-action="updateReverseClient" type="button">Update A Client</button>
+                <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Read B Header</button>
+                <button class="button-secondary" data-action="updateReverseClient" type="button">Trust B on A</button>
                 <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock</button>
               </div>
             </section>
