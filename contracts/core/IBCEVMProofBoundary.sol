@@ -1,25 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IBCClient} from "./IBCClient.sol";
-import {IBCEVMTypes} from "./IBCEVMTypes.sol";
 import {MerklePatriciaProofLib} from "../libs/MerklePatriciaProofLib.sol";
 import {RLPDecodeLib} from "../libs/RLPDecodeLib.sol";
+import {IBesuLightClient} from "../clients/IBesuLightClient.sol";
+import {IBCEVMTypes} from "./IBCEVMTypes.sol";
 
 /// @title IBCEVMProofBoundary
-/// @notice Transitional helper for the Besu/EVM path. It binds EVM proofs to a trusted
-///         remote `stateRoot` and verifies account/storage inclusion under that root.
-///         It still does not verify Besu header finality or replace the packet flow end-to-end.
+/// @notice Verifies Ethereum account/storage proofs under a Besu light-client trusted state root.
 abstract contract IBCEVMProofBoundary {
-    IBCClient public immutable ibcClient;
+    IBesuLightClient public immutable besuLightClient;
 
-    constructor(address _ibcClient) {
-        require(_ibcClient != address(0), "CLIENT_ZERO");
-        ibcClient = IBCClient(_ibcClient);
+    constructor(address _besuLightClient) {
+        require(_besuLightClient != address(0), "CLIENT_ZERO");
+        besuLightClient = IBesuLightClient(_besuLightClient);
     }
 
-    function _trustedStateRoot(uint256 sourceChainId, bytes32 consensusStateHash) internal view returns (bytes32) {
-        return ibcClient.trustedStateRoot(sourceChainId, consensusStateHash);
+    function _trustedStateRoot(uint256 sourceChainId, uint256 trustedHeight) internal view returns (bytes32) {
+        return besuLightClient.trustedStateRoot(sourceChainId, trustedHeight);
     }
 
     function _verifyTrustedEVMStorageProofBoundary(IBCEVMTypes.StorageProof calldata proof)
@@ -27,9 +25,9 @@ abstract contract IBCEVMProofBoundary {
         view
         returns (bool)
     {
-        bytes32 trustedRoot = _trustedStateRoot(proof.sourceChainId, proof.consensusStateHash);
+        bytes32 trustedRoot = _trustedStateRoot(proof.sourceChainId, proof.trustedHeight);
         if (trustedRoot == bytes32(0) || trustedRoot != proof.stateRoot) return false;
-        if (proof.account == address(0) || proof.storageKey == bytes32(0) || proof.expectedValue.length == 0) {
+        if (proof.account == address(0) || proof.expectedValue.length == 0) {
             return false;
         }
         if (proof.accountProof.length == 0 || proof.storageProof.length == 0) return false;
@@ -57,6 +55,37 @@ abstract contract IBCEVMProofBoundary {
             abi.encodePacked(IBCEVMTypes.storageTrieKey(proof.storageKey)),
             proof.storageProof,
             proof.expectedValue
+        );
+    }
+
+    function _verifyTrustedEVMStorageAbsenceProof(IBCEVMTypes.StorageProof calldata proof)
+        internal
+        view
+        returns (bool)
+    {
+        bytes32 trustedRoot = _trustedStateRoot(proof.sourceChainId, proof.trustedHeight);
+        if (trustedRoot == bytes32(0) || trustedRoot != proof.stateRoot) return false;
+        if (proof.account == address(0) || proof.accountProof.length == 0 || proof.storageProof.length == 0) {
+            return false;
+        }
+
+        bytes memory accountValue = MerklePatriciaProofLib.extractProofValue(
+            proof.stateRoot,
+            abi.encodePacked(IBCEVMTypes.accountTrieKey(proof.account)),
+            proof.accountProof
+        );
+        if (accountValue.length == 0) return false;
+
+        bytes[] memory accountFields = RLPDecodeLib.readList(accountValue);
+        if (accountFields.length != 4) return false;
+        bytes memory storageRootBytes = accountFields[2];
+        if (storageRootBytes.length != 32) return false;
+        bytes32 storageRoot = RLPDecodeLib.toBytes32(storageRootBytes);
+
+        return MerklePatriciaProofLib.verifyAbsence(
+            storageRoot,
+            abi.encodePacked(IBCEVMTypes.storageTrieKey(proof.storageKey)),
+            proof.storageProof
         );
     }
 }

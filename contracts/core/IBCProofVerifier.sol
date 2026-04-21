@@ -3,55 +3,36 @@ pragma solidity ^0.8.28;
 
 import {IBCEVMProofBoundary} from "./IBCEVMProofBoundary.sol";
 import {IBCEVMTypes} from "./IBCEVMTypes.sol";
-import {IBCPathLib} from "./IBCPathLib.sol";
-import {PacketLib} from "../libs/PacketLib.sol";
-import {SourcePacketCommitmentSlots} from "../source/SourcePacketCommitmentSlots.sol";
+import {IBCPacketStoreSlots} from "./IBCPacketStoreSlots.sol";
+import {IBCPacketLib} from "./IBCPacketLib.sol";
 
 /// @title IBCProofVerifier
-/// @notice Core helper that verifies packet commitments against a trusted remote client.
+/// @notice IBC packet-proof helper bound to BesuLightClient trust-by-height.
 abstract contract IBCProofVerifier is IBCEVMProofBoundary {
-    constructor(address _ibcClient) IBCEVMProofBoundary(_ibcClient) {}
-
-    function _verifyPacketNonMembership(
-        uint256 sourceChainId,
-        bytes32 consensusStateHash,
-        bytes32 path,
-        bytes32 value,
-        bytes calldata proof
-    ) internal view returns (bool) {
-        return ibcClient.verifyNonMembership(sourceChainId, consensusStateHash, path, value, proof);
-    }
+    constructor(address besuLightClient_) IBCEVMProofBoundary(besuLightClient_) {}
 
     function _verifyPacketStorageMembership(
-        PacketLib.Packet calldata packet,
+        IBCPacketLib.Packet calldata packet,
+        address trustedPacketStore,
         IBCEVMTypes.StorageProof calldata leafProof,
         IBCEVMTypes.StorageProof calldata pathProof
     ) internal view returns (bool) {
-        bytes32 expectedLeaf = PacketLib.leafHashCalldata(packet);
-        bytes32 expectedPath = IBCPathLib.packetCommitmentPath(packet.sourceChainId, packet.sourcePort, packet.sequence);
+        bytes32 expectedLeaf = IBCPacketLib.leafHashCalldata(packet);
+        bytes32 expectedPath = IBCPacketLib.commitmentPathCalldata(packet);
 
-        if (leafProof.sourceChainId != packet.sourceChainId || pathProof.sourceChainId != packet.sourceChainId) {
+        if (trustedPacketStore == address(0)) return false;
+        if (leafProof.sourceChainId != packet.source.chainId || pathProof.sourceChainId != packet.source.chainId) {
             return false;
         }
-        if (leafProof.consensusStateHash == bytes32(0) || leafProof.consensusStateHash != pathProof.consensusStateHash) {
-            return false;
-        }
+        if (leafProof.trustedHeight == 0 || leafProof.trustedHeight != pathProof.trustedHeight) return false;
         if (leafProof.stateRoot == bytes32(0) || leafProof.stateRoot != pathProof.stateRoot) return false;
-        if (leafProof.account == address(0) || leafProof.account != pathProof.account) return false;
-        if (
-            leafProof.account
-                != ibcClient.trustedPacketCommitment(leafProof.sourceChainId, leafProof.consensusStateHash)
-        ) {
-            return false;
-        }
+        if (leafProof.account != trustedPacketStore || pathProof.account != trustedPacketStore) return false;
 
-        if (leafProof.storageKey != SourcePacketCommitmentSlots.packetLeafAt(packet.sequence)) return false;
-        if (pathProof.storageKey != SourcePacketCommitmentSlots.packetPathAt(packet.sequence)) return false;
+        if (leafProof.storageKey != IBCPacketStoreSlots.packetLeafAt(packet.sequence)) return false;
+        if (pathProof.storageKey != IBCPacketStoreSlots.packetPathAt(packet.sequence)) return false;
 
-        bytes memory expectedLeafValue = IBCEVMTypes.rlpEncodeWord(expectedLeaf);
-        bytes memory expectedPathValue = IBCEVMTypes.rlpEncodeWord(expectedPath);
-        if (keccak256(leafProof.expectedValue) != keccak256(expectedLeafValue)) return false;
-        if (keccak256(pathProof.expectedValue) != keccak256(expectedPathValue)) return false;
+        if (keccak256(leafProof.expectedValue) != keccak256(IBCEVMTypes.rlpEncodeWord(expectedLeaf))) return false;
+        if (keccak256(pathProof.expectedValue) != keccak256(IBCEVMTypes.rlpEncodeWord(expectedPath))) return false;
 
         return _verifyTrustedEVMStorageProof(leafProof) && _verifyTrustedEVMStorageProof(pathProof);
     }

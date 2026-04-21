@@ -1,4 +1,4 @@
-import { CHAIN_A_RPC, CHAIN_B_RPC } from "./ibc-lite-common.mjs";
+import { CHAIN_A_RPC, CHAIN_B_RPC } from "./besu-runtime.mjs";
 
 const TIMEOUT_MS = Number(process.env.BESU_PREFLIGHT_TIMEOUT_MS || 1200);
 
@@ -48,7 +48,7 @@ console.error("Start Docker Desktop first, then run:");
 console.error("  npm run besu:up");
 console.error("");
 console.error("After both RPCs are ready, continue with:");
-console.error("  npm run deploy:v2");
-console.error("  npm run seed:v2");
-console.error("  npm run demo:v2");
+console.error("  npm run deploy");
+console.error("  npm run seed");
+console.error("  npm run demo");
 process.exit(1);

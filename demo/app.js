@@ -5,7 +5,7 @@ const actionButtons = [...document.querySelectorAll("[data-action]")];
 const deploySeedButton = document.getElementById("deploySeed");
 const resetSeededButton = document.getElementById("resetSeeded");
 const refreshButton = document.getElementById("refreshState");
-const ACTIVITY_STORAGE_KEY = "ibc-lite-latest-activity";
+const ACTIVITY_STORAGE_KEY = "interchain-lending-latest-activity";
 const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Recovering"];
 let currentStatus = null;
 
@@ -40,6 +40,7 @@ function snapshotStatus(status) {
   const statusBOnA =
     status.progress?.statusBOnAName || CLIENT_STATUS[Number(status.progress?.statusBOnA)] || status.progress?.statusBOnA;
   const misbehaviour = status.trace?.misbehaviour || {};
+  const timeoutAbsence = status.security?.timeoutAbsence || status.security?.nonMembership;
   return {
     packetSequenceA: status.progress?.packetSequenceA,
     headerHeightA: status.progress?.headerHeightA,
@@ -62,7 +63,7 @@ function snapshotStatus(status) {
     replayBlocked: status.security?.replayBlocked
       ? `blocked${status.security?.replayProofHeight ? ` @ ${status.security.replayProofHeight}` : ""}`
       : "pending",
-    nonMembership: status.security?.nonMembership ? `seq ${status.security.nonMembership.absentSequence}` : null,
+    timeoutAbsence: timeoutAbsence ? `seq ${timeoutAbsence.absentSequence || "-"}` : null,
     misbehaviour: misbehaviour.frozen
       ? `frozen ${misbehaviour.height || "-"}`
       : misbehaviour.recovered
@@ -73,22 +74,22 @@ function snapshotStatus(status) {
 
 const FACT_LABELS = {
   packetSequenceA: "Bank A packet sequence",
-  headerHeightA: "Bank A source head",
-  trustedAOnB: "Bank B trusted Bank A header",
+  headerHeightA: "Bank A header height",
+  trustedAOnB: "Bank B imported Bank A header",
   voucherBalance: "Voucher balance",
   bankBBalance: "Borrowed bCASH",
   poolCollateral: "Pool collateral",
   poolDebt: "Pool debt",
   escrowBalance: "Escrowed aBANK",
   packetSequenceB: "Bank B packet sequence",
-  headerHeightB: "Bank B source head",
-  trustedBOnA: "Bank A trusted Bank B header",
-  forwardPacketId: "Forward packet receipt",
-  reversePacketId: "Reverse packet receipt",
-  safetyState: "Client safety state",
+  headerHeightB: "Bank B header height",
+  trustedBOnA: "Bank A imported Bank B header",
+  forwardPacketId: "Forward packet id",
+  reversePacketId: "Reverse packet id",
+  safetyState: "Light-client safety state",
   replayBlocked: "Replay protection",
-  nonMembership: "Non-membership proof",
-  misbehaviour: "Misbehaviour evidence",
+  timeoutAbsence: "Timeout absence proof",
+  misbehaviour: "Conflicting-header evidence",
 };
 
 function collectChanges(before, after) {
@@ -105,23 +106,24 @@ function collectChanges(before, after) {
 
 function actionTitle(action) {
   const titles = {
+    openRoute: "Opened IBC connection and channel",
     lock: "Locked aBANK and committed packet",
-    finalizeForwardHeader: "Read Bank A packet header",
-    updateForwardClient: "Trusted Bank A on Bank B",
+    finalizeForwardHeader: "Read Bank A Besu header",
+    updateForwardClient: "Imported Bank A header on Bank B",
     proveForwardMint: "Executed forward storage proof",
     depositCollateral: "Deposited voucher collateral",
     borrow: "Borrowed Bank B credit",
     repay: "Repaid Bank B credit",
     withdrawCollateral: "Withdrew voucher collateral",
     burn: "Burned voucher on Bank B",
-    finalizeReverseHeader: "Read Bank B packet header",
-    updateReverseClient: "Trusted Bank B on Bank A",
+    finalizeReverseHeader: "Read Bank B Besu header",
+    updateReverseClient: "Imported Bank B header on Bank A",
     proveReverseUnlock: "Executed reverse storage proof",
-    freezeClient: "Submitted conflicting update",
-    recoverClient: "Recovered frozen client",
+    freezeClient: "Submitted conflicting header",
+    recoverClient: "Recovered frozen light client",
     replayForward: "Attempted forward replay",
-    checkNonMembership: "Verified non-membership",
-    fullFlow: "Completed full proof-backed flow",
+    verifyTimeoutAbsence: "Verified timeout absence",
+    fullFlow: "Completed cross-chain lending flow",
     deploySeed: "Prepared or reused runtime",
     resetSeeded: "Fresh reset to seeded baseline",
     refresh: "Refreshed live state",
@@ -148,11 +150,11 @@ function activityFromStatus(status) {
   const operation = status?.trace?.latestOperation;
   if (!operation) return null;
   return {
-    title: operation.label || "Latest v2 operation",
-    summary: operation.summary || "The latest trace was loaded from the local v2 run output.",
+    title: operation.label || "Latest demo operation",
+    summary: operation.summary || "The latest trace was loaded from the local demo run output.",
     time: status.trace?.generatedAt,
     timeLabel: formatClock(status.trace?.generatedAt),
-    changes: [{ value: operation.phase ? `phase: ${operation.phase}` : "Trace loaded from the latest v2 run." }],
+    changes: [{ value: operation.phase ? `phase: ${operation.phase}` : "Trace loaded from the latest demo run." }],
   };
 }
 
@@ -206,12 +208,12 @@ async function runDeploySeed() {
   setBusy(true);
   setText("lastMessage", "Preparing demo runtime...");
   setOutput(
-    "Checking whether the v2 stack is already deployed and seeded. If it is ready, this skips the slow setup path."
+    "Checking whether the interchain lending stack is already deployed and seeded. If it is ready, this skips the slow setup path."
   );
   try {
     const payload = await requestJson("/api/deploy-seed", { method: "POST" });
     renderStatus(payload.status);
-    pushActivity("deploySeed", "The v2 runtime is ready for live demo actions.", payload.status);
+    pushActivity("deploySeed", "The interchain lending runtime is ready for live demo actions.", payload.status);
     currentStatus = payload.status;
     setText("lastMessage", "Demo runtime ready.");
     setOutput(payload.output);
@@ -228,17 +230,17 @@ async function runResetSeeded() {
   setBusy(true);
   setText("lastMessage", "Running fresh reset to seeded baseline...");
   setOutput(
-    "Creating a fresh v2 deployment, seeding policy/oracle/risk state, and clearing the demo trace. Run this before the live demo window."
+    "Creating a fresh interchain lending deployment, seeding policy/oracle/risk state, and clearing the demo trace. Run this before the live demo window."
   );
   try {
     const payload = await requestJson("/api/reset-seeded", { method: "POST" });
     renderStatus(payload.status);
-    pushActivity("resetSeeded", "A fresh v2 runtime was deployed and seeded for a clean demo baseline.", payload.status);
+    pushActivity("resetSeeded", "A fresh interchain lending runtime was deployed and seeded for a clean demo baseline.", payload.status);
     currentStatus = payload.status;
     setText("lastMessage", "Fresh reset complete.");
     setOutput(payload.output);
   } catch (error) {
-    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Reset to Seeded failed.");
+    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Fresh Reset failed.");
     setOutput(error.message);
     pushFailedActivity("resetSeeded", error);
   } finally {
@@ -248,8 +250,9 @@ async function runResetSeeded() {
 
 async function runAction(action) {
   setBusy(true);
-  setText("lastMessage", `Running ${action}...`);
-  setOutput(`Calling action: ${action}`);
+  const title = actionTitle(action);
+  setText("lastMessage", `Running ${title}...`);
+  setOutput(`Calling action: ${title}`);
   try {
     const payload = await requestJson("/api/action", {
       method: "POST",
@@ -261,7 +264,7 @@ async function runAction(action) {
     setText("lastMessage", payload.message);
     setOutput(payload.message);
   } catch (error) {
-    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : `${action} failed.`);
+    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : `${title} failed.`);
     setOutput(error.message);
     pushFailedActivity(action, error);
   } finally {

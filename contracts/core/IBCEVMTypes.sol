@@ -2,11 +2,11 @@
 pragma solidity ^0.8.28;
 
 /// @title IBCEVMTypes
-/// @notice Shared EVM proof boundary types for the Besu/QBFT transition path.
+/// @notice Shared EVM proof types for the Besu light-client interchain lane.
 library IBCEVMTypes {
     struct StorageProof {
         uint256 sourceChainId;
-        bytes32 consensusStateHash;
+        uint256 trustedHeight;
         bytes32 stateRoot;
         address account;
         bytes32 storageKey;

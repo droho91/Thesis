@@ -4,7 +4,7 @@ import {
   providerForRpc,
   waitForBesuRuntimeReady,
   waitForProviderBlockHeight,
-} from "./ibc-lite-common.mjs";
+} from "./besu-runtime.mjs";
 
 async function main() {
   await waitForBesuRuntimeReady();

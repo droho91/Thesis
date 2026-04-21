@@ -127,14 +127,14 @@ export function renderRoadmap(status) {
 
   setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? "packet written" : "ready");
   setRoute("routeHeader", headerFinalized ? "done" : escrowed ? "active" : "", headerFinalized ? "header read" : "waiting");
-  setRoute("routeClient", trusted ? "done" : headerFinalized ? "active" : "", trusted ? "trusted packet header" : "waiting");
+  setRoute("routeClient", trusted ? "done" : headerFinalized ? "active" : "", trusted ? "header imported" : "waiting");
   const proofLabel =
     forwardProofMode === "storage"
       ? "storage proof"
       : forwardProofMode === "merkle"
         ? runtime.besuFirst
-          ? "unexpected compatibility path"
-          : "compatibility proof"
+          ? "fallback proof"
+          : "fallback proof"
         : "executed once";
   setRoute("routeProof", proven ? "done" : trusted ? "active" : "", proven ? proofLabel : "waiting");
   setRoute(
@@ -155,7 +155,7 @@ export function renderRoadmap(status) {
   setRoute(
     "routeReverse",
     unlocked ? "done" : reverseTrusted || reverseWritten ? "active" : "",
-    unlocked ? "unescrowed" : reverseTrusted ? "trusted" : reverseWritten ? "packet written" : "waiting"
+    unlocked ? "unlocked" : reverseTrusted ? "header imported" : reverseWritten ? "packet written" : "waiting"
   );
   setRoute(
     "routeSafety",
@@ -169,13 +169,13 @@ export function renderStatus(status) {
     const runtime = status?.runtime || {};
     setText(
       "deploymentStatus",
-      status?.label || (runtime.besuFirst ? "Besu runtime waiting" : "Compatibility runtime waiting")
+      status?.label || (runtime.besuFirst ? "Besu runtime waiting" : "Local runtime waiting")
     );
     deploymentStatus?.classList.remove("is-live");
     deploymentStatus?.classList.add("is-offline");
     setText(
       "lastMessage",
-      status?.message || (runtime.besuFirst ? "Start the Besu bank chains." : "Start the internal compatibility stack.")
+      status?.message || (runtime.besuFirst ? "Start the Besu bank chains." : "Start the local runtime.")
     );
     renderRoadmap();
     return;
@@ -189,11 +189,11 @@ export function renderStatus(status) {
     "deploymentStatus",
     activeOperation
       ? `Controller busy / ${activeOperation.label}`
-      : status.stackVersion === "v2"
-      ? "Besu v2 runtime active / native header + storage proof path"
+      : status.stackVersion === "besu-light-client"
+      ? "Besu runtime active / light-client header + storage proof path"
       : runtime.besuFirst
       ? `Besu runtime active${runtime.proofPolicy === "storage-required" ? " / storage proof required" : ""}`
-      : "Compatibility runtime active"
+      : "Local runtime active"
   );
   setText("bankABalance", `${status.balances.bankA} aBANK`);
   setText("escrowBalance", `${status.balances.escrow} aBANK`);
@@ -244,11 +244,12 @@ export function renderStatus(status) {
       ? `blocked${security.replayProofHeight ? ` @ ${security.replayProofHeight}` : ""}`
       : "pending"
   );
+  const timeoutAbsence = security.timeoutAbsence || security.nonMembership;
   setText(
-    "nonMembershipState",
-    security.nonMembership
-      ? `seq ${security.nonMembership.absentSequence}`
-      : security.nonMembershipImplemented
+    "timeoutAbsenceState",
+    timeoutAbsence
+      ? `seq ${timeoutAbsence.absentSequence || "-"}`
+      : security.timeoutAbsenceImplemented || security.nonMembershipImplemented
         ? "ready"
         : "-"
   );

@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { resolve } from "node:path";
-import { normalizeRuntime } from "./ibc-lite-common.mjs";
-import { handleDemoApi } from "./ibc-lite-demo-api.mjs";
-import { serveStaticDemo } from "./ibc-lite-demo-static-server.mjs";
+import { normalizeRuntime } from "./besu-runtime.mjs";
+import { handleDemoApi } from "./demo-api.mjs";
+import { serveStaticDemo } from "./demo-static-server.mjs";
 
 const root = resolve(process.cwd(), "demo");
 const port = Number(process.env.DEMO_UI_PORT || 5173);

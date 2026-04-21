@@ -10,7 +10,7 @@
 # Hardhat Build Artifacts
 /artifacts
 
-# Hardhat compilation (v2) support directory
+# Hardhat compilation support directory
 /cache
 
 # Typechain output
@@ -20,11 +20,9 @@
 /coverage
 
 # Runtime-generated demo state
-/demo/multichain-addresses.json
-/demo/multichain-relayer-state.json
 /demo/latest-run.js
 /demo/latest-run.json
-/.ibc-lite.local.json
+/.interchain-lending.local.json
 
 # Generated Besu runtime state
 /networks/besu/**/data
