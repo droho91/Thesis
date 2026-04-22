@@ -36,6 +36,15 @@ function present(value) {
   return value != null && value !== "";
 }
 
+function numeric(value) {
+  const number = Number(String(value ?? "0").replace(/,/g, ""));
+  return Number.isFinite(number) ? number : 0;
+}
+
+function clamp(value, min = 0, max = 100) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function heightAtLeast(value, minimum) {
   if (!present(value) || !present(minimum)) return false;
   try {
@@ -79,6 +88,192 @@ function setRoute(id, state, text) {
   node.classList.toggle("is-done", state === "done");
   node.classList.toggle("is-active", state === "active");
   setText(`${id}Text`, text);
+}
+
+function setMeter(id, value) {
+  const node = document.getElementById(id);
+  if (node) node.style.setProperty("--value", `${clamp(value)}%`);
+}
+
+function setFlowCheck(id, state, text) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.classList.toggle("is-done", state === "done");
+  node.classList.toggle("is-active", state === "active");
+  const value = node.querySelector("strong");
+  if (value) value.textContent = text;
+}
+
+function buildVisualModel(status) {
+  if (!status?.deployed) {
+    return {
+      stage: "offline",
+      stageLabel: "Runtime offline",
+      proofReadiness: 0,
+      nextActionTitle: "Prepare Runtime",
+      nextActionHint: "Start from a live seeded baseline.",
+      packetLabel: "seq -",
+      proofMode: "waiting",
+      escrowText: "waiting",
+      trustText: "waiting",
+      creditText: "waiting",
+    };
+  }
+
+  const progress = status.progress || {};
+  const balances = status.balances || {};
+  const trace = status.trace || {};
+  const security = status.security || {};
+  const forward = trace.forward || {};
+  const reverse = trace.reverse || {};
+  const lending = trace.risk || trace.lending || {};
+  const escrowed =
+    present(forward.commitHeight) ||
+    present(forward.packetId) ||
+    numeric(progress.packetSequenceA) > 0 ||
+    numeric(balances.escrow) > 0;
+  const headerFinalized = present(forward.finalizedHeight) || present(forward.trustedHeight);
+  const trusted =
+    numeric(progress.trustedAOnB) > 0 ||
+    present(status.trust?.aOnB?.consensusHash) ||
+    (present(forward.commitHeight) &&
+      (heightAtLeast(forward.trustedHeight, forward.commitHeight) ||
+        heightAtLeast(progress.trustedAOnB, forward.commitHeight)));
+  const proven =
+    Boolean(forward.receiveTxHash || security.forwardConsumed) ||
+    numeric(balances.voucher) > 0 ||
+    numeric(balances.poolCollateral) > 0;
+  const collateralized = Boolean(lending.collateralDeposited) || numeric(balances.poolCollateral) > 0;
+  const borrowed = Boolean(lending.borrowed) || numeric(balances.poolDebt) > 0 || numeric(balances.bankB) > 0;
+  const reverseStarted = present(reverse.commitHeight) || present(reverse.packetId) || Boolean(reverse.receiveTxHash);
+  const safety = Boolean(security.frozen || security.recovering || trace.misbehaviour?.frozen);
+
+  let stage = "ready";
+  if (safety) stage = "safety";
+  else if (reverseStarted) stage = "reverse";
+  else if (borrowed) stage = "borrowed";
+  else if (collateralized) stage = "lending";
+  else if (proven) stage = "proof";
+  else if (trusted) stage = "trust";
+  else if (escrowed) stage = "escrow";
+
+  const stageLabels = {
+    ready: "Ready",
+    escrow: "Escrow locked",
+    trust: "Trust imported",
+    proof: "Proof accepted",
+    lending: "Collateral active",
+    borrowed: "Credit live",
+    reverse: "Return path",
+    safety: "Safety mode",
+  };
+
+  const proofReadiness =
+    12 +
+    (escrowed ? 18 : 0) +
+    (headerFinalized ? 18 : 0) +
+    (trusted ? 24 : 0) +
+    (proven ? 28 : 0);
+
+  let nextActionTitle = "Lock aBANK";
+  let nextActionHint = "Write the forward packet and put source collateral in escrow.";
+  if (!escrowed) {
+    nextActionTitle = "Lock aBANK";
+    nextActionHint = "Create the collateral packet on Bank A.";
+  } else if (!headerFinalized) {
+    nextActionTitle = "Read Bank A Header";
+    nextActionHint = "Capture the finalized source header for Bank B.";
+  } else if (!trusted) {
+    nextActionTitle = "Import Header on Bank B";
+    nextActionHint = "Move the source trust anchor into the destination chain.";
+  } else if (!proven) {
+    nextActionTitle = "Verify Proof + Mint";
+    nextActionHint = "Accept the packet proof and mint the voucher.";
+  } else if (!collateralized) {
+    nextActionTitle = "Deposit Voucher";
+    nextActionHint = "Turn the proven voucher into pool collateral.";
+  } else if (!borrowed) {
+    nextActionTitle = "Borrow bCASH";
+    nextActionHint = "Draw credit against the verified collateral.";
+  } else if (numeric(balances.poolDebt) > 0) {
+    nextActionTitle = "Repay bCASH";
+    nextActionHint = "Close the active debt before withdrawing collateral.";
+  } else if (!reverseStarted) {
+    nextActionTitle = "Burn Voucher";
+    nextActionHint = "Start the reverse packet and unlock source value.";
+  } else {
+    nextActionTitle = "Verify Proof + Unlock";
+    nextActionHint = "Complete the return proof path on Bank A.";
+  }
+  if (safety) {
+    nextActionTitle = security.recovering ? "Recover Light Client" : "Recover or inspect evidence";
+    nextActionHint = "Resolve the frozen or recovering trust state before normal flow resumes.";
+  }
+
+  return {
+    stage,
+    stageLabel: stageLabels[stage],
+    proofReadiness: clamp(proofReadiness),
+    nextActionTitle,
+    nextActionHint,
+    packetLabel: `seq ${progress.packetSequenceA ?? "-"}`,
+    proofMode: forward.proofMode ? `${forward.proofMode} proof` : "waiting",
+    escrowText: escrowed ? `${balances.escrow ?? "0.0"} aBANK` : "waiting",
+    trustText: trusted ? `header ${progress.trustedAOnB ?? "-"}` : headerFinalized ? "ready" : "waiting",
+    creditText: borrowed
+      ? `${balances.poolDebt ?? "0.0"} debt`
+      : collateralized
+        ? "collateral active"
+        : proven
+          ? "ready"
+          : "waiting",
+    escrowed,
+    trusted,
+    proven,
+    collateralized,
+    borrowed,
+  };
+}
+
+function renderVisualStatus(status) {
+  const model = buildVisualModel(status);
+  const balances = status?.balances || {};
+  const map = document.getElementById("capitalMap");
+  if (map) map.dataset.stage = model.stage;
+  document.body.dataset.demoStage = model.stage;
+
+  setText("flowStageBadge", model.stageLabel);
+  setText("visualBankABalance", status?.deployed ? `${balances.bankA ?? "-"} aBANK` : "-");
+  setText("visualBankBBalance", status?.deployed ? `${balances.bankB ?? "-"} bCASH` : "-");
+  setText("visualPacketLabel", model.packetLabel);
+  setText("visualProofMode", model.proofMode);
+
+  setFlowCheck("visualEscrowState", model.escrowed ? "done" : model.stage === "ready" ? "active" : "", model.escrowText);
+  setFlowCheck("visualTrustState", model.trusted ? "done" : model.escrowed ? "active" : "", model.trustText);
+  setFlowCheck(
+    "visualCreditState",
+    model.borrowed || model.collateralized ? "done" : model.proven ? "active" : "",
+    model.creditText
+  );
+
+  setText("proofReadinessText", `${Math.round(model.proofReadiness)}%`);
+  setMeter("proofReadinessBar", model.proofReadiness);
+
+  const collateral = numeric(balances.poolCollateral);
+  const debt = numeric(balances.poolDebt);
+  const liquidity = numeric(balances.poolLiquidity);
+  const collateralRatio = debt > 0 ? (collateral / debt) * 100 : collateral > 0 ? 100 : 0;
+  const utilization = debt + liquidity > 0 ? (debt / (debt + liquidity)) * 100 : 0;
+
+  setText(
+    "collateralHealthText",
+    debt > 0 ? `${Math.round(collateralRatio)}%` : collateral > 0 ? "covered" : status?.deployed ? "idle" : "-"
+  );
+  setMeter("collateralHealthBar", debt > 0 ? collateralRatio / 2 : collateral > 0 ? 100 : 0);
+  setText("creditUtilText", status?.deployed ? `${utilization >= 10 ? utilization.toFixed(0) : utilization.toFixed(1)}%` : "-");
+  setMeter("creditUtilBar", utilization);
+  setText("nextActionTitle", model.nextActionTitle);
+  setText("nextActionHint", model.nextActionHint);
 }
 
 export function renderRoadmap(status) {
@@ -167,6 +362,7 @@ export function renderRoadmap(status) {
 export function renderStatus(status) {
   if (!status?.deployed) {
     const runtime = status?.runtime || {};
+    renderVisualStatus(status);
     setText(
       "deploymentStatus",
       status?.label || (runtime.besuFirst ? "Besu runtime waiting" : "Local runtime waiting")
@@ -181,6 +377,7 @@ export function renderStatus(status) {
     return;
   }
 
+  renderVisualStatus(status);
   deploymentStatus?.classList.add("is-live");
   deploymentStatus?.classList.remove("is-offline");
   const runtime = status.runtime || {};
@@ -284,6 +481,7 @@ export function renderLatestActivity(activity) {
 }
 
 export function markControllerOffline() {
+  renderVisualStatus(null);
   setText("deploymentStatus", "Controller offline");
   deploymentStatus?.classList.remove("is-live");
   deploymentStatus?.classList.add("is-offline");

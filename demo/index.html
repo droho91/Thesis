@@ -8,74 +8,120 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="ambient ambient-a" aria-hidden="true"></div>
-    <div class="ambient ambient-b" aria-hidden="true"></div>
-    <div class="ambient-grid" aria-hidden="true"></div>
-
     <main class="shell">
       <section class="hero hero-cinematic">
         <div class="hero-copy-panel">
-          <div class="hero-topline">
-            <span class="eyebrow">Interchain lending demo</span>
-            <span class="hero-topline-pill">Besu light-client + storage proof</span>
+          <div class="hero-brand">
+            <div class="brand-emblem">
+              <img src="./assets/logo.png" alt="Trust-verified capital logo" />
+            </div>
+            <div class="brand-signature">
+              <span>Cross-Chain Lending Controller</span>
+              <strong>Trust-Verified Capital</strong>
+            </div>
+            <div class="brand-ledger" aria-hidden="true">
+              <span>Bank A</span>
+              <b></b>
+              <span>Bank B</span>
+            </div>
           </div>
 
-          <h1>Trust imported state. Then make capital move.</h1>
+          <div class="hero-topline">
+            <span class="eyebrow">Interchain lending demo</span>
+            <span class="hero-topline-pill">Besu light-client proof path</span>
+          </div>
+
+          <h1>Verified collateral. Institutional credit across chains.</h1>
           <p class="hero-text">
-            A cinematic demo of cross-chain lending: Bank A escrows assets, Bank B imports a
-            finalized header, verifies packet proof, mints a voucher, then unlocks borrowing and
-            controlled recovery.
+            A clean operating console for cross-chain lending: Bank A escrows assets, Bank B imports
+            finalized trust, verifies proof, mints collateral, and opens a controlled credit line.
           </p>
 
           <div class="hero-actions">
-            <button class="button-primary" id="deploySeed" type="button">Prepare / Reuse Runtime</button>
-            <button class="button-secondary" id="refreshState" type="button">Refresh Live State</button>
-            <button class="button-run" data-action="fullFlow" type="button">Run Signature Flow</button>
+            <button class="button-primary" id="deploySeed" type="button">Prepare Runtime</button>
+            <button class="button-secondary" id="refreshState" type="button">Refresh State</button>
+            <button class="button-secondary" id="focusMode" type="button" aria-pressed="false">Focus Mode</button>
+            <button class="button-run" data-action="fullFlow" type="button">Run Full Flow</button>
           </div>
 
           <div class="hero-story">
             <article class="story-chip">
-              <strong>Imported trust</strong>
-              <span>Headers and roots arrive before any remote state is accepted.</span>
+              <strong>Capital view</strong>
+              <span>Balances, vouchers, escrow, and debt stay visible in one command surface.</span>
             </article>
             <article class="story-chip">
-              <strong>Proven collateral</strong>
-              <span>Vouchers are minted only after proof execution succeeds once.</span>
+              <strong>Proof discipline</strong>
+              <span>Collateral is accepted only after imported headers and packet proof pass.</span>
             </article>
             <article class="story-chip">
-              <strong>Visible safety</strong>
-              <span>Replay protection, freezing, and recovery remain part of the live story.</span>
+              <strong>Bank-grade control</strong>
+              <span>Replay protection, freeze, and recovery remain part of the operator workflow.</span>
             </article>
           </div>
         </div>
 
         <aside class="hero-visual-panel">
-          <section class="hero-panel runtime-panel">
-            <div class="section-head compact">
-              <p class="eyebrow">Runtime status</p>
-              <h2>Controller and proof path</h2>
+          <section class="hero-panel flow-visual-panel" aria-label="Capital flow visualizer">
+            <div class="visual-head">
+              <div>
+                <p class="eyebrow">Capital flow</p>
+                <h2>Proof-backed lending circuit</h2>
+              </div>
+              <span class="scene-badge" id="flowStageBadge">Baseline</span>
             </div>
+
             <div class="status-pill" id="deploymentStatus">Checking local stack</div>
-            <p class="runtime-note">
-              The interface is intentionally dramatic, but the trust anchor remains mechanical:
-              header import, proof verification, and one-time packet execution.
-            </p>
-            <ul class="runtime-points" aria-label="Core guarantees">
-              <li>Header import on destination chain</li>
-              <li>Single-use packet verification</li>
-              <li>Voucher-backed borrowing path</li>
-              <li>Explicit freeze and recovery flow</li>
-            </ul>
+
+            <div class="capital-map" id="capitalMap" data-stage="offline">
+              <article class="bank-node bank-node--a">
+                <span>Bank A</span>
+                <strong id="visualBankABalance">-</strong>
+                <small>Source collateral</small>
+              </article>
+
+              <div class="bridge-lane" aria-hidden="true">
+                <span class="lane-line lane-line--forward"></span>
+                <span class="lane-line lane-line--reverse"></span>
+                <span class="flow-token flow-token--collateral"></span>
+                <span class="flow-token flow-token--proof"></span>
+                <span class="flow-token flow-token--credit"></span>
+                <div class="bridge-core">
+                  <span id="visualPacketLabel">seq -</span>
+                  <strong id="visualProofMode">waiting</strong>
+                </div>
+              </div>
+
+              <article class="bank-node bank-node--b">
+                <span>Bank B</span>
+                <strong id="visualBankBBalance">-</strong>
+                <small>Destination credit</small>
+              </article>
+            </div>
+
+            <div class="flow-checks" aria-label="Live flow states">
+              <div class="flow-check" id="visualEscrowState">
+                <span>Escrow</span>
+                <strong>waiting</strong>
+              </div>
+              <div class="flow-check" id="visualTrustState">
+                <span>Trust import</span>
+                <strong>waiting</strong>
+              </div>
+              <div class="flow-check" id="visualCreditState">
+                <span>Credit line</span>
+                <strong>waiting</strong>
+              </div>
+            </div>
           </section>
 
           <section class="hero-panel hero-proof-window">
             <div class="proof-window-head">
               <div class="brand-frame">
-                <img src="./assets/logo.png" alt="Bank chain client mark" />
+                <img src="./assets/logo.png" alt="Trust-verified capital mark" />
               </div>
               <div class="proof-window-copy">
                 <p class="eyebrow">Live imported trust</p>
-                <h2>Bank B accepts Bank A only after verification</h2>
+                <h2>Bank B trust view</h2>
               </div>
             </div>
 
@@ -375,6 +421,41 @@
                 <dd id="poolDebt">-</dd>
               </div>
             </dl>
+          </section>
+
+          <section class="rail-card risk-card" aria-label="Capital health">
+            <div class="section-head compact">
+              <p class="eyebrow">Risk lens</p>
+              <h2>Capital health</h2>
+            </div>
+            <div class="meter-stack">
+              <div class="meter-row">
+                <div>
+                  <span>Proof readiness</span>
+                  <strong id="proofReadinessText">-</strong>
+                </div>
+                <div class="meter-track"><i id="proofReadinessBar"></i></div>
+              </div>
+              <div class="meter-row">
+                <div>
+                  <span>Collateral cover</span>
+                  <strong id="collateralHealthText">-</strong>
+                </div>
+                <div class="meter-track"><i id="collateralHealthBar"></i></div>
+              </div>
+              <div class="meter-row">
+                <div>
+                  <span>Pool utilization</span>
+                  <strong id="creditUtilText">-</strong>
+                </div>
+                <div class="meter-track"><i id="creditUtilBar"></i></div>
+              </div>
+            </div>
+            <div class="next-action">
+              <span>Suggested next action</span>
+              <strong id="nextActionTitle">Prepare Runtime</strong>
+              <small id="nextActionHint">Start from a live seeded baseline.</small>
+            </div>
           </section>
 
           <section class="rail-card">

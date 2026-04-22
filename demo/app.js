@@ -5,7 +5,9 @@ const actionButtons = [...document.querySelectorAll("[data-action]")];
 const deploySeedButton = document.getElementById("deploySeed");
 const resetSeededButton = document.getElementById("resetSeeded");
 const refreshButton = document.getElementById("refreshState");
+const focusModeButton = document.getElementById("focusMode");
 const ACTIVITY_STORAGE_KEY = "interchain-lending-latest-activity";
+const FOCUS_MODE_STORAGE_KEY = "interchain-lending-focus-mode";
 const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Recovering"];
 let currentStatus = null;
 
@@ -18,6 +20,15 @@ function setBusy(busy) {
 
 function setOutput(value) {
   setText("contractOutput", value || "No action output yet.");
+}
+
+function setFocusMode(enabled) {
+  document.body.classList.toggle("is-focus-mode", enabled);
+  focusModeButton?.setAttribute("aria-pressed", enabled ? "true" : "false");
+  if (focusModeButton) focusModeButton.textContent = enabled ? "Exit Focus" : "Focus Mode";
+  try {
+    sessionStorage.setItem(FOCUS_MODE_STORAGE_KEY, enabled ? "true" : "false");
+  } catch {}
 }
 
 function formatClock(isoString) {
@@ -274,6 +285,9 @@ async function runAction(action) {
 
 deploySeedButton?.addEventListener("click", runDeploySeed);
 resetSeededButton?.addEventListener("click", runResetSeeded);
+focusModeButton?.addEventListener("click", () => {
+  setFocusMode(!document.body.classList.contains("is-focus-mode"));
+});
 refreshButton?.addEventListener("click", async () => {
   setBusy(true);
   try {
@@ -293,6 +307,12 @@ refreshButton?.addEventListener("click", async () => {
 actionButtons.forEach((button) => {
   button.addEventListener("click", () => runAction(button.dataset.action));
 });
+
+try {
+  setFocusMode(sessionStorage.getItem(FOCUS_MODE_STORAGE_KEY) === "true");
+} catch {
+  setFocusMode(false);
+}
 
 renderLatestActivity(loadPersistedActivity());
 
