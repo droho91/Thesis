@@ -1416,9 +1416,25 @@ function isKnownReplay(error) {
   return text.includes("PACKET_ALREADY_RECEIVED") || text.includes("PACKET_ALREADY_ACKNOWLEDGED");
 }
 
+const SAFETY_MODE_ACTIONS = new Set(["freezeClient", "recoverClient"]);
+
+async function requireDemoSafetyModeAllows(action, ctx, sourceChainId) {
+  if (SAFETY_MODE_ACTIONS.has(action)) return;
+
+  const status = Number(await ctx.B.lightClient.status(sourceChainId));
+  if (status !== 2 && status !== 3) return;
+
+  const label = status === 2 ? "Frozen" : "Recovering";
+  throw new Error(
+    `Bank B light client for Bank A is ${label}. Safety mode blocks interchain demo actions until ` +
+      "Recover Light Client completes. Use Refresh State or Fresh Reset if you want to inspect/reset the demo."
+  );
+}
+
 export async function runDemoStep(action, options = {}) {
   const prepared = options.prepared ?? await prepareStepContext();
   const { config, ctx, sourceChainId, destinationChainId } = prepared;
+  await requireDemoSafetyModeAllows(action, ctx, sourceChainId);
 
   if (action === "fullFlow") {
     return main();

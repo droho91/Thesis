@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {BesuLightClientTypes} from "../../contracts/clients/BesuLightClientTypes.sol";
 import {IBCEVMTypes} from "../../contracts/core/IBCEVMTypes.sol";
 import {IBCPacketLib} from "../../contracts/core/IBCPacketLib.sol";
 import {PacketHandlerFixture} from "../helpers/PacketHandlerFixture.sol";
@@ -50,6 +51,21 @@ contract PacketReceiveTest is PacketHandlerFixture {
         address packetStore = address(0xA11CE);
         BuiltPacketStorageProof memory built = _buildPacketStorageProof(packetStore, packet);
         clientB.setTrustedStateRoot(CHAIN_A, TRUSTED_HEIGHT_A + 1, built.stateRoot);
+        handlerB.setTrustedPacketStore(CHAIN_A, packetStore);
+
+        (IBCEVMTypes.StorageProof memory leafProof, IBCEVMTypes.StorageProof memory pathProof) =
+            _packetProofs(packet, packetStore, TRUSTED_HEIGHT_A, built);
+
+        vm.expectRevert(bytes("INVALID_PACKET_STORAGE_PROOF"));
+        handlerB.recvPacketFromStorageProof(packet, leafProof, pathProof);
+    }
+
+    function testRecvPacketFromStorageProofRejectsFrozenClient() public {
+        IBCPacketLib.Packet memory packet = _packet();
+        address packetStore = address(0xA11CE);
+        BuiltPacketStorageProof memory built = _buildPacketStorageProof(packetStore, packet);
+        clientB.setTrustedStateRoot(CHAIN_A, TRUSTED_HEIGHT_A, built.stateRoot);
+        clientB.setStatus(CHAIN_A, BesuLightClientTypes.ClientStatus.Frozen);
         handlerB.setTrustedPacketStore(CHAIN_A, packetStore);
 
         (IBCEVMTypes.StorageProof memory leafProof, IBCEVMTypes.StorageProof memory pathProof) =

@@ -21,6 +21,8 @@ import {PacketProofBuilder} from "../../contracts/test/PacketProofBuilder.sol";
 contract MockBesuLightClient is IBesuLightClient {
     mapping(uint256 => mapping(uint256 => bytes32)) internal roots;
     mapping(uint256 => mapping(uint256 => uint256)) internal timestamps;
+    mapping(uint256 => BesuLightClientTypes.ClientStatus) internal statuses;
+    mapping(uint256 => bool) internal statusSet;
 
     function setTrustedStateRoot(uint256 sourceChainId, uint256 height, bytes32 root) external {
         roots[sourceChainId][height] = root;
@@ -30,8 +32,14 @@ contract MockBesuLightClient is IBesuLightClient {
         timestamps[sourceChainId][height] = timestamp;
     }
 
-    function status(uint256) external pure returns (BesuLightClientTypes.ClientStatus) {
-        return BesuLightClientTypes.ClientStatus.Active;
+    function setStatus(uint256 sourceChainId, BesuLightClientTypes.ClientStatus status_) external {
+        statuses[sourceChainId] = status_;
+        statusSet[sourceChainId] = true;
+    }
+
+    function status(uint256 sourceChainId) external view returns (BesuLightClientTypes.ClientStatus) {
+        if (!statusSet[sourceChainId]) return BesuLightClientTypes.ClientStatus.Active;
+        return statuses[sourceChainId];
     }
 
     function beginRecovery(uint256) external pure {}

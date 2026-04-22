@@ -9,6 +9,7 @@ const focusModeButton = document.getElementById("focusMode");
 const ACTIVITY_STORAGE_KEY = "interchain-lending-latest-activity";
 const FOCUS_MODE_STORAGE_KEY = "interchain-lending-focus-mode";
 const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Recovering"];
+const SAFETY_MODE_ACTIONS = new Set(["recoverClient"]);
 let currentStatus = null;
 
 function setBusy(busy) {
@@ -16,10 +17,26 @@ function setBusy(busy) {
   buttons.forEach((button) => {
     button.disabled = busy;
   });
+  if (!busy) applyActionAvailability(currentStatus);
 }
 
 function setOutput(value) {
   setText("contractOutput", value || "No action output yet.");
+}
+
+function safetyLocked(status) {
+  return Boolean(status?.security?.frozen || status?.security?.recovering);
+}
+
+function applyActionAvailability(status) {
+  const locked = safetyLocked(status);
+  actionButtons.forEach((button) => {
+    const allowed = !locked || SAFETY_MODE_ACTIONS.has(button.dataset.action);
+    button.disabled = !allowed;
+    button.title = allowed
+      ? ""
+      : "Safety mode is active. Recover the light client before running interchain actions.";
+  });
 }
 
 function setFocusMode(enabled) {
@@ -212,6 +229,7 @@ async function requestJson(path, options = {}) {
 async function refreshStatus() {
   const status = await requestJson("/api/status");
   renderStatus(status);
+  applyActionAvailability(status);
   return status;
 }
 
@@ -319,6 +337,7 @@ renderLatestActivity(loadPersistedActivity());
 refreshStatus()
   .then((status) => {
     currentStatus = status;
+    applyActionAvailability(status);
     if (!loadPersistedActivity()) {
       renderLatestActivity(activityFromStatus(status));
     }

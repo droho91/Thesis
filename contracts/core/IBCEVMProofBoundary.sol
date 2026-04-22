@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {MerklePatriciaProofLib} from "../libs/MerklePatriciaProofLib.sol";
 import {RLPDecodeLib} from "../libs/RLPDecodeLib.sol";
 import {IBesuLightClient} from "../clients/IBesuLightClient.sol";
+import {BesuLightClientTypes} from "../clients/BesuLightClientTypes.sol";
 import {IBCEVMTypes} from "./IBCEVMTypes.sol";
 
 /// @title IBCEVMProofBoundary
@@ -20,11 +21,16 @@ abstract contract IBCEVMProofBoundary {
         return besuLightClient.trustedStateRoot(sourceChainId, trustedHeight);
     }
 
+    function _clientActive(uint256 sourceChainId) internal view returns (bool) {
+        return besuLightClient.status(sourceChainId) == BesuLightClientTypes.ClientStatus.Active;
+    }
+
     function _verifyTrustedEVMStorageProofBoundary(IBCEVMTypes.StorageProof calldata proof)
         internal
         view
         returns (bool)
     {
+        if (!_clientActive(proof.sourceChainId)) return false;
         bytes32 trustedRoot = _trustedStateRoot(proof.sourceChainId, proof.trustedHeight);
         if (trustedRoot == bytes32(0) || trustedRoot != proof.stateRoot) return false;
         if (proof.account == address(0) || proof.expectedValue.length == 0) {
@@ -63,6 +69,7 @@ abstract contract IBCEVMProofBoundary {
         view
         returns (bool)
     {
+        if (!_clientActive(proof.sourceChainId)) return false;
         bytes32 trustedRoot = _trustedStateRoot(proof.sourceChainId, proof.trustedHeight);
         if (trustedRoot == bytes32(0) || trustedRoot != proof.stateRoot) return false;
         if (proof.account == address(0) || proof.accountProof.length == 0 || proof.storageProof.length == 0) {

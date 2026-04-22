@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {BesuLightClientTypes} from "../../contracts/clients/BesuLightClientTypes.sol";
 import {IBCEVMTypes} from "../../contracts/core/IBCEVMTypes.sol";
 import {IBCPacketHandlerSlots} from "../../contracts/core/IBCPacketHandlerSlots.sol";
 import {IBCPacketLib} from "../../contracts/core/IBCPacketLib.sol";
@@ -45,6 +46,31 @@ contract PacketTimeoutTest is PacketHandlerFixture {
             bytes32(uint256(1))
         );
         clientA.setTrustedStateRoot(CHAIN_B, TRUSTED_HEIGHT_B, built.stateRoot);
+
+        IBCEVMTypes.StorageProof memory receiptAbsenceProof = _singleProof(
+            CHAIN_B,
+            TRUSTED_HEIGHT_B,
+            remotePacketHandler,
+            IBCPacketHandlerSlots.packetReceipt(packetId),
+            built
+        );
+
+        vm.expectRevert(bytes("INVALID_RECEIPT_ABSENCE_PROOF"));
+        handlerA.timeoutPacketFromStorageProof(packet, remotePacketHandler, receiptAbsenceProof);
+    }
+
+    function testTimeoutPacketFromStorageProofRejectsFrozenClient() public {
+        IBCPacketLib.Packet memory packet = _packet();
+        bytes32 packetId = IBCPacketLib.packetId(packet);
+        address remotePacketHandler = address(0xB0B);
+
+        BuiltSingleStorageProof memory built = _buildSingleStorageProof(
+            remotePacketHandler,
+            IBCPacketHandlerSlots.acknowledgementHash(packetId),
+            keccak256("unrelated-existing-slot")
+        );
+        clientA.setTrustedStateRoot(CHAIN_B, TRUSTED_HEIGHT_B, built.stateRoot);
+        clientA.setStatus(CHAIN_B, BesuLightClientTypes.ClientStatus.Frozen);
 
         IBCEVMTypes.StorageProof memory receiptAbsenceProof = _singleProof(
             CHAIN_B,
