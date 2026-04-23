@@ -9,8 +9,8 @@
   </head>
   <body>
     <main class="shell">
-      <section class="hero hero-cinematic">
-        <div class="hero-copy-panel">
+      <section class="hero hero-cinematic operator-console">
+        <div class="hero-copy-panel command-desk">
           <div class="hero-brand">
             <div class="brand-emblem">
               <img src="./assets/logo.png" alt="Trust-verified capital logo" />
@@ -27,14 +27,14 @@
           </div>
 
           <div class="hero-topline">
-            <span class="eyebrow">Interchain lending demo</span>
-            <span class="hero-topline-pill">Besu light-client proof path</span>
+            <span class="eyebrow">Live operator console</span>
+            <span class="hero-topline-pill" id="operatorMode">Storage proof required</span>
           </div>
 
-          <h1>Verified collateral. Institutional credit across chains.</h1>
+          <h1>Control the cross-chain lending market</h1>
           <p class="hero-text">
-            A clean operating console for cross-chain lending: Bank A escrows assets, Bank B imports
-            finalized trust, verifies proof, mints collateral, and opens a controlled credit line.
+            Execute the route, proof, lending, unwind, and safety paths from one console. Every
+            action below calls the live Besu-backed runtime and refreshes on-chain state.
           </p>
 
           <div class="hero-actions">
@@ -44,19 +44,58 @@
             <button class="button-run" data-action="fullFlow" type="button">Run Full Flow</button>
           </div>
 
-          <div class="hero-story">
-            <article class="story-chip">
-              <strong>Capital view</strong>
-              <span>Balances, vouchers, escrow, and debt stay visible in one command surface.</span>
+          <div class="operator-kpis" aria-label="Live market indicators">
+            <article>
+              <span>Borrow APR</span>
+              <strong id="borrowRateHero">-</strong>
             </article>
-            <article class="story-chip">
-              <strong>Proof discipline</strong>
-              <span>Collateral is accepted only after imported headers and packet proof pass.</span>
+            <article>
+              <span>Utilization</span>
+              <strong id="utilizationHero">-</strong>
             </article>
-            <article class="story-chip">
-              <strong>Bank-grade control</strong>
-              <span>Replay protection, freeze, and recovery remain part of the operator workflow.</span>
+            <article>
+              <span>Reserves</span>
+              <strong id="reservesHero">-</strong>
             </article>
+            <article>
+              <span>Oracle</span>
+              <strong id="oracleFreshHero">-</strong>
+            </article>
+          </div>
+
+          <div class="command-grid" aria-label="Protocol command surface">
+            <section class="command-group">
+              <div>
+                <span>01</span>
+                <strong>Forward proof</strong>
+              </div>
+              <button class="button-secondary" data-action="openRoute" type="button">Open Channel</button>
+              <button class="button-primary" data-action="lock" type="button">Lock aBANK</button>
+              <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Read A Header</button>
+              <button class="button-secondary" data-action="updateForwardClient" type="button">Import on B</button>
+              <button class="button-run" data-action="proveForwardMint" type="button">Prove + Mint</button>
+            </section>
+            <section class="command-group">
+              <div>
+                <span>02</span>
+                <strong>Lending market</strong>
+              </div>
+              <button class="button-primary" data-action="depositCollateral" type="button">Deposit Voucher</button>
+              <button class="button-run" data-action="borrow" type="button">Borrow</button>
+              <button class="button-secondary" data-action="repay" type="button">Repay</button>
+              <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw</button>
+            </section>
+            <section class="command-group">
+              <div>
+                <span>03</span>
+                <strong>Reverse and safety</strong>
+              </div>
+              <button class="button-danger" data-action="burn" type="button">Burn Voucher</button>
+              <button class="button-secondary" data-action="updateReverseClient" type="button">Import on A</button>
+              <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock</button>
+              <button class="button-danger" data-action="freezeClient" type="button">Freeze</button>
+              <button class="button-run" data-action="recoverClient" type="button">Recover</button>
+            </section>
           </div>
         </div>
 
@@ -413,12 +452,57 @@
                 <dd id="poolLiquidity">-</dd>
               </div>
               <div>
+                <dt>Pool cash</dt>
+                <dd id="poolCash">-</dd>
+              </div>
+              <div>
                 <dt>Pool collateral</dt>
                 <dd id="poolCollateral">-</dd>
               </div>
               <div>
                 <dt>Pool debt</dt>
                 <dd id="poolDebt">-</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="rail-card">
+            <div class="section-head compact">
+              <p class="eyebrow">Market mechanics</p>
+              <h2>Lender and borrower indexes</h2>
+            </div>
+            <dl class="rail-grid">
+              <div>
+                <dt>Supplier assets</dt>
+                <dd id="supplierLiquidity">-</dd>
+              </div>
+              <div>
+                <dt>Supplier shares</dt>
+                <dd id="supplierShares">-</dd>
+              </div>
+              <div>
+                <dt>Total liquidity shares</dt>
+                <dd id="totalLiquidityShares">-</dd>
+              </div>
+              <div>
+                <dt>Exchange rate</dt>
+                <dd id="exchangeRate">-</dd>
+              </div>
+              <div>
+                <dt>Total borrows</dt>
+                <dd id="totalBorrows">-</dd>
+              </div>
+              <div>
+                <dt>Borrower debt shares</dt>
+                <dd id="borrowerDebtShares">-</dd>
+              </div>
+              <div>
+                <dt>Total debt shares</dt>
+                <dd id="totalDebtShares">-</dd>
+              </div>
+              <div>
+                <dt>Borrow index</dt>
+                <dd id="borrowIndex">-</dd>
               </div>
             </dl>
           </section>
@@ -456,6 +540,60 @@
               <strong id="nextActionTitle">Prepare Runtime</strong>
               <small id="nextActionHint">Start from a live seeded baseline.</small>
             </div>
+          </section>
+
+          <section class="rail-card">
+            <div class="section-head compact">
+              <p class="eyebrow">Rates and reserves</p>
+              <h2>Accrual state</h2>
+            </div>
+            <dl class="rail-grid">
+              <div>
+                <dt>Borrow APR</dt>
+                <dd id="borrowRate">-</dd>
+              </div>
+              <div>
+                <dt>Utilization</dt>
+                <dd id="utilizationBps">-</dd>
+              </div>
+              <div>
+                <dt>Reserves</dt>
+                <dd id="totalReserves">-</dd>
+              </div>
+              <div>
+                <dt>Bad debt</dt>
+                <dd id="totalBadDebt">-</dd>
+              </div>
+              <div>
+                <dt>Max borrow</dt>
+                <dd id="maxBorrow">-</dd>
+              </div>
+              <div>
+                <dt>Available borrow</dt>
+                <dd id="availableBorrow">-</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="rail-card">
+            <div class="section-head compact">
+              <p class="eyebrow">Oracle safety</p>
+              <h2>Fresh valuation inputs</h2>
+            </div>
+            <dl class="rail-grid">
+              <div>
+                <dt>Freshness</dt>
+                <dd id="oracleFresh">-</dd>
+              </div>
+              <div>
+                <dt>Voucher price</dt>
+                <dd id="voucherOracle">-</dd>
+              </div>
+              <div>
+                <dt>Debt price</dt>
+                <dd id="debtOracle">-</dd>
+              </div>
+            </dl>
           </section>
 
           <section class="rail-card">

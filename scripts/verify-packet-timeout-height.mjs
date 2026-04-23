@@ -183,6 +183,7 @@ async function main() {
 
   const packetStore = await deploy(packetStoreArtifact, sourceSigner, [SOURCE_CHAIN_ID]);
   const packetStoreAddress = await packetStore.getAddress();
+  await (await packetStore.setPacketWriter(sourceAppAddress, true)).wait();
   await (await sourcePacketHandler.setTrustedPacketStore(SOURCE_CHAIN_ID, packetStoreAddress)).wait();
   await (await destinationPacketHandler.setTrustedPacketStore(SOURCE_CHAIN_ID, packetStoreAddress)).wait();
 
@@ -238,7 +239,7 @@ async function main() {
     timeout: { height: timeoutHeight, timestamp: 0n },
   };
 
-  await (await packetStore.commitPacket(packet)).wait();
+  await (await sourceApp.commitPacket(packetStoreAddress, packet)).wait();
   const packetIdValue = packetId(packet);
 
   const destinationHeight = BigInt(await destinationProvider.getBlockNumber());

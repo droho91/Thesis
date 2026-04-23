@@ -17,6 +17,7 @@ const DEBT_ASSET_BORROW_CAP = ethers.parseUnits(process.env.DEBT_ASSET_BORROW_CA
 const ACCOUNT_BORROW_CAP = ethers.parseUnits(process.env.ACCOUNT_BORROW_CAP || "2000", 18);
 const INITIAL_VOUCHER_PRICE_E18 = ethers.parseUnits(process.env.INITIAL_VOUCHER_PRICE || "2", 18);
 const DEBT_PRICE_E18 = ethers.parseUnits(process.env.DEBT_PRICE || "1", 18);
+const MAX_ORACLE_STALENESS = BigInt(process.env.ORACLE_MAX_STALENESS_SECONDS || "604800");
 const COLLATERAL_FACTOR_BPS = BigInt(process.env.COLLATERAL_FACTOR_BPS || "8000");
 const COLLATERAL_HAIRCUT_BPS = BigInt(process.env.COLLATERAL_HAIRCUT_BPS || "9000");
 const LIQUIDATION_CLOSE_FACTOR_BPS = BigInt(process.env.LIQUIDATION_CLOSE_FACTOR_BPS || "5000");
@@ -115,6 +116,7 @@ async function main() {
   const sourceUserAddress = await sourceUser.getAddress();
   const destinationUserAddress = await destinationUser.getAddress();
   const liquidatorAddress = await liquidator.getAddress();
+  const liquiditySupplierAddress = config.chains.B.admin;
 
   const canonicalToken = await contractAt(config, "A", config.chains.A.canonicalToken, tokenArtifact);
   const debtToken = await contractAt(config, "B", config.chains.B.debtToken, tokenArtifact);
@@ -124,7 +126,6 @@ async function main() {
   const lendingPoolB = await contractAt(config, "B", config.chains.B.lendingPool, lendingArtifact);
 
   await ensureBalanceAtLeast(canonicalToken, sourceUserAddress, SOURCE_USER_AMOUNT, "fund source user with canonical token");
-  await ensureBalanceAtLeast(debtToken, config.chains.B.lendingPool, POOL_LIQUIDITY, "fund Bank B lending pool");
   await ensureBalanceAtLeast(debtToken, liquidatorAddress, LIQUIDATOR_DEBT_BALANCE, "fund liquidator");
 
   await txStep("allow source user on Bank A", () => policyA.setAccountAllowed(sourceUserAddress, true, txOptions()));
@@ -162,6 +163,7 @@ async function main() {
     policyB.setAccountBorrowCap(destinationUserAddress, ACCOUNT_BORROW_CAP, txOptions())
   );
 
+  await txStep("configure oracle staleness", () => oracleB.setMaxStaleness(MAX_ORACLE_STALENESS, txOptions()));
   await txStep("set voucher oracle price", () =>
     oracleB.setPrice(config.chains.B.voucherToken, INITIAL_VOUCHER_PRICE_E18, txOptions())
   );
@@ -178,6 +180,18 @@ async function main() {
     lendingPoolB.grantRole(await lendingPoolB.LIQUIDATOR_ROLE(), liquidatorAddress, txOptions())
   );
 
+  const suppliedLiquidity = await lendingPoolB.liquidityBalanceOf(liquiditySupplierAddress);
+  if (suppliedLiquidity < POOL_LIQUIDITY) {
+    const depositAmount = POOL_LIQUIDITY - suppliedLiquidity;
+    await ensureBalanceAtLeast(debtToken, liquiditySupplierAddress, depositAmount, "fund Bank B liquidity supplier");
+    await txStep("approve supplier liquidity", () =>
+      debtToken.approve(config.chains.B.lendingPool, depositAmount, txOptions())
+    );
+    await txStep("deposit supplier liquidity", () => lendingPoolB.depositLiquidity(depositAmount, txOptions()));
+  } else {
+    console.log("[seed] supplier liquidity already deposited");
+  }
+
   config.status = {
     ...(config.status || {}),
     seeded: true,
@@ -186,6 +200,7 @@ async function main() {
     sourceUser: sourceUserAddress,
     destinationUser: destinationUserAddress,
     liquidator: liquidatorAddress,
+    liquiditySupplier: liquiditySupplierAddress,
     sourceUserIndex: SOURCE_USER_INDEX,
     destinationUserIndex: DESTINATION_USER_INDEX,
     liquidatorIndex: LIQUIDATOR_INDEX,
@@ -200,6 +215,7 @@ async function main() {
     accountBorrowCap: ACCOUNT_BORROW_CAP.toString(),
     initialVoucherPriceE18: INITIAL_VOUCHER_PRICE_E18.toString(),
     debtPriceE18: DEBT_PRICE_E18.toString(),
+    maxOracleStaleness: MAX_ORACLE_STALENESS.toString(),
     collateralFactorBps: COLLATERAL_FACTOR_BPS.toString(),
     collateralHaircutBps: COLLATERAL_HAIRCUT_BPS.toString(),
     liquidationCloseFactorBps: LIQUIDATION_CLOSE_FACTOR_BPS.toString(),
@@ -208,7 +224,7 @@ async function main() {
   await saveRuntimeConfig(config);
 
   console.log(`[seed] minted ${ethers.formatUnits(SOURCE_USER_AMOUNT, 18)} aBANK to ${sourceUserAddress}`);
-  console.log(`[seed] funded Bank B lending pool with ${ethers.formatUnits(POOL_LIQUIDITY, 18)} bCASH`);
+  console.log(`[seed] deposited ${ethers.formatUnits(POOL_LIQUIDITY, 18)} bCASH supplier liquidity`);
   console.log(`[seed] funded liquidator ${liquidatorAddress} with ${ethers.formatUnits(LIQUIDATOR_DEBT_BALANCE, 18)} bCASH`);
   console.log(`[seed] policy/oracle/risk configuration saved to ${RUNTIME_CONFIG_PATH}`);
 }

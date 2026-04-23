@@ -113,6 +113,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
         packet.sequence = 2;
         packet.timeout.height = uint64(TRUSTED_HEIGHT_B + 1);
         bytes32 packetId = IBCPacketLib.packetId(packet);
+        vm.prank(address(sourceApp));
         localPacketStore.commitPacket(packet);
         address remotePacketHandler = address(0xB0B);
 
@@ -141,6 +142,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
         packet.timeout.height = 0;
         packet.timeout.timestamp = 1_800_000_000;
         bytes32 packetId = IBCPacketLib.packetId(packet);
+        vm.prank(address(sourceApp));
         localPacketStore.commitPacket(packet);
         address remotePacketHandler = address(0xB0B);
 
@@ -173,6 +175,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
         packet.timeout.height = 0;
         packet.timeout.timestamp = 1_800_000_000;
         bytes32 packetId = IBCPacketLib.packetId(packet);
+        vm.prank(address(sourceApp));
         localPacketStore.commitPacket(packet);
         address remotePacketHandler = address(0xB0B);
 

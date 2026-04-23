@@ -500,6 +500,7 @@ async function ensureRiskSeeded(config, ctx) {
   const sourceChainId = chainId(config, "A");
   const initialVoucherPrice = BigInt(config.seed.initialVoucherPriceE18);
   const debtPrice = BigInt(config.seed.debtPriceE18);
+  const maxOracleStaleness = BigInt(config.seed.maxOracleStaleness || "604800");
   const voucherExposureCap = BigInt(config.seed.voucherExposureCap);
   const collateralCap = BigInt(config.seed.collateralCap);
   const debtAssetBorrowCap = BigInt(config.seed.debtAssetBorrowCap);
@@ -510,6 +511,15 @@ async function ensureRiskSeeded(config, ctx) {
   const liquidationBonusBps = BigInt(config.seed.liquidationBonusBps);
   const poolLiquidity = BigInt(config.seed.poolLiquidity);
   const liquidatorDebtBalance = BigInt(config.seed.liquidatorDebtBalance);
+  const latestBlock = await ctx.providerB.getBlock("latest");
+  const now = BigInt(latestBlock?.timestamp ?? 0);
+  const priceIsFresh = async (asset, expectedPrice) => {
+    const [price, updatedAt] = await Promise.all([
+      ctx.B.oracle.assetPriceE18(asset),
+      ctx.B.oracle.assetPriceUpdatedAt(asset),
+    ]);
+    return price === expectedPrice && now >= updatedAt && now - updatedAt <= maxOracleStaleness;
+  };
 
   await txIfNeeded(
     "allow destination user",
@@ -558,13 +568,18 @@ async function ensureRiskSeeded(config, ctx) {
   );
 
   await txIfNeeded(
+    "configure oracle staleness",
+    async () => (await ctx.B.oracle.maxStaleness()) === maxOracleStaleness,
+    () => ctx.B.oracle.setMaxStaleness(maxOracleStaleness, txOptions())
+  );
+  await txIfNeeded(
     "reset voucher price",
-    async () => (await ctx.B.oracle.assetPriceE18(config.chains.B.voucherToken)) === initialVoucherPrice,
+    () => priceIsFresh(config.chains.B.voucherToken, initialVoucherPrice),
     () => ctx.B.oracle.setPrice(config.chains.B.voucherToken, initialVoucherPrice, txOptions())
   );
   await txIfNeeded(
     "reset debt price",
-    async () => (await ctx.B.oracle.assetPriceE18(config.chains.B.debtToken)) === debtPrice,
+    () => priceIsFresh(config.chains.B.debtToken, debtPrice),
     () => ctx.B.oracle.setPrice(config.chains.B.debtToken, debtPrice, txOptions())
   );
   await txIfNeeded(
@@ -594,16 +609,22 @@ async function ensureRiskSeeded(config, ctx) {
     async () => ctx.B.lendingPoolAdmin.hasRole(await ctx.B.lendingPoolAdmin.LIQUIDATOR_ROLE(), ctx.liquidatorAddress),
     async () => ctx.B.lendingPoolAdmin.grantRole(await ctx.B.lendingPoolAdmin.LIQUIDATOR_ROLE(), ctx.liquidatorAddress, txOptions())
   );
-  await txIfNeeded(
-    "fund Bank B lending pool",
-    async () => (await ctx.B.debtAdmin.balanceOf(config.chains.B.lendingPool)) >= poolLiquidity,
-    async () =>
-      ctx.B.debtAdmin.mint(
-        config.chains.B.lendingPool,
-        poolLiquidity - (await ctx.B.debtAdmin.balanceOf(config.chains.B.lendingPool)),
-        txOptions()
-      )
-  );
+  const suppliedLiquidity = await ctx.B.lendingPoolAdmin.liquidityBalanceOf(config.chains.B.admin);
+  if (suppliedLiquidity < poolLiquidity) {
+    const depositAmount = poolLiquidity - suppliedLiquidity;
+    const supplierBalance = await ctx.B.debtAdmin.balanceOf(config.chains.B.admin);
+    if (supplierBalance < depositAmount) {
+      await txStep("fund liquidity supplier", () =>
+        ctx.B.debtAdmin.mint(config.chains.B.admin, depositAmount - supplierBalance, txOptions())
+      );
+    }
+    await txStep("approve supplier liquidity", () =>
+      ctx.B.debtAdmin.approve(config.chains.B.lendingPool, depositAmount, txOptions())
+    );
+    await txStep("deposit supplier liquidity", () =>
+      ctx.B.lendingPoolAdmin.depositLiquidity(depositAmount, txOptions())
+    );
+  }
   await txIfNeeded(
     "fund liquidator",
     async () => (await ctx.B.debtAdmin.balanceOf(ctx.liquidatorAddress)) >= liquidatorDebtBalance,

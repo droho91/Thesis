@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {BankToken} from "../../contracts/apps/BankToken.sol";
 import {BankPolicyEngine} from "../../contracts/apps/BankPolicyEngine.sol";
+import {ManualAssetOracle} from "../../contracts/apps/ManualAssetOracle.sol";
 import {PolicyControlledVoucherToken} from "../../contracts/apps/PolicyControlledVoucherToken.sol";
 import {PolicyControlledEscrowVault} from "../../contracts/apps/PolicyControlledEscrowVault.sol";
 import {PolicyControlledLendingPool} from "../../contracts/apps/PolicyControlledLendingPool.sol";
@@ -17,6 +18,7 @@ contract BankPolicyTest is Test {
     bytes32 internal constant PACKET_TWO = bytes32(uint256(2));
 
     BankPolicyEngine internal policy;
+    ManualAssetOracle internal oracle;
     PolicyControlledVoucherToken internal voucher;
     PolicyControlledEscrowVault internal escrow;
     PolicyControlledLendingPool internal lendingPool;
@@ -25,6 +27,7 @@ contract BankPolicyTest is Test {
 
     function setUp() public {
         policy = new BankPolicyEngine(address(this));
+        oracle = new ManualAssetOracle(address(this));
         canonicalAsset = new BankToken("Canonical", "CAN");
         debtAsset = new BankToken("Debt", "DEBT");
 
@@ -34,6 +37,7 @@ contract BankPolicyTest is Test {
             new PolicyControlledLendingPool(address(this), address(voucher), address(debtAsset), address(policy), 8_000);
 
         voucher.grantApp(address(this));
+        voucher.bindCanonicalAsset(address(canonicalAsset));
         escrow.grantApp(address(this));
 
         policy.grantRole(policy.POLICY_APP_ROLE(), address(voucher));
@@ -46,6 +50,9 @@ contract BankPolicyTest is Test {
         policy.setUnlockAssetAllowed(address(canonicalAsset), true);
         policy.setCollateralAssetAllowed(address(voucher), true);
         policy.setDebtAssetAllowed(address(debtAsset), true);
+        oracle.setPrice(address(voucher), 1 ether);
+        oracle.setPrice(address(debtAsset), 1 ether);
+        lendingPool.setValuationOracle(address(oracle));
     }
 
     function testMintVoucherWithPolicyUpdatesExposureAndRespectsCap() public {
@@ -95,7 +102,9 @@ contract BankPolicyTest is Test {
         policy.setDebtAssetBorrowCap(address(debtAsset), 100 ether);
 
         voucher.mintWithPolicy(alice, address(canonicalAsset), SOURCE_CHAIN_A, 100 ether, PACKET_ONE);
-        debtAsset.mint(address(lendingPool), 100 ether);
+        debtAsset.mint(address(this), 100 ether);
+        debtAsset.approve(address(lendingPool), 100 ether);
+        lendingPool.depositLiquidity(100 ether);
 
         vm.startPrank(alice);
         voucher.approve(address(lendingPool), 100 ether);
@@ -122,8 +131,10 @@ contract BankPolicyTest is Test {
         policy.setDebtAssetBorrowCap(address(debtAsset), 100 ether);
 
         voucher.mintWithPolicy(alice, address(canonicalAsset), SOURCE_CHAIN_A, 100 ether, PACKET_ONE);
-        debtAsset.mint(address(lendingPool), 100 ether);
+        debtAsset.mint(address(this), 100 ether);
         debtAsset.mint(alice, 50 ether);
+        debtAsset.approve(address(lendingPool), 100 ether);
+        lendingPool.depositLiquidity(100 ether);
 
         vm.startPrank(alice);
         voucher.approve(address(lendingPool), 100 ether);

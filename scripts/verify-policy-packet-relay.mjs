@@ -394,6 +394,9 @@ async function main() {
   logPhase("configuring roles, policy allowlists, oracle prices, and packet routes");
   await (await escrowA.grantApp(appAAddress)).wait();
   await (await voucherB.grantApp(appBAddress)).wait();
+  await (await voucherB.bindCanonicalAsset(canonicalAssetAddress)).wait();
+  await (await packetStoreA.setPacketWriter(appAAddress, true)).wait();
+  await (await packetStoreB.setPacketWriter(appBAddress, true)).wait();
   await (await policyA.grantRole(await policyA.POLICY_APP_ROLE(), escrowAAddress)).wait();
   await (await policyB.grantRole(await policyB.POLICY_APP_ROLE(), voucherBAddress)).wait();
   await (await policyB.grantRole(await policyB.POLICY_APP_ROLE(), lendingPoolBAddress)).wait();
@@ -413,6 +416,7 @@ async function main() {
   await (await policyB.setAccountBorrowCap(destinationUser, 200n)).wait();
   await (await policyB.setDebtAssetBorrowCap(debtAssetBAddress, 500n)).wait();
 
+  await (await oracleB.setMaxStaleness(604800n)).wait();
   await (await oracleB.setPrice(voucherBAddress, ethers.parseUnits("2", 18))).wait();
   await (await oracleB.setPrice(debtAssetBAddress, ethers.parseUnits("1", 18))).wait();
   await (await lendingPoolB.setValuationOracle(oracleBAddress)).wait();
@@ -549,7 +553,9 @@ async function main() {
 
   CURRENT_PHASE = "risk-deposit-and-borrow";
   logPhase("depositing voucher collateral and borrowing bCASH");
-  await (await debtAssetB.mint(lendingPoolBAddress, 500n)).wait();
+  await (await debtAssetB.mint(destinationUser, 500n)).wait();
+  await (await debtAssetB.approve(lendingPoolBAddress, 500n)).wait();
+  await (await lendingPoolB.depositLiquidity(500n)).wait();
   await (await voucherB.approve(lendingPoolBAddress, 100n)).wait();
   await (await lendingPoolB.depositCollateral(100n)).wait();
   const maxBorrowBefore = await readView("maxBorrow", () => lendingPoolB.maxBorrow(destinationUser));

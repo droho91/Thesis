@@ -11,6 +11,8 @@ library IBCPacketStoreSlots {
     uint256 internal constant PACKET_ID_AT_SLOT = 3;
     uint256 internal constant PACKET_ACCUMULATOR_AT_SLOT = 4;
     uint256 internal constant COMMITTED_PACKET_SLOT = 5;
+    uint256 internal constant PACKET_STORE_ADMIN_SLOT = 6;
+    uint256 internal constant AUTHORIZED_PACKET_WRITER_SLOT = 7;
 
     function packetLeafAt(uint256 sequence) internal pure returns (bytes32) {
         return keccak256(abi.encode(sequence, PACKET_LEAF_AT_SLOT));

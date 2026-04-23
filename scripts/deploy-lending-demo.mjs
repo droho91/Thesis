@@ -198,6 +198,11 @@ async function configureStack({ chainA, chainB, bankA, bankB, chainIdA, chainIdB
 
   await txStep("grant Bank A escrow app", () => bankA.escrowVault.grantApp(appAAddress, txOptions()));
   await txStep("grant Bank B voucher app", () => bankB.voucherToken.grantApp(appBAddress, txOptions()));
+  await txStep("bind Bank B voucher canonical asset", async () =>
+    bankB.voucherToken.bindCanonicalAsset(await addressOf(bankA.canonicalToken), txOptions())
+  );
+  await txStep("authorize Bank A packet writer", () => chainA.packetStore.setPacketWriter(appAAddress, true, txOptions()));
+  await txStep("authorize Bank B packet writer", () => chainB.packetStore.setPacketWriter(appBAddress, true, txOptions()));
 
   await txStep("grant Bank A policy app role to escrow", async () =>
     bankA.policyEngine.grantRole(await bankA.policyEngine.POLICY_APP_ROLE(), await addressOf(bankA.escrowVault), txOptions())

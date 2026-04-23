@@ -58,6 +58,7 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
     event CollateralReleased(address indexed account, address indexed collateralAsset, uint256 amount);
     event DebtBorrowed(address indexed account, address indexed debtAsset, uint256 amount);
     event DebtRepaid(address indexed account, address indexed debtAsset, uint256 amount);
+    event DebtWrittenOff(address indexed account, address indexed debtAsset, uint256 amount);
 
     constructor(address admin) {
         require(admin != address(0), "ADMIN_ZERO");
@@ -222,13 +223,22 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
     }
 
     function noteDebtRepaid(address account, address debtAsset, uint256 amount) external onlyRole(POLICY_APP_ROLE) {
+        _reduceDebtOutstanding(account, debtAsset, amount);
+        emit DebtRepaid(account, debtAsset, amount);
+    }
+
+    function noteDebtWrittenOff(address account, address debtAsset, uint256 amount) external onlyRole(POLICY_APP_ROLE) {
+        _reduceDebtOutstanding(account, debtAsset, amount);
+        emit DebtWrittenOff(account, debtAsset, amount);
+    }
+
+    function _reduceDebtOutstanding(address account, address debtAsset, uint256 amount) internal {
         uint256 assetOutstanding = debtAssetOutstanding[debtAsset];
         uint256 accountOutstanding = accountDebtOutstanding[account][debtAsset];
         require(assetOutstanding >= amount, "DEBT_ASSET_UNDERFLOW");
         require(accountOutstanding >= amount, "ACCOUNT_DEBT_UNDERFLOW");
         debtAssetOutstanding[debtAsset] = assetOutstanding - amount;
         accountDebtOutstanding[account][debtAsset] = accountOutstanding - amount;
-        emit DebtRepaid(account, debtAsset, amount);
     }
 
     function _canMintVoucher(uint256 sourceChainId, address beneficiary, address canonicalAsset, uint256 amount)

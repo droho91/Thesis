@@ -41,6 +41,19 @@ function numeric(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function bpsToPercent(value) {
+  const number = Number(value ?? 0) / 100;
+  if (!Number.isFinite(number)) return "-";
+  return `${number >= 10 ? number.toFixed(1) : number.toFixed(2)}%`;
+}
+
+function compactAmount(value, suffix = "") {
+  const number = numeric(value);
+  if (!Number.isFinite(number)) return "-";
+  const formatted = number >= 1000 ? number.toLocaleString(undefined, { maximumFractionDigits: 2 }) : number.toFixed(number >= 10 ? 2 : 4);
+  return `${formatted}${suffix}`;
+}
+
 function clamp(value, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value));
 }
@@ -261,15 +274,19 @@ function renderVisualStatus(status) {
 
   const collateral = numeric(balances.poolCollateral);
   const debt = numeric(balances.poolDebt);
+  const market = status?.market || {};
   const liquidity = numeric(balances.poolLiquidity);
   const collateralRatio = debt > 0 ? (collateral / debt) * 100 : collateral > 0 ? 100 : 0;
-  const utilization = debt + liquidity > 0 ? (debt / (debt + liquidity)) * 100 : 0;
+  const utilization = market.utilizationRateBps != null ? Number(market.utilizationRateBps) / 100 : debt + liquidity > 0 ? (debt / (debt + liquidity)) * 100 : 0;
+  const healthFactor = market.healthFactorBps && market.healthFactorBps !== String(2n ** 256n - 1n)
+    ? Number(market.healthFactorBps) / 100
+    : null;
 
   setText(
     "collateralHealthText",
-    debt > 0 ? `${Math.round(collateralRatio)}%` : collateral > 0 ? "covered" : status?.deployed ? "idle" : "-"
+    debt > 0 && healthFactor != null ? `${healthFactor.toFixed(1)}% HF` : debt > 0 ? `${Math.round(collateralRatio)}%` : collateral > 0 ? "covered" : status?.deployed ? "idle" : "-"
   );
-  setMeter("collateralHealthBar", debt > 0 ? collateralRatio / 2 : collateral > 0 ? 100 : 0);
+  setMeter("collateralHealthBar", debt > 0 && healthFactor != null ? healthFactor / 2 : debt > 0 ? collateralRatio / 2 : collateral > 0 ? 100 : 0);
   setText("creditUtilText", status?.deployed ? `${utilization >= 10 ? utilization.toFixed(0) : utilization.toFixed(1)}%` : "-");
   setMeter("creditUtilBar", utilization);
   setText("nextActionTitle", model.nextActionTitle);
@@ -399,6 +416,34 @@ export function renderStatus(status) {
   setText("poolCollateral", `${status.balances.poolCollateral} vA`);
   setText("poolDebt", `${status.balances.poolDebt} bCASH`);
   setText("poolLiquidity", `${status.balances.poolLiquidity} bCASH`);
+  setText("poolCash", `${status.balances.poolCash} bCASH`);
+  setText("supplierLiquidity", `${status.market?.supplierLiquidity ?? "-"} bCASH`);
+  setText("supplierShares", `${status.market?.supplierShares ?? "-"} shares`);
+  setText("totalLiquidityShares", `${status.market?.totalLiquidityShares ?? "-"} shares`);
+  setText("totalBorrows", `${status.market?.totalBorrows ?? "-"} bCASH`);
+  setText("borrowerDebtShares", `${status.market?.borrowerDebtShares ?? "-"} shares`);
+  setText("totalDebtShares", `${status.market?.totalDebtShares ?? "-"} shares`);
+  setText("totalReserves", `${status.market?.totalReserves ?? "-"} bCASH`);
+  setText("totalBadDebt", `${status.market?.totalBadDebt ?? "-"} bCASH`);
+  setText("borrowIndex", status.market?.borrowIndex ?? "-");
+  setText("exchangeRate", status.market?.exchangeRate ?? "-");
+  setText("borrowRate", bpsToPercent(status.market?.borrowRateBps));
+  setText("utilizationBps", bpsToPercent(status.market?.utilizationRateBps));
+  setText("borrowRateHero", bpsToPercent(status.market?.borrowRateBps));
+  setText("utilizationHero", bpsToPercent(status.market?.utilizationRateBps));
+  setText("reservesHero", `${status.market?.totalReserves ?? "-"} bCASH`);
+  setText("oracleFreshHero", status.market?.oracleFresh ? "fresh" : "stale");
+  setText("operatorMode", status.runtime?.proofPolicy === "storage-required" ? "Storage proof required" : "Demo mode");
+  setText("maxBorrow", `${status.market?.maxBorrow ?? "-"} bCASH`);
+  setText("availableBorrow", `${status.market?.availableToBorrow ?? "-"} bCASH`);
+  setText(
+    "oracleFresh",
+    status.market?.oracleFresh
+      ? `fresh / ${status.market.voucherPriceAgeSeconds}s`
+      : `stale / ${status.market?.voucherPriceAgeSeconds ?? "-"}s`
+  );
+  setText("voucherOracle", `${compactAmount(status.market?.voucherPrice)} bCASH`);
+  setText("debtOracle", `${compactAmount(status.market?.debtPrice)} bCASH`);
   setText("statusAOnB", progressStatusName(status.progress, "statusAOnB"));
   setText("statusBOnA", progressStatusName(status.progress, "statusBOnA"));
 

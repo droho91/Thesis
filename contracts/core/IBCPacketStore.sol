@@ -14,6 +14,11 @@ contract IBCPacketStore {
     mapping(uint256 => bytes32) public packetIdAt;
     mapping(uint256 => bytes32) public packetAccumulatorAt;
     mapping(bytes32 => bool) public committedPacket;
+    address public packetStoreAdmin;
+    mapping(address => bool) public authorizedPacketWriter;
+
+    event PacketWriterAuthorizationUpdated(address indexed writer, bool authorized);
+    event PacketStoreAdminTransferred(address indexed oldAdmin, address indexed newAdmin);
 
     event PacketCommitted(
         bytes32 indexed packetId,
@@ -27,6 +32,25 @@ contract IBCPacketStore {
     constructor(uint256 _localChainId) {
         require(_localChainId != 0, "CHAIN_ID_ZERO");
         localChainId = _localChainId;
+        packetStoreAdmin = msg.sender;
+    }
+
+    modifier onlyPacketStoreAdmin() {
+        require(msg.sender == packetStoreAdmin, "ONLY_PACKET_STORE_ADMIN");
+        _;
+    }
+
+    function transferPacketStoreAdmin(address newAdmin) external onlyPacketStoreAdmin {
+        require(newAdmin != address(0), "ADMIN_ZERO");
+        address oldAdmin = packetStoreAdmin;
+        packetStoreAdmin = newAdmin;
+        emit PacketStoreAdminTransferred(oldAdmin, newAdmin);
+    }
+
+    function setPacketWriter(address writer, bool authorized) external onlyPacketStoreAdmin {
+        require(writer != address(0), "WRITER_ZERO");
+        authorizedPacketWriter[writer] = authorized;
+        emit PacketWriterAuthorizationUpdated(writer, authorized);
     }
 
     function nextSequence() external view returns (uint256) {
@@ -34,7 +58,9 @@ contract IBCPacketStore {
     }
 
     function commitPacket(IBCPacketLib.Packet calldata packet) external returns (bytes32 packetId) {
+        require(authorizedPacketWriter[msg.sender], "PACKET_WRITER_NOT_AUTHORIZED");
         require(packet.source.chainId == localChainId, "WRONG_SOURCE_CHAIN");
+        require(packet.source.port == msg.sender, "SOURCE_PORT_MISMATCH");
         require(packet.destination.chainId != 0 && packet.destination.chainId != localChainId, "BAD_DESTINATION");
         require(packet.sequence == packetSequence + 1, "WRONG_PACKET_SEQUENCE");
         require(packet.source.port != address(0), "SOURCE_PORT_ZERO");

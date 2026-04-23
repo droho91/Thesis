@@ -283,6 +283,7 @@ export async function loadRuntimeArtifacts() {
     voucher: await loadArtifact("apps/PolicyControlledVoucherToken.sol", "PolicyControlledVoucherToken"),
     lendingPool: await loadArtifact("apps/PolicyControlledLendingPool.sol", "PolicyControlledLendingPool"),
     escrow: await loadArtifact("apps/PolicyControlledEscrowVault.sol", "PolicyControlledEscrowVault"),
+    oracle: await loadArtifact("apps/ManualAssetOracle.sol", "ManualAssetOracle"),
   };
 }
 
@@ -327,12 +328,14 @@ async function readOnchainDemoStatus(health) {
   const destinationUser =
     cfg.participants?.destinationUser ||
     (await (await signerForChain(cfg, "B", Number(cfg.participants?.destinationUserIndex ?? 1))).getAddress());
+  const liquiditySupplier = cfg.participants?.liquiditySupplier || cfg.chains.B.admin;
 
   const canonical = new ethers.Contract(cfg.chains.A.canonicalToken, artifacts.bankToken.abi, providerA);
   const escrow = new ethers.Contract(cfg.chains.A.escrowVault, artifacts.escrow.abi, providerA);
   const voucher = new ethers.Contract(cfg.chains.B.voucherToken, artifacts.voucher.abi, providerB);
   const debtToken = new ethers.Contract(cfg.chains.B.debtToken, artifacts.bankToken.abi, providerB);
   const lendingPool = new ethers.Contract(cfg.chains.B.lendingPool, artifacts.lendingPool.abi, providerB);
+  const oracle = new ethers.Contract(cfg.chains.B.oracle, artifacts.oracle.abi, providerB);
   const packetA = new ethers.Contract(cfg.chains.A.packetStore, artifacts.packetStore.abi, providerA);
   const packetB = new ethers.Contract(cfg.chains.B.packetStore, artifacts.packetStore.abi, providerB);
   const handlerA = new ethers.Contract(cfg.chains.A.packetHandler, artifacts.handler.abi, providerA);
@@ -350,7 +353,29 @@ async function readOnchainDemoStatus(health) {
     bankBBalance,
     poolCollateral,
     poolDebt,
+    poolCash,
     poolLiquidity,
+    totalBorrows,
+    totalReserves,
+    totalBadDebt,
+    totalDebtShares,
+    totalLiquidityShares,
+    borrowIndex,
+    exchangeRate,
+    utilizationRate,
+    borrowRate,
+    supplierLiquidity,
+    supplierShares,
+    borrowerDebtShares,
+    healthFactor,
+    maxBorrow,
+    availableToBorrow,
+    voucherPrice,
+    voucherPriceUpdatedAt,
+    debtPrice,
+    debtPriceUpdatedAt,
+    maxStaleness,
+    headBlockB,
     packetSequenceA,
     packetSequenceB,
     headA,
@@ -370,7 +395,29 @@ async function readOnchainDemoStatus(health) {
     debtToken.balanceOf(destinationUser),
     lendingPool.collateralBalance(destinationUser),
     lendingPool.debtBalance(destinationUser),
-    debtToken.balanceOf(cfg.chains.B.lendingPool),
+    lendingPool.totalCash(),
+    lendingPool.availableLiquidity(),
+    lendingPool.accruedTotalBorrows(),
+    lendingPool.totalReserves(),
+    lendingPool.totalBadDebt(),
+    lendingPool.totalDebtShares(),
+    lendingPool.totalLiquidityShares(),
+    lendingPool.borrowIndexE18(),
+    lendingPool.exchangeRateE18(),
+    lendingPool.utilizationRateBps(),
+    lendingPool.currentBorrowRateBps(),
+    lendingPool.liquidityBalanceOf(liquiditySupplier),
+    lendingPool.liquidityShares(liquiditySupplier),
+    lendingPool.debtShares(destinationUser),
+    safeView("healthFactorBps", () => lendingPool.healthFactorBps(destinationUser), 0n),
+    safeView("maxBorrow", () => lendingPool.maxBorrow(destinationUser), 0n),
+    safeView("availableToBorrow", () => lendingPool.availableToBorrow(destinationUser), 0n),
+    oracle.assetPriceE18(cfg.chains.B.voucherToken),
+    oracle.assetPriceUpdatedAt(cfg.chains.B.voucherToken),
+    oracle.assetPriceE18(cfg.chains.B.debtToken),
+    oracle.assetPriceUpdatedAt(cfg.chains.B.debtToken),
+    oracle.maxStaleness(),
+    providerB.getBlock("latest"),
     packetA.packetSequence(),
     packetB.packetSequence(),
     providerA.getBlockNumber(),
@@ -399,6 +446,11 @@ async function readOnchainDemoStatus(health) {
     ]);
 
   const traceSecurity = trace?.security || {};
+  const nowB = BigInt(headBlockB?.timestamp ?? 0);
+  const oracleAge = (updatedAt) => updatedAt > 0n && nowB >= updatedAt ? nowB - updatedAt : 0n;
+  const voucherPriceAge = oracleAge(voucherPriceUpdatedAt);
+  const debtPriceAge = oracleAge(debtPriceUpdatedAt);
+  const oracleFresh = voucherPriceUpdatedAt > 0n && debtPriceUpdatedAt > 0n && voucherPriceAge <= maxStaleness && debtPriceAge <= maxStaleness;
 
   return {
     deployed: true,
@@ -414,7 +466,32 @@ async function readOnchainDemoStatus(health) {
       bankB: units(bankBBalance),
       poolCollateral: units(poolCollateral),
       poolDebt: units(poolDebt),
+      poolCash: units(poolCash),
       poolLiquidity: units(poolLiquidity),
+    },
+    market: {
+      liquiditySupplier,
+      supplierLiquidity: units(supplierLiquidity),
+      supplierShares: units(supplierShares),
+      totalLiquidityShares: units(totalLiquidityShares),
+      totalBorrows: units(totalBorrows),
+      totalDebtShares: units(totalDebtShares),
+      totalReserves: units(totalReserves),
+      totalBadDebt: units(totalBadDebt),
+      borrowIndex: units(borrowIndex),
+      exchangeRate: units(exchangeRate),
+      utilizationRateBps: utilizationRate.toString(),
+      borrowRateBps: borrowRate.toString(),
+      borrowerDebtShares: units(borrowerDebtShares),
+      healthFactorBps: healthFactor.toString(),
+      maxBorrow: units(maxBorrow),
+      availableToBorrow: units(availableToBorrow),
+      voucherPrice: units(voucherPrice),
+      debtPrice: units(debtPrice),
+      voucherPriceAgeSeconds: voucherPriceAge.toString(),
+      debtPriceAgeSeconds: debtPriceAge.toString(),
+      maxStalenessSeconds: maxStaleness.toString(),
+      oracleFresh,
     },
     progress: {
       packetSequenceA: packetSequenceA.toString(),

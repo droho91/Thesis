@@ -4,11 +4,13 @@ pragma solidity ^0.8.28;
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IBankPolicyEngine} from "./IBankPolicyEngine.sol";
 
 /// @title PolicyControlledEscrowVault
 /// @notice Canonical-asset escrow that applies institutional policy on unlock.
-contract PolicyControlledEscrowVault is AccessControl {
+contract PolicyControlledEscrowVault is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     bytes32 public constant APP_ROLE = keccak256("APP_ROLE");
@@ -17,13 +19,14 @@ contract PolicyControlledEscrowVault is AccessControl {
     IBankPolicyEngine public immutable policyEngine;
     uint256 public totalEscrowed;
 
-    mapping(address => uint256) public escrowedBalance;
     mapping(bytes32 => bool) public processedUnlockPackets;
 
     error PolicyDenied(bytes32 policyCode);
 
     event Escrowed(address indexed from, uint256 amount);
     event Unescrowed(address indexed to, uint256 amount, uint256 indexed sourceChainId, bytes32 packetId);
+    event EmergencyPaused(address indexed account);
+    event EmergencyUnpaused(address indexed account);
 
     constructor(address admin, address asset_, address policyEngine_) {
         require(admin != address(0), "ADMIN_ZERO");
@@ -39,10 +42,19 @@ contract PolicyControlledEscrowVault is AccessControl {
         _grantRole(APP_ROLE, app);
     }
 
-    function lockFrom(address from, uint256 amount) external onlyRole(APP_ROLE) {
+    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _pause();
+        emit EmergencyPaused(msg.sender);
+    }
+
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
+        emit EmergencyUnpaused(msg.sender);
+    }
+
+    function lockFrom(address from, uint256 amount) external onlyRole(APP_ROLE) whenNotPaused nonReentrant {
         require(from != address(0), "FROM_ZERO");
         require(amount > 0, "AMOUNT_ZERO");
-        escrowedBalance[from] += amount;
         totalEscrowed += amount;
         asset.safeTransferFrom(from, address(this), amount);
         emit Escrowed(from, amount);
@@ -51,6 +63,8 @@ contract PolicyControlledEscrowVault is AccessControl {
     function unlockToWithPolicy(address to, uint256 sourceChainId, uint256 amount, bytes32 packetId)
         external
         onlyRole(APP_ROLE)
+        whenNotPaused
+        nonReentrant
     {
         _unlockToWithPolicy(to, sourceChainId, amount, packetId, true);
     }
@@ -58,6 +72,8 @@ contract PolicyControlledEscrowVault is AccessControl {
     function unlockToWithPolicyNoExposureReduction(address to, uint256 sourceChainId, uint256 amount, bytes32 packetId)
         external
         onlyRole(APP_ROLE)
+        whenNotPaused
+        nonReentrant
     {
         _unlockToWithPolicy(to, sourceChainId, amount, packetId, false);
     }
@@ -76,9 +92,6 @@ contract PolicyControlledEscrowVault is AccessControl {
 
         processedUnlockPackets[packetId] = true;
         totalEscrowed -= amount;
-        if (escrowedBalance[to] >= amount) {
-            escrowedBalance[to] -= amount;
-        }
         asset.safeTransfer(to, amount);
         if (reduceExposure) {
             policyEngine.noteCanonicalUnlocked(sourceChainId, to, address(asset), amount);

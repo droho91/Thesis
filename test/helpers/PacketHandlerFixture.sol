@@ -205,6 +205,8 @@ abstract contract PacketHandlerFixture is Test {
         _openRoutes();
         localPacketStore = new IBCPacketStore(CHAIN_A);
         handlerA.setTrustedPacketStore(CHAIN_A, address(localPacketStore));
+        localPacketStore.setPacketWriter(address(sourceApp), true);
+        vm.prank(address(sourceApp));
         localPacketStore.commitPacket(_packet());
         proofBuilder = new PacketProofBuilder();
     }

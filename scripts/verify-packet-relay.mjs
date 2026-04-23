@@ -260,6 +260,7 @@ async function main() {
 
   const packetStore = await deploy(packetStoreArtifact, sourceSigner, [SOURCE_CHAIN_ID]);
   const packetStoreAddress = await packetStore.getAddress();
+  await (await packetStore.setPacketWriter(sourceAppAddress, true)).wait();
   await (await destinationPacketHandler.setTrustedPacketStore(SOURCE_CHAIN_ID, packetStoreAddress)).wait();
   await (await sourcePacketHandler.setTrustedPacketStore(SOURCE_CHAIN_ID, packetStoreAddress)).wait();
   const connectionHandshake = await openProofCheckedConnection({
@@ -313,7 +314,7 @@ async function main() {
     timeout: { height: 0n, timestamp: 0n },
   };
 
-  const commitTx = await packetStore.commitPacket(packet);
+  const commitTx = await sourceApp.commitPacket(packetStoreAddress, packet);
   const commitReceipt = await commitTx.wait();
   const trustedHeight = BigInt(commitReceipt.blockNumber);
   if (trustedHeight === 0n) {

@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IBCPacketAcknowledgementReceiver, IBCPacketTimeoutReceiver} from "../core/IBCPacketReceiver.sol";
 import {IBCPacketLib} from "../core/IBCPacketLib.sol";
+import {IBCPacketStore} from "../core/IBCPacketStore.sol";
 
 /// @title MockPacketLifecycleApp
 /// @notice Source-side app used to prove acknowledgements are delivered back to the application layer.
@@ -21,6 +22,11 @@ contract MockPacketLifecycleApp is IBCPacketAcknowledgementReceiver, IBCPacketTi
     constructor(address packetHandler_) {
         require(packetHandler_ != address(0), "PACKET_HANDLER_ZERO");
         packetHandler = packetHandler_;
+    }
+
+    function commitPacket(address packetStore, IBCPacketLib.Packet calldata packet) external returns (bytes32) {
+        require(packetStore != address(0), "PACKET_STORE_ZERO");
+        return IBCPacketStore(packetStore).commitPacket(packet);
     }
 
     function onAcknowledgementPacket(

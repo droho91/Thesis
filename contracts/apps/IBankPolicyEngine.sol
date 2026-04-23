@@ -44,4 +44,6 @@ interface IBankPolicyEngine {
     function noteDebtBorrowed(address account, address debtAsset, uint256 amount) external;
 
     function noteDebtRepaid(address account, address debtAsset, uint256 amount) external;
+
+    function noteDebtWrittenOff(address account, address debtAsset, uint256 amount) external;
 }

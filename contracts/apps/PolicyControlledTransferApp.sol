@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IBCPacketAcknowledgementReceiver, IBCPacketReceiver, IBCPacketTimeoutReceiver} from
     "../core/IBCPacketReceiver.sol";
 import {IBCPacketLib} from "../core/IBCPacketLib.sol";
@@ -13,6 +14,7 @@ import {PolicyControlledVoucherToken} from "./PolicyControlledVoucherToken.sol";
 /// @notice Policy-aware IBC packet application that bridges the transport lane to voucher and escrow actions.
 contract PolicyControlledTransferApp is
     AccessControl,
+    Pausable,
     IBCPacketReceiver,
     IBCPacketAcknowledgementReceiver,
     IBCPacketTimeoutReceiver
@@ -63,6 +65,8 @@ contract PolicyControlledTransferApp is
     event PacketReceived(bytes32 indexed packetId, uint8 indexed action, address indexed recipient, uint256 amount);
     event PacketAcknowledged(bytes32 indexed packetId, bytes32 acknowledgementHash);
     event PacketTimedOut(bytes32 indexed packetId, uint8 indexed action, address indexed refundAccount, uint256 amount);
+    event EmergencyPaused(address indexed account);
+    event EmergencyUnpaused(address indexed account);
 
     constructor(
         uint256 localChainId_,
@@ -97,6 +101,16 @@ contract PolicyControlledTransferApp is
         voucherToken = PolicyControlledVoucherToken(voucherToken_);
     }
 
+    function pause() external onlyRole(APP_ADMIN_ROLE) {
+        _pause();
+        emit EmergencyPaused(msg.sender);
+    }
+
+    function unpause() external onlyRole(APP_ADMIN_ROLE) {
+        _unpause();
+        emit EmergencyUnpaused(msg.sender);
+    }
+
     function configureRemoteRoute(
         uint256 remoteChainId,
         address remoteApp,
@@ -123,10 +137,12 @@ contract PolicyControlledTransferApp is
 
     function sendTransfer(uint256 destinationChainId, address recipient, uint256 amount, uint64 timeoutHeight, uint64 timeoutTimestamp)
         external
+        whenNotPaused
         returns (bytes32 packetId)
     {
         require(address(escrowVault) != address(0), "ESCROW_NOT_SET");
         RemoteRoute memory route = _requireRoute(destinationChainId);
+        require(address(escrowVault.asset()) == route.canonicalAsset, "ESCROW_ASSET_ROUTE_MISMATCH");
         require(recipient != address(0), "RECIPIENT_ZERO");
         require(amount > 0, "AMOUNT_ZERO");
 
@@ -148,7 +164,7 @@ contract PolicyControlledTransferApp is
                 IBCPacketLib.TransferData({
                     sender: msg.sender,
                     recipient: recipient,
-                    asset: address(escrowVault.asset()),
+                    asset: route.canonicalAsset,
                     amount: amount,
                     action: IBCPacketLib.ACTION_LOCK_MINT,
                     memo: bytes32(0)
@@ -167,9 +183,10 @@ contract PolicyControlledTransferApp is
         uint256 amount,
         uint64 timeoutHeight,
         uint64 timeoutTimestamp
-    ) external returns (bytes32 packetId) {
+    ) external whenNotPaused returns (bytes32 packetId) {
         require(address(voucherToken) != address(0), "VOUCHER_NOT_SET");
         RemoteRoute memory route = _requireRoute(destinationChainId);
+        require(voucherToken.canonicalAsset() == route.canonicalAsset, "VOUCHER_ASSET_ROUTE_MISMATCH");
         require(recipient != address(0), "RECIPIENT_ZERO");
         require(amount > 0, "AMOUNT_ZERO");
 
@@ -206,6 +223,7 @@ contract PolicyControlledTransferApp is
 
     function onRecvPacket(IBCPacketLib.Packet calldata packet, bytes32 packetId)
         external
+        whenNotPaused
         returns (bytes memory acknowledgement)
     {
         require(msg.sender == packetHandler, "ONLY_PACKET_HANDLER");
@@ -218,13 +236,16 @@ contract PolicyControlledTransferApp is
         require(route.remoteChannel == packet.source.channel, "WRONG_SOURCE_CHANNEL");
 
         IBCPacketLib.TransferData memory transferData = IBCPacketLib.decodeTransferData(packet.data);
+        require(transferData.asset == route.canonicalAsset, "PACKET_ASSET_MISMATCH");
         if (transferData.action == IBCPacketLib.ACTION_LOCK_MINT) {
             require(address(voucherToken) != address(0), "VOUCHER_NOT_SET");
+            require(voucherToken.canonicalAsset() == route.canonicalAsset, "VOUCHER_ASSET_ROUTE_MISMATCH");
             voucherToken.mintWithPolicy(
                 transferData.recipient, transferData.asset, packet.source.chainId, transferData.amount, packetId
             );
         } else if (transferData.action == IBCPacketLib.ACTION_BURN_UNLOCK) {
             require(address(escrowVault) != address(0), "ESCROW_NOT_SET");
+            require(address(escrowVault.asset()) == route.canonicalAsset, "ESCROW_ASSET_ROUTE_MISMATCH");
             escrowVault.unlockToWithPolicyNoExposureReduction(
                 transferData.recipient, packet.source.chainId, transferData.amount, packetId
             );
@@ -247,19 +268,29 @@ contract PolicyControlledTransferApp is
         emit PacketAcknowledged(packetId, acknowledgementHash);
     }
 
-    function onTimeoutPacket(IBCPacketLib.Packet calldata packet, bytes32 packetId) external {
+    function onTimeoutPacket(IBCPacketLib.Packet calldata packet, bytes32 packetId) external whenNotPaused {
         require(msg.sender == packetHandler, "ONLY_PACKET_HANDLER");
         require(!timedOutPacket[packetId], "PACKET_TIMEOUT_RECORDED");
 
+        require(packet.source.chainId == localChainId, "WRONG_SOURCE_CHAIN");
+        require(packet.source.port == address(this), "WRONG_SOURCE_PORT");
+        RemoteRoute memory route = _requireRoute(packet.destination.chainId);
+        require(packet.source.channel == route.localChannel, "WRONG_SOURCE_CHANNEL");
+        require(packet.destination.port == route.remoteApp, "WRONG_DESTINATION_PORT");
+        require(packet.destination.channel == route.remoteChannel, "WRONG_DESTINATION_CHANNEL");
+
         IBCPacketLib.TransferData memory transferData = IBCPacketLib.decodeTransferData(packet.data);
+        require(transferData.asset == route.canonicalAsset, "PACKET_ASSET_MISMATCH");
         if (transferData.action == IBCPacketLib.ACTION_LOCK_MINT) {
             require(address(escrowVault) != address(0), "ESCROW_NOT_SET");
+            require(address(escrowVault.asset()) == route.canonicalAsset, "ESCROW_ASSET_ROUTE_MISMATCH");
             escrowVault.unlockToWithPolicyNoExposureReduction(
                 transferData.sender, packet.destination.chainId, transferData.amount, packetId
             );
             emit PacketTimedOut(packetId, transferData.action, transferData.sender, transferData.amount);
         } else if (transferData.action == IBCPacketLib.ACTION_BURN_UNLOCK) {
             require(address(voucherToken) != address(0), "VOUCHER_NOT_SET");
+            require(voucherToken.canonicalAsset() == route.canonicalAsset, "VOUCHER_ASSET_ROUTE_MISMATCH");
             voucherToken.mintWithPolicy(
                 transferData.sender, transferData.asset, packet.destination.chainId, transferData.amount, packetId
             );

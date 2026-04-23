@@ -53,6 +53,9 @@ contract PolicyTransferAppTest is Test {
 
         escrowA.grantApp(address(appA));
         voucherB.grantApp(address(appB));
+        voucherB.bindCanonicalAsset(address(canonicalAsset));
+        packetStoreA.setPacketWriter(address(appA), true);
+        packetStoreB.setPacketWriter(address(appB), true);
 
         policyA.grantRole(policyA.POLICY_APP_ROLE(), address(escrowA));
         policyB.grantRole(policyB.POLICY_APP_ROLE(), address(voucherB));
@@ -85,6 +88,27 @@ contract PolicyTransferAppTest is Test {
         assertEq(canonicalAsset.balanceOf(alice), 75 ether);
     }
 
+    function testUnauthorizedPacketWriterCannotCommitOrConsumeSequence() public {
+        IBCPacketLib.Packet memory packet = _forwardPacket(1, alice, bob, 1 ether);
+
+        vm.expectRevert(bytes("PACKET_WRITER_NOT_AUTHORIZED"));
+        vm.prank(alice);
+        packetStoreA.commitPacket(packet);
+
+        assertEq(packetStoreA.packetSequence(), 0);
+    }
+
+    function testAuthorizedWriterMustMatchSourcePort() public {
+        IBCPacketLib.Packet memory packet = _forwardPacket(1, alice, bob, 1 ether);
+        packetStoreA.setPacketWriter(alice, true);
+
+        vm.expectRevert(bytes("SOURCE_PORT_MISMATCH"));
+        vm.prank(alice);
+        packetStoreA.commitPacket(packet);
+
+        assertEq(packetStoreA.packetSequence(), 0);
+    }
+
     function testRecvLockMintPacketMintsVoucherWhenPolicyAllows() public {
         IBCPacketLib.Packet memory packet = _forwardPacket(1, alice, bob, 40 ether);
         bytes32 packetId = IBCPacketLib.packetId(packet);
@@ -112,6 +136,44 @@ contract PolicyTransferAppTest is Test {
         appB.onRecvPacket(packet, packetId);
     }
 
+    function testRecvPacketRejectsMismatchedAsset() public {
+        IBCPacketLib.Packet memory packet = _forwardPacket(1, alice, bob, 10 ether);
+        packet.data = IBCPacketLib.encodeTransferData(
+            IBCPacketLib.TransferData({
+                sender: alice,
+                recipient: bob,
+                asset: address(0xCAFE),
+                amount: 10 ether,
+                action: IBCPacketLib.ACTION_LOCK_MINT,
+                memo: bytes32(0)
+            })
+        );
+        bytes32 packetId = IBCPacketLib.packetId(packet);
+
+        vm.expectRevert(bytes("PACKET_ASSET_MISMATCH"));
+        vm.prank(packetHandlerB);
+        appB.onRecvPacket(packet, packetId);
+    }
+
+    function testRecvBurnUnlockPacketRejectsMismatchedAsset() public {
+        IBCPacketLib.Packet memory packet = _burnPacket(1, bob, alice, 10 ether);
+        packet.data = IBCPacketLib.encodeTransferData(
+            IBCPacketLib.TransferData({
+                sender: bob,
+                recipient: alice,
+                asset: address(0xCAFE),
+                amount: 10 ether,
+                action: IBCPacketLib.ACTION_BURN_UNLOCK,
+                memo: bytes32(0)
+            })
+        );
+        bytes32 packetId = IBCPacketLib.packetId(packet);
+
+        vm.expectRevert(bytes("PACKET_ASSET_MISMATCH"));
+        vm.prank(packetHandlerA);
+        appA.onRecvPacket(packet, packetId);
+    }
+
     function testBurnAndReleaseBurnsVoucherAndReducesExposure() public {
         _mintVoucherOnB(alice, 60 ether, bytes32(uint256(11)));
 
@@ -123,6 +185,16 @@ contract PolicyTransferAppTest is Test {
         assertEq(policyB.voucherExposureOutstanding(address(canonicalAsset)), 40 ether);
         assertTrue(packetStoreB.committedPacket(packetId));
         assertEq(packetStoreB.packetSequence(), 1);
+    }
+
+    function testBurnAndReleaseRejectsRouteVoucherAssetMismatch() public {
+        _mintVoucherOnB(alice, 20 ether, bytes32(uint256(31)));
+        address otherCanonicalAsset = address(0xCAFE);
+        appB.configureRemoteRoute(CHAIN_A, address(appA), CHANNEL_B, CHANNEL_A, otherCanonicalAsset);
+
+        vm.expectRevert(bytes("VOUCHER_ASSET_ROUTE_MISMATCH"));
+        vm.prank(alice);
+        appB.burnAndRelease(CHAIN_A, alice, 10 ether, 70, 0);
     }
 
     function testTimeoutOnBurnUnlockRestoresVoucher() public {
@@ -159,6 +231,24 @@ contract PolicyTransferAppTest is Test {
         assertEq(canonicalAsset.balanceOf(alice), 70 ether);
     }
 
+    function testRecvBurnUnlockCanReleasePooledEscrowToDifferentRecipient() public {
+        canonicalAsset.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        canonicalAsset.approve(address(escrowA), 50 ether);
+        appA.sendTransfer(CHAIN_B, bob, 50 ether, 50, 0);
+        vm.stopPrank();
+
+        IBCPacketLib.Packet memory packet = _burnPacket(1, bob, bob, 20 ether);
+        bytes32 packetId = IBCPacketLib.packetId(packet);
+
+        vm.prank(packetHandlerA);
+        appA.onRecvPacket(packet, packetId);
+
+        assertEq(escrowA.totalEscrowed(), 30 ether);
+        assertEq(canonicalAsset.balanceOf(alice), 50 ether);
+        assertEq(canonicalAsset.balanceOf(bob), 20 ether);
+    }
+
     function testTimeoutOnForwardPacketRefundsSender() public {
         canonicalAsset.mint(alice, 100 ether);
         vm.startPrank(alice);
@@ -174,6 +264,31 @@ contract PolicyTransferAppTest is Test {
         assertEq(escrowA.totalEscrowed(), 0);
         assertEq(canonicalAsset.balanceOf(alice), 100 ether);
         assertTrue(appA.timedOutPacket(packetId));
+    }
+
+    function testPausedContractsBlockCriticalTransferFlows() public {
+        canonicalAsset.mint(alice, 100 ether);
+        appA.pause();
+
+        vm.startPrank(alice);
+        canonicalAsset.approve(address(escrowA), 10 ether);
+        vm.expectRevert();
+        appA.sendTransfer(CHAIN_B, bob, 10 ether, 50, 0);
+        vm.stopPrank();
+
+        appA.unpause();
+        escrowA.pause();
+        vm.startPrank(alice);
+        vm.expectRevert();
+        appA.sendTransfer(CHAIN_B, bob, 10 ether, 50, 0);
+        vm.stopPrank();
+        escrowA.unpause();
+
+        voucherB.pause();
+        IBCPacketLib.Packet memory packet = _forwardPacket(1, alice, bob, 10 ether);
+        vm.expectRevert();
+        vm.prank(packetHandlerB);
+        appB.onRecvPacket(packet, IBCPacketLib.packetId(packet));
     }
 
     function testAcknowledgementCallbackStoresHash() public {
