@@ -34,11 +34,10 @@
                 proof, oracle freshness, and light-client safety stay available when you need them.
               </p>
               <div class="hero-actions product-actions">
-                <button class="button-secondary" id="deploySeed" type="button">Prepare Runtime</button>
-                <button class="button-primary" data-action="lock" type="button">Bridge Collateral</button>
-                <button class="button-run" data-action="borrow" type="button">Borrow bCASH</button>
-                <button class="button-secondary" data-action="fullFlow" type="button">Run Guided Lifecycle</button>
+                <a class="button-primary" href="#bridge-action">Bridge Collateral</a>
+                <a class="button-run" href="#borrow-action">Borrow</a>
                 <a class="button-link" href="#verification-panel">View Technical Proof</a>
+                <button class="button-secondary" id="refreshState" type="button">Refresh</button>
               </div>
             </div>
             <aside class="hero-loan-panel" aria-label="Borrowing power preview">
@@ -68,12 +67,6 @@
                   <span>Runtime</span>
                   <strong id="heroRuntimePreview">Waiting</strong>
                 </div>
-              </div>
-              <div class="loan-panel-actions">
-                <button class="button-primary" data-action="depositCollateral" type="button">Use Voucher</button>
-                <button class="button-run" data-action="borrow" type="button">Borrow</button>
-                <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
-                <button class="button-secondary" id="refreshState" type="button">Refresh</button>
               </div>
             </aside>
           </div>
@@ -118,7 +111,7 @@
             <h2>Manage your position</h2>
           </div>
 
-          <article class="product-card action-card">
+          <article class="product-card action-card" id="bridge-action">
             <div class="action-card-head">
               <div>
                 <span class="action-index">Bridge</span>
@@ -137,9 +130,34 @@
                 <strong id="voucherBalance">-</strong>
               </div>
             </div>
+            <div class="transaction-panel transaction-panel--bridge">
+              <div class="transaction-panel-head">
+                <div>
+                  <strong>Bridge amount</strong>
+                  <span>Available on Bank A <b id="bridgeSourceBalance">-</b></span>
+                </div>
+              </div>
+              <label class="amount-field" for="bridgeAmount">
+                <span>Amount</span>
+                <input id="bridgeAmount" type="number" min="0" step="0.0001" inputmode="decimal" autocomplete="off" />
+                <em>aBANK</em>
+              </label>
+              <div class="decision-preview">
+                <div>
+                  <span>Bridge request</span>
+                  <strong id="bridgePreviewAmount">-</strong>
+                </div>
+                <div>
+                  <span>Expected voucher</span>
+                  <strong id="bridgePreviewVoucher">-</strong>
+                </div>
+                <p id="bridgePreviewNote">Verification will make this collateral usable on Bank B.</p>
+              </div>
+              <p class="validation-message" id="bridgeValidation" aria-live="polite"></p>
+            </div>
             <div class="action-buttons action-buttons--primary">
               <button class="button-secondary" data-action="openRoute" type="button">Initialize Route</button>
-              <button class="button-primary" data-action="lock" type="button">Lock Collateral</button>
+              <button class="button-primary" data-action="lock" data-amount-input="bridgeAmount" type="button">Lock Collateral</button>
               <button class="button-run" data-action="proveForwardMint" type="button">Verify and Mint Voucher</button>
             </div>
             <details class="workflow-technical">
@@ -151,7 +169,7 @@
             </details>
           </article>
 
-          <article class="product-card action-card">
+          <article class="product-card action-card" id="borrow-action">
             <div class="action-card-head">
               <div>
                 <span class="action-index">Borrow</span>
@@ -178,11 +196,124 @@
                 <strong id="borrowPreviewLiquidity">-</strong>
               </div>
             </div>
-            <div class="action-buttons">
-              <button class="button-primary" data-action="depositCollateral" type="button">Use as Collateral</button>
-              <button class="button-run" data-action="borrow" type="button">Borrow bCASH</button>
-              <button class="button-secondary" data-action="repay" type="button">Repay Debt</button>
-              <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw Collateral</button>
+            <div class="transaction-stack">
+              <div class="collateral-use-row">
+                <div>
+                  <strong>Voucher collateral</strong>
+                  <span id="depositCollateralHint">Waiting for a verified voucher.</span>
+                </div>
+                <button class="button-primary" data-action="depositCollateral" type="button">Use Voucher as Collateral</button>
+              </div>
+
+              <div class="transaction-panel">
+                <div class="transaction-panel-head">
+                  <div>
+                    <strong>Borrow</strong>
+                    <span>Max available <b id="borrowMaxInline">-</b></span>
+                  </div>
+                  <button class="amount-fill" data-fill-target="borrowAmount" data-fill-source="borrowAvailable" type="button">Max</button>
+                </div>
+                <label class="amount-field" for="borrowAmount">
+                  <span>Amount</span>
+                  <input id="borrowAmount" type="number" min="0" step="0.0001" inputmode="decimal" autocomplete="off" />
+                  <em>bCASH</em>
+                </label>
+                <div class="decision-preview decision-preview--risk">
+                  <div>
+                    <span>Borrowing</span>
+                    <strong id="borrowDecisionAmount">-</strong>
+                  </div>
+                  <div>
+                    <span>Projected debt</span>
+                    <strong id="borrowProjectedDebt">-</strong>
+                  </div>
+                  <div>
+                    <span>Available after</span>
+                    <strong id="borrowProjectedAvailable">-</strong>
+                  </div>
+                  <div>
+                    <span>Projected health</span>
+                    <strong id="borrowProjectedHealth">-</strong>
+                  </div>
+                  <p class="risk-chip" id="borrowRiskBadge">Waiting</p>
+                </div>
+                <p class="validation-message" id="borrowValidation" aria-live="polite"></p>
+                <button class="button-run transaction-submit" data-action="borrow" data-amount-input="borrowAmount" type="button">
+                  Borrow bCASH
+                </button>
+              </div>
+
+              <div class="transaction-panel">
+                <div class="transaction-panel-head">
+                  <div>
+                    <strong>Repay</strong>
+                    <span>Outstanding <b id="repayDebtInline">-</b></span>
+                  </div>
+                  <button class="amount-fill" data-fill-target="repayAmount" data-fill-source="debt" type="button">Max</button>
+                </div>
+                <label class="amount-field" for="repayAmount">
+                  <span>Amount</span>
+                  <input id="repayAmount" type="number" min="0" step="0.0001" inputmode="decimal" autocomplete="off" />
+                  <em>bCASH</em>
+                </label>
+                <div class="decision-preview">
+                  <div>
+                    <span>Repaying</span>
+                    <strong id="repayDecisionAmount">-</strong>
+                  </div>
+                  <div>
+                    <span>Remaining debt</span>
+                    <strong id="repayProjectedDebt">-</strong>
+                  </div>
+                  <div>
+                    <span>Health after</span>
+                    <strong id="repayProjectedHealth">-</strong>
+                  </div>
+                </div>
+                <p class="validation-message" id="repayValidation" aria-live="polite"></p>
+                <button class="button-secondary transaction-submit" data-action="repay" data-amount-input="repayAmount" type="button">
+                  Repay Debt
+                </button>
+              </div>
+
+              <div class="transaction-panel">
+                <div class="transaction-panel-head">
+                  <div>
+                    <strong>Withdraw collateral</strong>
+                    <span>Withdrawable <b id="withdrawableInline">-</b></span>
+                  </div>
+                  <button class="amount-fill" data-fill-target="withdrawAmount" data-fill-source="withdrawable" type="button">Max</button>
+                </div>
+                <label class="amount-field" for="withdrawAmount">
+                  <span>Amount</span>
+                  <input id="withdrawAmount" type="number" min="0" step="0.0001" inputmode="decimal" autocomplete="off" />
+                  <em>vA</em>
+                </label>
+                <div class="decision-preview decision-preview--risk">
+                  <div>
+                    <span>Withdrawing</span>
+                    <strong id="withdrawDecisionAmount">-</strong>
+                  </div>
+                  <div>
+                    <span>Remaining collateral</span>
+                    <strong id="withdrawProjectedCollateral">-</strong>
+                  </div>
+                  <div>
+                    <span>Projected health</span>
+                    <strong id="withdrawProjectedHealth">-</strong>
+                  </div>
+                  <p class="risk-chip" id="withdrawRiskBadge">Waiting</p>
+                </div>
+                <p class="validation-message" id="withdrawValidation" aria-live="polite"></p>
+                <button
+                  class="button-secondary transaction-submit"
+                  data-action="withdrawCollateral"
+                  data-amount-input="withdrawAmount"
+                  type="button"
+                >
+                  Withdraw Collateral
+                </button>
+              </div>
             </div>
           </article>
 
@@ -321,7 +452,22 @@
               <button class="button-secondary" id="focusMode" type="button" aria-pressed="false">Focus</button>
             </div>
 
-            <details class="advanced-card" open>
+            <div class="verification-summary" aria-label="Verification summary">
+              <div>
+                <span>Packet proof</span>
+                <strong id="verificationSummaryStatus">Pending</strong>
+              </div>
+              <div>
+                <span>Oracle</span>
+                <strong id="verificationSummaryOracle">Waiting</strong>
+              </div>
+              <div>
+                <span>Client</span>
+                <strong id="verificationSummaryClient">Waiting</strong>
+              </div>
+            </div>
+
+            <details class="advanced-card">
               <summary>Verification Status</summary>
               <dl class="technical-grid">
                 <div>
@@ -466,52 +612,81 @@
         </aside>
       </section>
 
-      <section class="journey-section" aria-label="Journey status">
+      <section class="journey-section" aria-label="Activity timeline">
         <div class="section-head section-head--wide">
           <div>
-            <p class="eyebrow">Journey Status</p>
-            <h2>Collateral lifecycle</h2>
+            <p class="eyebrow">Activity Timeline</p>
+            <h2>Verified capital history</h2>
           </div>
           <p class="section-text">
-            The lifecycle is shown as product progress first; proof details stay in the advanced panel.
+            Borrower activity stays readable here while packet, oracle, and light-client details stay in the proof panel.
           </p>
         </div>
-        <div class="protocol-roadmap">
+        <div class="activity-timeline">
           <article id="routeEscrow">
-            <span>01</span>
-            <strong>Collateral locked</strong>
-            <small id="routeEscrowText">waiting</small>
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Collateral locked on Bank A</strong>
+              <small id="routeEscrowText">waiting</small>
+            </div>
           </article>
           <article id="routeHeader">
-            <span>02</span>
-            <strong>Proof prepared</strong>
-            <small id="routeHeaderText">waiting</small>
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Trust synced on Bank B</strong>
+              <small id="routeHeaderText">waiting</small>
+            </div>
           </article>
           <article id="routeClient">
-            <span>03</span>
-            <strong>Trust synced</strong>
-            <small id="routeClientText">waiting</small>
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Proof anchor imported</strong>
+              <small id="routeClientText">waiting</small>
+            </div>
           </article>
           <article id="routeProof">
-            <span>04</span>
-            <strong>Voucher minted</strong>
-            <small id="routeProofText">waiting</small>
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Voucher ready for collateral use</strong>
+              <small id="routeProofText">waiting</small>
+            </div>
           </article>
           <article id="routeLending">
-            <span>05</span>
-            <strong>Credit active</strong>
-            <small id="routeLendingText">waiting</small>
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Borrowing position updated</strong>
+              <small id="routeLendingText">waiting</small>
+            </div>
           </article>
           <article id="routeReverse">
-            <span>06</span>
-            <strong>Collateral redeemed</strong>
-            <small id="routeReverseText">waiting</small>
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Collateral redeemed on Bank A</strong>
+              <small id="routeReverseText">waiting</small>
+            </div>
           </article>
           <article id="routeSafety">
-            <span>07</span>
-            <strong>Safety available</strong>
-            <small id="routeSafetyText">available</small>
+            <span class="timeline-dot"></span>
+            <div>
+              <strong>Safety checks available</strong>
+              <small id="routeSafetyText">available</small>
+            </div>
           </article>
+        </div>
+      </section>
+
+      <section class="runtime-tools product-card" aria-label="Demo controls">
+        <div class="section-head section-head--wide">
+          <div>
+            <p class="eyebrow">Demo Controls</p>
+            <h2>Runtime tools</h2>
+          </div>
+          <p class="section-text">Setup and scripted support controls are kept separate from borrower decisions.</p>
+        </div>
+        <div class="runtime-tool-actions">
+          <button class="button-secondary" id="deploySeed" type="button">Prepare Runtime</button>
+          <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
+          <button class="button-secondary" data-action="fullFlow" type="button">Run Guided Lifecycle</button>
         </div>
       </section>
 
@@ -522,17 +697,6 @@
           <pre id="contractOutput">Start the Besu bank chains, then press Prepare Runtime.</pre>
         </div>
       </details>
-
-      <span id="visualBankABalance" hidden>-</span>
-      <span id="visualBankBBalance" hidden>-</span>
-      <span id="visualPacketLabel" hidden>-</span>
-      <span id="visualProofMode" hidden>-</span>
-      <span id="proofReadinessText" hidden>-</span>
-      <span id="creditUtilText" hidden>-</span>
-      <span id="nextActionTitle" hidden>-</span>
-      <span id="nextActionHint" hidden>-</span>
-      <i id="proofReadinessBar" hidden></i>
-      <i id="creditUtilBar" hidden></i>
     </main>
 
     <script type="module" src="./app.js"></script>

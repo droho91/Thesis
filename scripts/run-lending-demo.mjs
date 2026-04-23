@@ -47,7 +47,10 @@ const CHANNEL_STATE = Object.freeze({
 
 const FORWARD_AMOUNT = ethers.parseUnits(process.env.DEMO_FORWARD_AMOUNT || "100", 18);
 const DENIED_AMOUNT = ethers.parseUnits(process.env.DEMO_DENIED_AMOUNT || "40", 18);
+const BORROW_AMOUNT_CONFIGURED = process.env.DEMO_BORROW_AMOUNT != null;
 const BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW_AMOUNT || "140", 18);
+const REPAY_AMOUNT = process.env.DEMO_REPAY_AMOUNT ? ethers.parseUnits(process.env.DEMO_REPAY_AMOUNT, 18) : null;
+const WITHDRAW_AMOUNT = process.env.DEMO_WITHDRAW_AMOUNT ? ethers.parseUnits(process.env.DEMO_WITHDRAW_AMOUNT, 18) : null;
 const LIQUIDATION_REPAY = ethers.parseUnits(process.env.DEMO_LIQUIDATION_REPAY || "40", 18);
 const SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits(process.env.DEMO_SHOCKED_VOUCHER_PRICE || "0.5", 18);
 const DEMO_TX_GAS_LIMIT = BigInt(process.env.DEMO_TX_GAS_LIMIT || "8000000");
@@ -1682,15 +1685,18 @@ export async function runDemoStep(action, options = {}) {
   if (action === "depositCollateral") {
     setPhase("step-deposit-collateral");
     await ensureRiskSeeded(config, ctx);
+    const trace = await readExistingTrace();
+    const desiredCollateral = amountFromTrace(trace.forward, FORWARD_AMOUNT);
     const balance = await ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress);
-    if (balance < FORWARD_AMOUNT) throw new Error("Bank B user needs a proven voucher before depositing collateral.");
+    if (balance < desiredCollateral) throw new Error("Bank B user needs a proven voucher before depositing collateral.");
     const currentCollateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
-    if (currentCollateral < FORWARD_AMOUNT) {
+    if (currentCollateral < desiredCollateral) {
+      const depositAmount = desiredCollateral - currentCollateral;
       await txStep("step approve voucher collateral", () =>
-        ctx.B.voucherUser.approve(config.chains.B.lendingPool, FORWARD_AMOUNT, txOptions())
+        ctx.B.voucherUser.approve(config.chains.B.lendingPool, depositAmount, txOptions())
       );
       await txStep("step deposit collateral", () =>
-        ctx.B.lendingPoolUser.depositCollateral(FORWARD_AMOUNT - currentCollateral, txOptions())
+        ctx.B.lendingPoolUser.depositCollateral(depositAmount, txOptions())
       );
     }
     const collateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
@@ -1710,8 +1716,8 @@ export async function runDemoStep(action, options = {}) {
     setPhase("step-borrow");
     await ensureRiskSeeded(config, ctx);
     const debt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
-    if (debt < BORROW_AMOUNT) {
-      const borrowDelta = BORROW_AMOUNT - debt;
+    const borrowDelta = BORROW_AMOUNT_CONFIGURED ? BORROW_AMOUNT : BORROW_AMOUNT > debt ? BORROW_AMOUNT - debt : 0n;
+    if (borrowDelta > 0n) {
       const availableBeforeBorrow = await ctx.B.lendingPoolAdmin.availableToBorrow(ctx.destinationUserAddress);
       if (availableBeforeBorrow < borrowDelta) {
         const collateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
@@ -1747,20 +1753,31 @@ export async function runDemoStep(action, options = {}) {
     setPhase("step-repay");
     const debt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
     if (debt > 0n) {
+      const repayAmount = REPAY_AMOUNT ?? debt;
+      if (repayAmount > debt) {
+        throw new Error(`REPAY_LIMIT: outstanding debt is ${units(debt)} bCASH, requested ${units(repayAmount)}.`);
+      }
       const debtBalance = await ctx.B.debtAdmin.balanceOf(ctx.destinationUserAddress);
-      if (debtBalance < debt) throw new Error("Destination user does not have enough bCASH to repay current debt.");
+      if (debtBalance < repayAmount) throw new Error("Destination user does not have enough bCASH to repay the requested amount.");
       const debtUser = ctx.B.debtAdmin.connect(ctx.destinationUser);
-      await txStep("step approve debt repayment", () => debtUser.approve(config.chains.B.lendingPool, debt, txOptions()));
-      await txStep("step repay debt", () => ctx.B.lendingPoolUser.repay(debt, txOptions()));
+      await txStep("step approve debt repayment", () => debtUser.approve(config.chains.B.lendingPool, repayAmount, txOptions()));
+      await txStep("step repay debt", () => ctx.B.lendingPoolUser.repay(repayAmount, txOptions()));
     }
+    const remainingDebt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
     return writeTracePatch(
       config,
       ctx,
-      { risk: { repaid: true, debtAfterLiquidation: "0.0" } },
+      {
+        risk: {
+          repaid: REPAY_AMOUNT != null || remainingDebt === 0n,
+          debtAfterRepay: units(remainingDebt),
+          debtAfterLiquidation: units(remainingDebt),
+        },
+      },
       {
         phase: "repaid",
         label: "Repaid bCASH debt",
-        summary: "The Bank B loan debt is now repaid.",
+        summary: `Repaid bCASH debt; remaining debt is ${units(remainingDebt)} bCASH.`,
       }
     );
   }
@@ -1769,16 +1786,28 @@ export async function runDemoStep(action, options = {}) {
     setPhase("step-withdraw-collateral");
     const collateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
     if (collateral > 0n) {
-      await txStep("step withdraw collateral", () => ctx.B.lendingPoolUser.withdrawCollateral(collateral, txOptions()));
+      const withdrawAmount = WITHDRAW_AMOUNT ?? collateral;
+      if (withdrawAmount > collateral) {
+        throw new Error(`WITHDRAW_LIMIT: deposited collateral is ${units(collateral)} vA, requested ${units(withdrawAmount)}.`);
+      }
+      await txStep("step withdraw collateral", () => ctx.B.lendingPoolUser.withdrawCollateral(withdrawAmount, txOptions()));
     }
+    const remainingCollateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
     return writeTracePatch(
       config,
       ctx,
-      { risk: { collateralWithdrawn: true, completed: true, collateralAfterLiquidation: "0.0" } },
+      {
+        risk: {
+          collateralWithdrawn: WITHDRAW_AMOUNT != null || remainingCollateral === 0n,
+          completed: remainingCollateral === 0n,
+          collateralAfterWithdrawal: units(remainingCollateral),
+          collateralAfterLiquidation: units(remainingCollateral),
+        },
+      },
       {
         phase: "collateral-withdrawn",
         label: "Withdrew voucher collateral",
-        summary: "The voucher is free again for the reverse burn path.",
+        summary: `Withdrew voucher collateral; ${units(remainingCollateral)} vA remains deposited.`,
       }
     );
   }
@@ -1786,8 +1815,10 @@ export async function runDemoStep(action, options = {}) {
   if (action === "burn") {
     setPhase("step-burn");
     await requireOpenHandshake(config, ctx);
+    const trace = await readExistingTrace();
+    const burnAmount = amountFromTrace(trace.forward, FORWARD_AMOUNT);
     const freeVoucher = await ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress);
-    if (freeVoucher < FORWARD_AMOUNT) {
+    if (freeVoucher < burnAmount) {
       throw new Error("Bank B user needs a free voucher balance before burn. Repay and withdraw collateral first.");
     }
     const sequence = asBigInt(await ctx.B.packetStore.nextSequence());
@@ -1795,7 +1826,7 @@ export async function runDemoStep(action, options = {}) {
       ctx.B.transferAppAdmin.connect(ctx.destinationUser).burnAndRelease(
         sourceChainId,
         ctx.sourceUserAddress,
-        FORWARD_AMOUNT,
+        burnAmount,
         0,
         0,
         txOptions()
@@ -1809,7 +1840,7 @@ export async function runDemoStep(action, options = {}) {
       config,
       sender: ctx.destinationUserAddress,
       recipient: ctx.sourceUserAddress,
-      amount: FORWARD_AMOUNT,
+      amount: burnAmount,
     });
     const packetIdValue = await ctx.B.packetStore.packetIdAt(sequence);
     return writeTracePatch(
@@ -1819,8 +1850,8 @@ export async function runDemoStep(action, options = {}) {
         reverse: {
           operation: "Bank B voucher burn -> Bank A escrow unlock",
           sequence: sequence.toString(),
-          amount: units(FORWARD_AMOUNT),
-          amountRaw: FORWARD_AMOUNT.toString(),
+          amount: units(burnAmount),
+          amountRaw: burnAmount.toString(),
           packetId: packetIdValue,
           packetLeaf: packetLeaf(packet),
           packetPath: packetPath(packet),
@@ -1831,7 +1862,7 @@ export async function runDemoStep(action, options = {}) {
       {
         phase: "reverse-burned",
         label: "Burned voucher and committed reverse packet",
-        summary: `Bank B burned ${units(FORWARD_AMOUNT)} vA and wrote packet ${compact(packetIdValue)}.`,
+        summary: `Bank B burned ${units(burnAmount)} vA and wrote packet ${compact(packetIdValue)}.`,
       }
     );
   }

@@ -138,11 +138,6 @@ function buildVisualModel(status) {
     return {
       stage: "offline",
       stageLabel: "Runtime offline",
-      proofReadiness: 0,
-      nextActionTitle: "Prepare Runtime",
-      nextActionHint: "Start from a live seeded baseline.",
-      packetLabel: "seq -",
-      proofMode: "waiting",
       escrowText: "waiting",
       trustText: "waiting",
       creditText: "waiting",
@@ -197,56 +192,9 @@ function buildVisualModel(status) {
     safety: "Safety mode",
   };
 
-  const proofReadiness =
-    12 +
-    (escrowed ? 18 : 0) +
-    (headerFinalized ? 18 : 0) +
-    (trusted ? 24 : 0) +
-    (proven ? 28 : 0);
-
-  let nextActionTitle = "Lock aBANK";
-  let nextActionHint = "Write the forward packet and put source collateral in escrow.";
-  if (!escrowed) {
-    nextActionTitle = "Lock aBANK";
-    nextActionHint = "Create the collateral packet on Bank A.";
-  } else if (!headerFinalized) {
-    nextActionTitle = "Read Bank A Header";
-    nextActionHint = "Capture the finalized source header for Bank B.";
-  } else if (!trusted) {
-    nextActionTitle = "Import Header on Bank B";
-    nextActionHint = "Move the source trust anchor into the destination chain.";
-  } else if (!proven) {
-    nextActionTitle = "Verify Proof + Mint";
-    nextActionHint = "Accept the packet proof and mint the voucher.";
-  } else if (!collateralized) {
-    nextActionTitle = "Deposit Voucher";
-    nextActionHint = "Turn the proven voucher into pool collateral.";
-  } else if (!borrowed) {
-    nextActionTitle = "Borrow bCASH";
-    nextActionHint = "Draw credit against the verified collateral.";
-  } else if (numeric(balances.poolDebt) > 0) {
-    nextActionTitle = "Repay bCASH";
-    nextActionHint = "Close the active debt before withdrawing collateral.";
-  } else if (!reverseStarted) {
-    nextActionTitle = "Burn Voucher";
-    nextActionHint = "Start the reverse packet and unlock source value.";
-  } else {
-    nextActionTitle = "Verify Proof + Unlock";
-    nextActionHint = "Complete the return proof path on Bank A.";
-  }
-  if (safety) {
-    nextActionTitle = security.recovering ? "Recover Light Client" : "Recover or inspect evidence";
-    nextActionHint = "Resolve the frozen or recovering trust state before normal flow resumes.";
-  }
-
   return {
     stage,
     stageLabel: stageLabels[stage],
-    proofReadiness: clamp(proofReadiness),
-    nextActionTitle,
-    nextActionHint,
-    packetLabel: `seq ${progress.packetSequenceA ?? "-"}`,
-    proofMode: forward.proofMode ? `${forward.proofMode} proof` : "waiting",
     escrowText: escrowed ? `${balances.escrow ?? "0.0"} aBANK` : "waiting",
     trustText: trusted ? `header ${progress.trustedAOnB ?? "-"}` : headerFinalized ? "ready" : "waiting",
     creditText: borrowed
@@ -267,15 +215,7 @@ function buildVisualModel(status) {
 function renderVisualStatus(status) {
   const model = buildVisualModel(status);
   const balances = status?.balances || {};
-  const map = document.getElementById("capitalMap");
-  if (map) map.dataset.stage = model.stage;
   document.body.dataset.demoStage = model.stage;
-
-  setText("flowStageBadge", model.stageLabel);
-  setText("visualBankABalance", status?.deployed ? `${balances.bankA ?? "-"} aBANK` : "-");
-  setText("visualBankBBalance", status?.deployed ? `${balances.bankB ?? "-"} bCASH` : "-");
-  setText("visualPacketLabel", model.packetLabel);
-  setText("visualProofMode", model.proofMode);
 
   setFlowCheck("visualEscrowState", model.escrowed ? "done" : model.stage === "ready" ? "active" : "", model.escrowText);
   setFlowCheck("visualTrustState", model.trusted ? "done" : model.escrowed ? "active" : "", model.trustText);
@@ -285,15 +225,10 @@ function renderVisualStatus(status) {
     model.creditText
   );
 
-  setText("proofReadinessText", `${Math.round(model.proofReadiness)}%`);
-  setMeter("proofReadinessBar", model.proofReadiness);
-
   const collateral = numeric(balances.poolCollateral);
   const debt = numeric(balances.poolDebt);
   const market = status?.market || {};
-  const liquidity = numeric(balances.poolLiquidity);
   const collateralRatio = debt > 0 ? (collateral / debt) * 100 : collateral > 0 ? 100 : 0;
-  const utilization = market.utilizationRateBps != null ? Number(market.utilizationRateBps) / 100 : debt + liquidity > 0 ? (debt / (debt + liquidity)) * 100 : 0;
   const healthFactor = market.healthFactorBps && market.healthFactorBps !== String(2n ** 256n - 1n)
     ? Number(market.healthFactorBps) / 100
     : null;
@@ -303,15 +238,11 @@ function renderVisualStatus(status) {
     debt > 0 && healthFactor != null ? `${healthFactor.toFixed(1)}% HF` : debt > 0 ? `${Math.round(collateralRatio)}%` : collateral > 0 ? "covered" : status?.deployed ? "idle" : "-"
   );
   setMeter("collateralHealthBar", debt > 0 && healthFactor != null ? healthFactor / 2 : debt > 0 ? collateralRatio / 2 : collateral > 0 ? 100 : 0);
-  setText("creditUtilText", status?.deployed ? `${utilization >= 10 ? utilization.toFixed(0) : utilization.toFixed(1)}%` : "-");
-  setMeter("creditUtilBar", utilization);
-  setText("nextActionTitle", model.nextActionTitle);
-  setText("nextActionHint", model.nextActionHint);
 }
 
 export function renderRoadmap(status) {
   if (!status?.deployed) {
-    setRoute("routeEscrow", "active", "deploy first");
+    setRoute("routeEscrow", "active", "runtime waiting");
     setRoute("routeHeader", "", "waiting");
     setRoute("routeClient", "", "waiting");
     setRoute("routeProof", "", "waiting");
@@ -342,7 +273,7 @@ export function renderRoadmap(status) {
     positive(balances.poolCollateral) ||
     positive(balances.poolDebt) ||
     positive(balances.bankB);
-  const lendingComplete = Boolean(lending.completed || lending.collateralWithdrawn);
+  const lendingComplete = Boolean(lending.completed || (lending.collateralWithdrawn && !positive(balances.poolCollateral)));
   const reverseWritten = present(reverse.commitHeight) || present(reverse.packetId);
   const reverseTrusted =
     present(reverse.commitHeight) &&
@@ -353,37 +284,47 @@ export function renderRoadmap(status) {
   const recovering = Number(progress.statusAOnB) === 3 || Number(progress.statusBOnA) === 3;
   const recovered = Boolean(trace.misbehaviour?.recovered);
 
-  setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? "packet written" : "ready");
-  setRoute("routeHeader", headerFinalized ? "done" : escrowed ? "active" : "", headerFinalized ? "header read" : "waiting");
-  setRoute("routeClient", trusted ? "done" : headerFinalized ? "active" : "", trusted ? "header imported" : "waiting");
+  setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? `${balances.escrow ?? "0.0"} aBANK locked` : "ready");
+  setRoute(
+    "routeHeader",
+    headerFinalized ? "done" : escrowed ? "active" : "",
+    headerFinalized ? "source proof captured" : "waiting"
+  );
+  setRoute(
+    "routeClient",
+    trusted ? "done" : headerFinalized ? "active" : "",
+    trusted ? `Bank B trusts header ${progress.trustedAOnB ?? "-"}` : "waiting"
+  );
   const proofLabel =
     forwardProofMode === "storage"
-      ? "storage proof"
+      ? "proof verified"
       : forwardProofMode === "merkle"
         ? runtime.besuFirst
-          ? "fallback proof"
-          : "fallback proof"
-        : "executed once";
+          ? "fallback proof verified"
+          : "fallback proof verified"
+        : "voucher pending";
   setRoute("routeProof", proven ? "done" : trusted ? "active" : "", proven ? proofLabel : "waiting");
   setRoute(
     "routeLending",
     lendingComplete ? "done" : lendingStarted ? "active" : proven ? "active" : "",
     lendingComplete
-      ? "collateral released"
-      : lending.repaid
-        ? "debt repaid"
+      ? "collateral free"
+      : lending.collateralWithdrawn
+        ? `${balances.poolCollateral ?? "0.0"} vA remains`
+        : lending.repaid
+        ? "repayment submitted"
         : lending.borrowed
-          ? "borrowed"
+          ? "borrow executed"
           : lendingStarted
-            ? "collateralized"
+            ? "voucher deposited as collateral"
             : proven
-              ? "ready"
+              ? "voucher ready"
               : "waiting"
   );
   setRoute(
     "routeReverse",
     unlocked ? "done" : reverseTrusted || reverseWritten ? "active" : "",
-    unlocked ? "unlocked" : reverseTrusted ? "header imported" : reverseWritten ? "packet written" : "waiting"
+    unlocked ? "unlocked on Bank A" : reverseTrusted ? "Bank A trusts redemption" : reverseWritten ? "redemption submitted" : "waiting"
   );
   setRoute(
     "routeSafety",
@@ -411,6 +352,9 @@ export function renderStatus(status) {
     setText("heroRuntimePreview", runtime.besuFirst ? "Besu required" : "Local runtime");
     setText("borrowPreviewHealth", "-");
     setText("borrowPreviewLiquidity", "-");
+    setText("verificationSummaryStatus", "Pending");
+    setText("verificationSummaryOracle", "Waiting");
+    setText("verificationSummaryClient", "Offline");
     setText(
       "lastMessage",
       status?.message || (runtime.besuFirst ? "Start the Besu bank chains." : "Start the local runtime.")
@@ -455,9 +399,6 @@ export function renderStatus(status) {
   setText("borrowRate", bpsToPercent(status.market?.borrowRateBps));
   setText("utilizationBps", bpsToPercent(status.market?.utilizationRateBps));
   setText("borrowRateHero", bpsToPercent(status.market?.borrowRateBps));
-  setText("utilizationHero", bpsToPercent(status.market?.utilizationRateBps));
-  setText("reservesHero", `${status.market?.totalReserves ?? "-"} bCASH`);
-  setText("oracleFreshHero", status.market?.oracleFresh ? "fresh" : "stale");
   setText("operatorMode", status.runtime?.proofPolicy === "storage-required" ? "Storage proof required" : "Demo mode");
   const collateralValue = marketValue(status.balances.poolCollateral, status.market?.voucherPrice);
   const health = healthLabel(status.market?.healthFactorBps);
@@ -506,6 +447,7 @@ export function renderStatus(status) {
     : security.recovering
       ? `Recovering / ${clientPairLabel(status.progress)}`
       : clientPairLabel(status.progress);
+  const clientSummary = security.frozen ? "Frozen" : security.recovering ? "Recovering" : "Healthy";
 
   setText("packetSequenceA", status.progress.packetSequenceA);
   setText("headerHeightA", status.progress.headerHeightA);
@@ -548,6 +490,9 @@ export function renderStatus(status) {
   setText("forwardPacketId", compact(forward.packetId));
   setText("reversePacketId", compact(reverse.packetId));
   setText("misbehaviourState", evidenceLabel(misbehaviour, security));
+  setText("verificationSummaryStatus", security.forwardConsumed || numeric(status.balances.voucher) > 0 ? "Verified" : "Pending");
+  setText("verificationSummaryOracle", status.market?.oracleFresh ? "Fresh" : "Stale");
+  setText("verificationSummaryClient", clientSummary);
   renderRoadmap(status);
 }
 
@@ -557,7 +502,7 @@ export function renderLatestActivity(activity) {
     setText("latestActionTime", "No recent operation");
     setText(
       "latestActionSummary",
-      "Use the controls below to move the protocol forward. The UI will summarize the last successful action and the state changes it caused."
+      "Submit a transaction and this panel will summarize the latest position change."
     );
     setList("latestActionChanges", [{ value: "Nothing has changed yet." }]);
     return;
@@ -577,6 +522,9 @@ export function renderLatestActivity(activity) {
 export function markControllerOffline() {
   renderVisualStatus(null);
   setText("deploymentStatus", "Controller offline");
+  setText("verificationSummaryStatus", "Pending");
+  setText("verificationSummaryOracle", "Waiting");
+  setText("verificationSummaryClient", "Offline");
   deploymentStatus?.classList.remove("is-live");
   deploymentStatus?.classList.add("is-offline");
 }

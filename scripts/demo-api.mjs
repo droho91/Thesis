@@ -59,7 +59,7 @@ export async function handleDemoApi(req, res, url) {
 
     if (req.method === "POST" && url.pathname === "/api/action") {
       const body = await readRequestJson(req);
-      const result = await runActionPayload(body.action);
+      const result = await runActionPayload(body);
       return sendJson(res, result.statusCode, result.body);
     }
 

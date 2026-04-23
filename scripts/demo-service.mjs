@@ -133,7 +133,7 @@ async function withControllerLock(action, run) {
   }
 }
 
-function runEnv() {
+function runEnv(overrides = {}) {
   const temp = process.env.TMPDIR || process.env.TEMP || process.env.TMP || "/tmp";
   return {
     ...process.env,
@@ -144,15 +144,16 @@ function runEnv() {
     CHAIN_B_RPC: process.env.CHAIN_B_RPC || "http://127.0.0.1:9545",
     TMPDIR: temp,
     XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || resolve(temp, ".cache"),
+    ...overrides,
   };
 }
 
-function runCommand(command, args, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+function runCommand(command, args, { timeoutMs = DEFAULT_TIMEOUT_MS, env = {} } = {}) {
   return new Promise((resolveRun, rejectRun) => {
     const useShell = process.platform === "win32" && command === npm;
     const child = spawn(command, args, {
       cwd: process.cwd(),
-      env: runEnv(),
+      env: runEnv(env),
       shell: useShell,
       windowsHide: true,
     });
@@ -185,6 +186,35 @@ function runCommand(command, args, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       rejectRun(new Error(`${command} ${args.join(" ")} failed with exit code ${code}\n${output}`));
     });
   });
+}
+
+function normalizeAmountInput(value) {
+  if (value == null || value === "") return null;
+  const text = String(value).trim();
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/.test(text)) {
+    throw new Error("Amount must be a non-negative decimal with up to 18 decimals.");
+  }
+  if (ethers.parseUnits(text, 18) <= 0n) {
+    throw new Error("Amount must be greater than zero.");
+  }
+  return text;
+}
+
+function normalizeActionRequest(request) {
+  if (typeof request === "string") return { action: request, amount: null };
+  return {
+    action: String(request?.action || ""),
+    amount: normalizeAmountInput(request?.amount),
+  };
+}
+
+function actionAmountEnv(request) {
+  if (!request.amount) return {};
+  if (request.action === "lock") return { DEMO_FORWARD_AMOUNT: request.amount };
+  if (request.action === "borrow") return { DEMO_BORROW_AMOUNT: request.amount };
+  if (request.action === "repay") return { DEMO_REPAY_AMOUNT: request.amount };
+  if (request.action === "withdrawCollateral") return { DEMO_WITHDRAW_AMOUNT: request.amount };
+  return {};
 }
 
 function withTimeout(promise, timeoutMs, label) {
@@ -387,7 +417,25 @@ async function runFlowStrict() {
   }
 }
 
-export async function runActionPayload(action) {
+export async function runActionPayload(actionRequest) {
+  let request;
+  try {
+    request = normalizeActionRequest(actionRequest);
+  } catch (error) {
+    return {
+      statusCode: 400,
+      body: {
+        ok: false,
+        output: `[controller] ${error.message}`,
+        error: error.message,
+        message: error.message,
+        trace: await readTrace(),
+        status: await readDemoStatusForPayload(),
+      },
+    };
+  }
+
+  const { action } = request;
   return withControllerLock(action, async () => {
     if (!(await hasDeploymentConfig())) {
       return {
@@ -404,12 +452,13 @@ export async function runActionPayload(action) {
     }
 
     const scripts = await runtimeScripts();
+    const env = actionAmountEnv(request);
     const result =
       action === "fullFlow"
         ? await runFlowStrict()
         : await (async () => {
             try {
-              const output = await runCommand(scripts.flow.command, [...scripts.flow.args, "--step", action]);
+              const output = await runCommand(scripts.flow.command, [...scripts.flow.args, "--step", action], { env });
               return { ok: true, output };
             } catch (error) {
               return { ok: false, output: error.message, error: `Demo action ${action} failed.` };
@@ -424,7 +473,7 @@ export async function runActionPayload(action) {
           result.ok && action === "fullFlow"
             ? "Completed the storage-proof cross-chain lending flow."
             : result.ok
-              ? `Completed demo action: ${operationLabel(action)}.`
+              ? `Completed demo action: ${operationLabel(action)}${request.amount ? ` (${request.amount}).` : "."}`
               : result.error,
         trace: await readTrace(),
         status: await readDemoStatusForPayload(),
