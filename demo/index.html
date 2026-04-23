@@ -3,450 +3,270 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Cross-Chain Lending Controller</title>
+    <title>Verified Capital</title>
     <link rel="icon" type="image/png" href="./assets/logo.png" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body>
+  <body class="product-dashboard">
     <main class="shell">
-      <section class="hero hero-cinematic operator-console">
-        <div class="hero-copy-panel command-desk">
-          <div class="hero-brand">
-            <div class="brand-emblem">
-              <img src="./assets/logo.png" alt="Trust-verified capital logo" />
-            </div>
-            <div class="brand-signature">
-              <span>Cross-Chain Lending Controller</span>
-              <strong>Trust-Verified Capital</strong>
-            </div>
-            <div class="brand-ledger" aria-hidden="true">
-              <span>Bank A</span>
-              <b></b>
-              <span>Bank B</span>
-            </div>
-          </div>
-
-          <div class="hero-topline">
-            <span class="eyebrow">Live operator console</span>
-            <span class="hero-topline-pill" id="operatorMode">Storage proof required</span>
-          </div>
-
-          <h1>Control the cross-chain lending market</h1>
-          <p class="hero-text">
-            Execute the route, proof, lending, unwind, and safety paths from one console. Every
-            action below calls the live Besu-backed runtime and refreshes on-chain state.
-          </p>
-
-          <div class="hero-actions">
-            <button class="button-primary" id="deploySeed" type="button">Prepare Runtime</button>
-            <button class="button-secondary" id="refreshState" type="button">Refresh State</button>
-            <button class="button-secondary" id="focusMode" type="button" aria-pressed="false">Focus Mode</button>
-            <button class="button-run" data-action="fullFlow" type="button">Run Full Flow</button>
-          </div>
-
-          <div class="operator-kpis" aria-label="Live market indicators">
-            <article>
-              <span>Borrow APR</span>
-              <strong id="borrowRateHero">-</strong>
-            </article>
-            <article>
-              <span>Utilization</span>
-              <strong id="utilizationHero">-</strong>
-            </article>
-            <article>
-              <span>Reserves</span>
-              <strong id="reservesHero">-</strong>
-            </article>
-            <article>
-              <span>Oracle</span>
-              <strong id="oracleFreshHero">-</strong>
-            </article>
-          </div>
-
-          <div class="command-grid" aria-label="Protocol command surface">
-            <section class="command-group">
+      <section class="product-hero">
+        <div class="hero-copy-panel product-hero-card">
+          <nav class="product-nav" aria-label="Product status">
+            <div class="product-brand">
+              <img src="./assets/logo.png" alt="Verified Capital logo" />
               <div>
-                <span>01</span>
-                <strong>Forward proof</strong>
+                <span>Verified Capital</span>
+                <strong>Cross-chain lending</strong>
               </div>
-              <button class="button-secondary" data-action="openRoute" type="button">Open Channel</button>
-              <button class="button-primary" data-action="lock" type="button">Lock aBANK</button>
-              <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Read A Header</button>
-              <button class="button-secondary" data-action="updateForwardClient" type="button">Import on B</button>
-              <button class="button-run" data-action="proveForwardMint" type="button">Prove + Mint</button>
-            </section>
-            <section class="command-group">
-              <div>
-                <span>02</span>
-                <strong>Lending market</strong>
-              </div>
-              <button class="button-primary" data-action="depositCollateral" type="button">Deposit Voucher</button>
-              <button class="button-run" data-action="borrow" type="button">Borrow</button>
-              <button class="button-secondary" data-action="repay" type="button">Repay</button>
-              <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw</button>
-            </section>
-            <section class="command-group">
-              <div>
-                <span>03</span>
-                <strong>Reverse and safety</strong>
-              </div>
-              <button class="button-danger" data-action="burn" type="button">Burn Voucher</button>
-              <button class="button-secondary" data-action="updateReverseClient" type="button">Import on A</button>
-              <button class="button-run" data-action="proveReverseUnlock" type="button">Prove + Unlock</button>
-              <button class="button-danger" data-action="freezeClient" type="button">Freeze</button>
-              <button class="button-run" data-action="recoverClient" type="button">Recover</button>
-            </section>
-          </div>
-        </div>
-
-        <aside class="hero-visual-panel">
-          <section class="hero-panel flow-visual-panel" aria-label="Capital flow visualizer">
-            <div class="visual-head">
-              <div>
-                <p class="eyebrow">Capital flow</p>
-                <h2>Proof-backed lending circuit</h2>
-              </div>
-              <span class="scene-badge" id="flowStageBadge">Baseline</span>
             </div>
+            <div class="nav-badges">
+              <span class="trust-badge" id="operatorMode">Light-client verified</span>
+              <span class="status-pill" id="deploymentStatus">Checking runtime</span>
+            </div>
+          </nav>
 
-            <div class="status-pill" id="deploymentStatus">Checking local stack</div>
-
-            <div class="capital-map" id="capitalMap" data-stage="offline">
-              <article class="bank-node bank-node--a">
-                <span>Bank A</span>
-                <strong id="visualBankABalance">-</strong>
-                <small>Source collateral</small>
-              </article>
-
-              <div class="bridge-lane" aria-hidden="true">
-                <span class="lane-line lane-line--forward"></span>
-                <span class="lane-line lane-line--reverse"></span>
-                <span class="flow-token flow-token--collateral"></span>
-                <span class="flow-token flow-token--proof"></span>
-                <span class="flow-token flow-token--credit"></span>
-                <div class="bridge-core">
-                  <span id="visualPacketLabel">seq -</span>
-                  <strong id="visualProofMode">waiting</strong>
+          <div class="product-hero-content">
+            <div class="hero-copy">
+              <p class="eyebrow">Trust-verified cross-chain lending</p>
+              <h1>Bridge collateral from Bank A. Borrow on Bank B.</h1>
+              <p class="hero-text">
+                Use verified collateral without leaving the institutional trust boundary. Technical
+                proof, oracle freshness, and light-client safety stay available when you need them.
+              </p>
+              <div class="hero-actions product-actions">
+                <button class="button-secondary" id="deploySeed" type="button">Prepare Runtime</button>
+                <button class="button-primary" data-action="lock" type="button">Bridge Collateral</button>
+                <button class="button-run" data-action="borrow" type="button">Borrow bCASH</button>
+                <button class="button-secondary" data-action="fullFlow" type="button">Run Guided Lifecycle</button>
+                <a class="button-link" href="#verification-panel">View Technical Proof</a>
+              </div>
+            </div>
+            <aside class="hero-loan-panel" aria-label="Borrowing power preview">
+              <div class="loan-panel-head">
+                <span>Borrowing power</span>
+                <strong id="heroBorrowPower">-</strong>
+              </div>
+              <div class="loan-panel-metric">
+                <span>Position health</span>
+                <strong id="heroHealthPreview">-</strong>
+                <small id="heroRiskPreview">Waiting</small>
+              </div>
+              <div class="loan-panel-grid">
+                <div>
+                  <span>Current debt</span>
+                  <strong id="heroDebtPreview">-</strong>
+                </div>
+                <div>
+                  <span>Pool cash</span>
+                  <strong id="heroPoolCashPreview">-</strong>
+                </div>
+                <div>
+                  <span>Oracle</span>
+                  <strong id="heroOraclePreview">-</strong>
+                </div>
+                <div>
+                  <span>Runtime</span>
+                  <strong id="heroRuntimePreview">Waiting</strong>
                 </div>
               </div>
-
-              <article class="bank-node bank-node--b">
-                <span>Bank B</span>
-                <strong id="visualBankBBalance">-</strong>
-                <small>Destination credit</small>
-              </article>
-            </div>
-
-            <div class="flow-checks" aria-label="Live flow states">
-              <div class="flow-check" id="visualEscrowState">
-                <span>Escrow</span>
-                <strong>waiting</strong>
-              </div>
-              <div class="flow-check" id="visualTrustState">
-                <span>Trust import</span>
-                <strong>waiting</strong>
-              </div>
-              <div class="flow-check" id="visualCreditState">
-                <span>Credit line</span>
-                <strong>waiting</strong>
-              </div>
-            </div>
-          </section>
-
-          <section class="hero-panel hero-proof-window">
-            <div class="proof-window-head">
-              <div class="brand-frame">
-                <img src="./assets/logo.png" alt="Trust-verified capital mark" />
-              </div>
-              <div class="proof-window-copy">
-                <p class="eyebrow">Live imported trust</p>
-                <h2>Bank B trust view</h2>
-              </div>
-            </div>
-
-            <div class="proof-grid">
-              <article class="proof-card proof-card--accent">
-                <span class="proof-label">Trusted header</span>
-                <strong id="trustedAOnB">-</strong>
-              </article>
-              <article class="proof-card">
-                <span class="proof-label">Execution root</span>
-                <strong id="trustedPacketRootA">-</strong>
-              </article>
-              <article class="proof-card">
-                <span class="proof-label">Packet sequence</span>
-                <strong id="packetSequenceA">-</strong>
-              </article>
-              <article class="proof-card">
-                <span class="proof-label">Source head</span>
-                <strong id="headerHeightA">-</strong>
-              </article>
-              <article class="proof-card">
-                <span class="proof-label">Imported epoch</span>
-                <strong id="trustedEpochAOnB">-</strong>
-              </article>
-              <article class="proof-card">
-                <span class="proof-label">Safety state</span>
-                <strong id="safetyState">-</strong>
-              </article>
-            </div>
-          </section>
-        </aside>
-      </section>
-
-      <section class="highlights-bento" aria-label="Protocol highlights">
-        <article class="bento-card bento-card--wide">
-          <div class="bento-head">
-            <span class="signal-kicker">Outcome</span>
-            <h2>Voucher collateral unlocks Bank B credit</h2>
-          </div>
-          <p class="card-intro">
-            These balances are the thesis payoff: proven remote state becomes a usable lending
-            position on another chain.
-          </p>
-          <dl class="signal-stats signal-stats--triple">
-            <div>
-              <dt>Voucher</dt>
-              <dd id="voucherBalance">-</dd>
-            </div>
-            <div>
-              <dt>Borrowed cash</dt>
-              <dd id="bankBBalance">-</dd>
-            </div>
-            <div>
-              <dt>Escrowed aBANK</dt>
-              <dd id="escrowBalance">-</dd>
-            </div>
-          </dl>
-        </article>
-
-        <article class="bento-card">
-          <div class="bento-head">
-            <span class="signal-kicker">Safety</span>
-            <h2>Proof executes once</h2>
-          </div>
-          <dl class="signal-stats">
-            <div>
-              <dt>Consumed once</dt>
-              <dd id="forwardConsumedState">-</dd>
-            </div>
-            <div>
-              <dt>Replay gate</dt>
-              <dd id="replayBlockedState">-</dd>
-            </div>
-          </dl>
-        </article>
-
-        <article class="bento-card">
-          <div class="bento-head">
-            <span class="signal-kicker">Imported trust</span>
-            <h2>Destination chain readiness</h2>
-          </div>
-          <dl class="signal-stats">
-            <div>
-              <dt>Forward packet id</dt>
-              <dd id="forwardPacketId">-</dd>
-            </div>
-            <div>
-              <dt>Misbehaviour evidence</dt>
-              <dd id="misbehaviourState">-</dd>
-            </div>
-          </dl>
-        </article>
-      </section>
-
-      <section class="workspace">
-        <section class="main-stage" aria-label="Operator workbench">
-          <div class="section-head section-head--wide">
-            <div>
-              <p class="eyebrow">Guided protocol flow</p>
-              <h2>Drive the system in the order trust is earned</h2>
-            </div>
-            <p class="section-text">
-              The workbench is organized as a narrative: prepare the environment, prove forward
-              state, use collateral, unwind the reverse path, then intentionally test safety.
-            </p>
-          </div>
-
-          <section class="activity-panel" aria-label="Latest operation">
-            <div class="activity-copy">
-              <p class="eyebrow">Latest operation</p>
-              <div class="activity-heading">
-                <h3 id="latestActionTitle">Waiting for the first action</h3>
-                <span id="latestActionTime">No recent operation</span>
-              </div>
-              <p class="activity-summary" id="latestActionSummary">
-                Run the guided flow below. Each successful operation is summarized here with the
-                most visible state changes.
-              </p>
-            </div>
-
-            <ul class="activity-changes" id="latestActionChanges">
-              <li>Nothing has changed yet.</li>
-            </ul>
-          </section>
-
-          <section class="stepper-section" aria-label="Live protocol progress">
-            <div class="section-head compact">
-              <p class="eyebrow">Progress tracker</p>
-              <h2>Where the demo stands now</h2>
-            </div>
-
-            <div class="protocol-roadmap">
-              <article id="routeEscrow">
-                <span>01</span>
-                <strong>Escrow</strong>
-                <small id="routeEscrowText">waiting</small>
-              </article>
-              <article id="routeHeader">
-                <span>02</span>
-                <strong>Read header</strong>
-                <small id="routeHeaderText">waiting</small>
-              </article>
-              <article id="routeClient">
-                <span>03</span>
-                <strong>Import trust</strong>
-                <small id="routeClientText">waiting</small>
-              </article>
-              <article id="routeProof">
-                <span>04</span>
-                <strong>Verify proof</strong>
-                <small id="routeProofText">waiting</small>
-              </article>
-              <article id="routeLending">
-                <span>05</span>
-                <strong>Use collateral</strong>
-                <small id="routeLendingText">waiting</small>
-              </article>
-              <article id="routeReverse">
-                <span>06</span>
-                <strong>Unlock source</strong>
-                <small id="routeReverseText">waiting</small>
-              </article>
-              <article id="routeSafety">
-                <span>07</span>
-                <strong>Safety check</strong>
-                <small id="routeSafetyText">available</small>
-              </article>
-            </div>
-          </section>
-
-          <div class="control-stack">
-            <section class="flow-card flow-card--intro" data-phase="00">
-              <div class="flow-copy">
-                <p class="flow-kicker">Step 0 · Environment</p>
-                <h3>Prepare or reset the live baseline</h3>
-                <p>
-                  Reuse a seeded deployment if available, or perform a fresh reset before presenting
-                  the full thesis walkthrough.
-                </p>
-              </div>
-              <div class="flow-actions">
-                <button class="button-primary" id="deploySeedSecondary" type="button" hidden>Prepare / Reuse</button>
+              <div class="loan-panel-actions">
+                <button class="button-primary" data-action="depositCollateral" type="button">Use Voucher</button>
+                <button class="button-run" data-action="borrow" type="button">Borrow</button>
                 <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
+                <button class="button-secondary" id="refreshState" type="button">Refresh</button>
               </div>
-              <div class="flow-inline-note">
-                Use the hero actions for launch and refresh. This card is reserved for hard reset
-                before a clean demo run.
-              </div>
-            </section>
-
-            <section class="flow-card flow-card--forward" data-phase="01">
-              <div class="flow-copy">
-                <p class="flow-kicker">Step 1 · Forward proof path</p>
-                <h3>Lock assets on Bank A and prove them on Bank B</h3>
-                <p>
-                  Open the route, commit the packet, import the finalized Bank A header on Bank B,
-                  then verify the storage proof to mint the voucher exactly once.
-                </p>
-              </div>
-              <div class="flow-actions">
-                <button class="button-secondary" data-action="openRoute" type="button">Open Channel</button>
-                <button class="button-primary" data-action="lock" type="button">Lock aBANK</button>
-                <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Read Bank A Header</button>
-                <button class="button-secondary" data-action="updateForwardClient" type="button">Import Header on Bank B</button>
-                <button class="button-run" data-action="proveForwardMint" type="button">Verify Proof + Mint</button>
-              </div>
-            </section>
-
-            <section class="flow-card flow-card--lending" data-phase="02">
-              <div class="flow-copy">
-                <p class="flow-kicker">Step 2 · Lending actions</p>
-                <h3>Turn the voucher into usable collateral</h3>
-                <p>
-                  After proof success, the lending pool can accept the voucher, issue credit, track
-                  debt, and later release collateral after repayment.
-                </p>
-              </div>
-              <div class="flow-actions">
-                <button class="button-primary" data-action="depositCollateral" type="button">Deposit Voucher</button>
-                <button class="button-run" data-action="borrow" type="button">Borrow bCASH</button>
-                <button class="button-secondary" data-action="repay" type="button">Repay bCASH</button>
-                <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw Voucher</button>
-              </div>
-            </section>
-
-            <section class="flow-card flow-card--reverse" data-phase="03">
-              <div class="flow-copy">
-                <p class="flow-kicker">Step 3 · Reverse unlock</p>
-                <h3>Burn on Bank B and release value back on Bank A</h3>
-                <p>
-                  The return path mirrors the forward proof path: write the reverse packet, import
-                  Bank B trust into Bank A, then verify proof to unlock escrow.
-                </p>
-              </div>
-              <div class="flow-actions">
-                <button class="button-danger" data-action="burn" type="button">Burn Voucher</button>
-                <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Read Bank B Header</button>
-                <button class="button-secondary" data-action="updateReverseClient" type="button">Import Header on Bank A</button>
-                <button class="button-run" data-action="proveReverseUnlock" type="button">Verify Proof + Unlock</button>
-              </div>
-            </section>
-
-            <section class="flow-card flow-card--safety" data-phase="04">
-              <div class="flow-copy">
-                <p class="flow-kicker">Step 4 · Safety and recovery</p>
-                <h3>Stress the system and make recovery visible</h3>
-                <p>
-                  Trigger freeze with conflicting evidence, recover with a newer trust anchor, and
-                  keep replay and timeout behavior transparent for the audience.
-                </p>
-              </div>
-              <div class="flow-actions">
-                <button class="button-danger" data-action="freezeClient" type="button">Submit Conflicting Header</button>
-                <button class="button-run" data-action="recoverClient" type="button">Recover Light Client</button>
-                <button class="button-danger" data-action="replayForward" type="button">Replay Forward</button>
-                <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Verify Timeout Absence</button>
-              </div>
-            </section>
+            </aside>
           </div>
 
-          <section class="console-section" aria-label="Action log">
-            <div class="section-head compact">
-              <p class="eyebrow">Action log</p>
-              <h2 id="lastMessage">Ready</h2>
-              <p class="section-text">
-                This console records the latest receipt, packet proof step, and application state
-                transition produced by the runtime.
-              </p>
+          <div class="route-ribbon" aria-label="Cross-chain route">
+            <span>Bank A collateral</span>
+            <i></i>
+            <strong>Light-client proof</strong>
+            <i></i>
+            <span>Bank B credit</span>
+          </div>
+
+          <div class="product-kpis" aria-label="Position summary">
+            <article>
+              <span>Collateral Value</span>
+              <strong id="collateralValueHero">-</strong>
+              <small id="collateralAssetHero">Voucher collateral</small>
+            </article>
+            <article>
+              <span>Current Debt</span>
+              <strong id="currentDebtHero">-</strong>
+              <small>Accrued bCASH debt</small>
+            </article>
+            <article>
+              <span>Available to Borrow</span>
+              <strong id="availableBorrowHero">-</strong>
+              <small id="maxBorrowHero">Max borrow -</small>
+            </article>
+            <article>
+              <span>Health Factor</span>
+              <strong id="healthFactorHero">-</strong>
+              <small id="riskBadge">Waiting</small>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="dashboard-grid">
+        <section class="dashboard-column dashboard-column--actions" aria-label="Borrower actions">
+          <div class="section-head compact">
+            <p class="eyebrow">Actions</p>
+            <h2>Manage your position</h2>
+          </div>
+
+          <article class="product-card action-card">
+            <div class="action-card-head">
+              <div>
+                <span class="action-index">Bridge</span>
+                <h3>Bridge Collateral</h3>
+                <p>Lock aBANK on Bank A, sync trust, and mint a verified voucher on Bank B.</p>
+              </div>
+              <span class="soft-status" id="visualEscrowState"><strong>waiting</strong></span>
             </div>
-            <div class="console-frame">
-              <pre id="contractOutput">Start the Besu bank chains, then press Prepare / Reuse Runtime.</pre>
+            <div class="action-preview">
+              <div>
+                <span>Escrowed</span>
+                <strong id="escrowBalance">-</strong>
+              </div>
+              <div>
+                <span>Voucher</span>
+                <strong id="voucherBalance">-</strong>
+              </div>
             </div>
-          </section>
+            <div class="action-buttons action-buttons--primary">
+              <button class="button-secondary" data-action="openRoute" type="button">Initialize Route</button>
+              <button class="button-primary" data-action="lock" type="button">Lock Collateral</button>
+              <button class="button-run" data-action="proveForwardMint" type="button">Verify and Mint Voucher</button>
+            </div>
+            <details class="workflow-technical">
+              <summary>Proof preparation</summary>
+              <div class="action-buttons action-buttons--compact">
+                <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Fetch Source Proof</button>
+                <button class="button-secondary" data-action="updateForwardClient" type="button">Sync Trust on Bank B</button>
+              </div>
+            </details>
+          </article>
+
+          <article class="product-card action-card">
+            <div class="action-card-head">
+              <div>
+                <span class="action-index">Borrow</span>
+                <h3>Borrow Against Collateral</h3>
+                <p>Use the verified voucher as collateral, then borrow or repay bCASH.</p>
+              </div>
+              <span class="soft-status" id="visualCreditState"><strong>waiting</strong></span>
+            </div>
+            <div class="action-preview">
+              <div>
+                <span>Available</span>
+                <strong id="availableBorrow">-</strong>
+              </div>
+              <div>
+                <span>Borrow APR</span>
+                <strong id="borrowRateHero">-</strong>
+              </div>
+              <div>
+                <span>Health now</span>
+                <strong id="borrowPreviewHealth">-</strong>
+              </div>
+              <div>
+                <span>Withdraw room</span>
+                <strong id="borrowPreviewLiquidity">-</strong>
+              </div>
+            </div>
+            <div class="action-buttons">
+              <button class="button-primary" data-action="depositCollateral" type="button">Use as Collateral</button>
+              <button class="button-run" data-action="borrow" type="button">Borrow bCASH</button>
+              <button class="button-secondary" data-action="repay" type="button">Repay Debt</button>
+              <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw Collateral</button>
+            </div>
+          </article>
+
+          <article class="product-card action-card">
+            <div class="action-card-head">
+              <div>
+                <span class="action-index">Redeem</span>
+                <h3>Redeem Collateral</h3>
+                <p>Burn the voucher on Bank B and unlock the canonical asset on Bank A.</p>
+              </div>
+              <span class="soft-status" id="visualTrustState"><strong>waiting</strong></span>
+            </div>
+            <div class="action-preview">
+              <div>
+                <span>Reverse packet</span>
+                <strong id="reversePacketId">-</strong>
+              </div>
+              <div>
+                <span>Bank A view</span>
+                <strong id="trustedBOnA">-</strong>
+              </div>
+            </div>
+            <div class="action-buttons action-buttons--primary">
+              <button class="button-danger" data-action="burn" type="button">Redeem Voucher</button>
+              <button class="button-run" data-action="proveReverseUnlock" type="button">Verify and Unlock</button>
+            </div>
+            <details class="workflow-technical">
+              <summary>Redemption proof</summary>
+              <div class="action-buttons action-buttons--compact">
+                <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Fetch Redemption Proof</button>
+                <button class="button-secondary" data-action="updateReverseClient" type="button">Sync Trust on Bank A</button>
+              </div>
+            </details>
+          </article>
         </section>
 
-        <aside class="side-rail" aria-label="State inspector">
-          <section class="rail-card rail-card--highlight">
+        <section class="dashboard-column dashboard-column--position" aria-label="Position overview">
+          <article class="product-card position-card">
             <div class="section-head compact">
-              <p class="eyebrow">Balances</p>
-              <h2>Application state</h2>
+              <p class="eyebrow">My Position</p>
+              <h2>Borrowing capacity and risk</h2>
             </div>
-            <dl class="rail-grid">
+            <div class="position-health">
               <div>
-                <dt>Bank A user</dt>
+                <span>Risk Status</span>
+                <strong id="riskStatusText">Waiting</strong>
+              </div>
+              <div class="meter-track"><i id="collateralHealthBar"></i></div>
+              <small id="collateralHealthText">-</small>
+            </div>
+            <dl class="position-grid">
+              <div>
+                <dt>Bank A balance</dt>
                 <dd id="bankABalance">-</dd>
               </div>
+              <div>
+                <dt>Bank B cash</dt>
+                <dd id="bankBBalance">-</dd>
+              </div>
+              <div>
+                <dt>Pool collateral</dt>
+                <dd id="poolCollateral">-</dd>
+              </div>
+              <div>
+                <dt>Current debt</dt>
+                <dd id="poolDebt">-</dd>
+              </div>
+              <div>
+                <dt>Max borrow</dt>
+                <dd id="maxBorrow">-</dd>
+              </div>
+              <div>
+                <dt>Debt shares</dt>
+                <dd id="borrowerDebtShares">-</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article class="product-card market-card">
+            <div class="section-head compact">
+              <p class="eyebrow">Market Overview</p>
+              <h2>Liquidity and accrual</h2>
+            </div>
+            <dl class="position-grid">
               <div>
                 <dt>Pool liquidity</dt>
                 <dd id="poolLiquidity">-</dd>
@@ -456,105 +276,12 @@
                 <dd id="poolCash">-</dd>
               </div>
               <div>
-                <dt>Pool collateral</dt>
-                <dd id="poolCollateral">-</dd>
+                <dt>Utilization</dt>
+                <dd id="utilizationBps">-</dd>
               </div>
-              <div>
-                <dt>Pool debt</dt>
-                <dd id="poolDebt">-</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section class="rail-card">
-            <div class="section-head compact">
-              <p class="eyebrow">Market mechanics</p>
-              <h2>Lender and borrower indexes</h2>
-            </div>
-            <dl class="rail-grid">
-              <div>
-                <dt>Supplier assets</dt>
-                <dd id="supplierLiquidity">-</dd>
-              </div>
-              <div>
-                <dt>Supplier shares</dt>
-                <dd id="supplierShares">-</dd>
-              </div>
-              <div>
-                <dt>Total liquidity shares</dt>
-                <dd id="totalLiquidityShares">-</dd>
-              </div>
-              <div>
-                <dt>Exchange rate</dt>
-                <dd id="exchangeRate">-</dd>
-              </div>
-              <div>
-                <dt>Total borrows</dt>
-                <dd id="totalBorrows">-</dd>
-              </div>
-              <div>
-                <dt>Borrower debt shares</dt>
-                <dd id="borrowerDebtShares">-</dd>
-              </div>
-              <div>
-                <dt>Total debt shares</dt>
-                <dd id="totalDebtShares">-</dd>
-              </div>
-              <div>
-                <dt>Borrow index</dt>
-                <dd id="borrowIndex">-</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section class="rail-card risk-card" aria-label="Capital health">
-            <div class="section-head compact">
-              <p class="eyebrow">Risk lens</p>
-              <h2>Capital health</h2>
-            </div>
-            <div class="meter-stack">
-              <div class="meter-row">
-                <div>
-                  <span>Proof readiness</span>
-                  <strong id="proofReadinessText">-</strong>
-                </div>
-                <div class="meter-track"><i id="proofReadinessBar"></i></div>
-              </div>
-              <div class="meter-row">
-                <div>
-                  <span>Collateral cover</span>
-                  <strong id="collateralHealthText">-</strong>
-                </div>
-                <div class="meter-track"><i id="collateralHealthBar"></i></div>
-              </div>
-              <div class="meter-row">
-                <div>
-                  <span>Pool utilization</span>
-                  <strong id="creditUtilText">-</strong>
-                </div>
-                <div class="meter-track"><i id="creditUtilBar"></i></div>
-              </div>
-            </div>
-            <div class="next-action">
-              <span>Suggested next action</span>
-              <strong id="nextActionTitle">Prepare Runtime</strong>
-              <small id="nextActionHint">Start from a live seeded baseline.</small>
-            </div>
-          </section>
-
-          <section class="rail-card">
-            <div class="section-head compact">
-              <p class="eyebrow">Rates and reserves</p>
-              <h2>Accrual state</h2>
-            </div>
-            <dl class="rail-grid">
               <div>
                 <dt>Borrow APR</dt>
                 <dd id="borrowRate">-</dd>
-              </div>
-              <div>
-                <dt>Utilization</dt>
-                <dd id="utilizationBps">-</dd>
               </div>
               <div>
                 <dt>Reserves</dt>
@@ -564,114 +291,250 @@
                 <dt>Bad debt</dt>
                 <dd id="totalBadDebt">-</dd>
               </div>
-              <div>
-                <dt>Max borrow</dt>
-                <dd id="maxBorrow">-</dd>
-              </div>
-              <div>
-                <dt>Available borrow</dt>
-                <dd id="availableBorrow">-</dd>
-              </div>
             </dl>
-          </section>
+          </article>
 
-          <section class="rail-card">
-            <div class="section-head compact">
-              <p class="eyebrow">Oracle safety</p>
-              <h2>Fresh valuation inputs</h2>
+          <article class="activity-panel product-card" aria-label="Recent activity">
+            <div class="activity-copy">
+              <p class="eyebrow">Recent Activity</p>
+              <div class="activity-heading">
+                <h3 id="latestActionTitle">Waiting for the first action</h3>
+                <span id="latestActionTime">No recent operation</span>
+              </div>
+              <p class="activity-summary" id="latestActionSummary">
+                Run a lending action and this timeline will show the visible state changes.
+              </p>
             </div>
-            <dl class="rail-grid">
-              <div>
-                <dt>Freshness</dt>
-                <dd id="oracleFresh">-</dd>
-              </div>
-              <div>
-                <dt>Voucher price</dt>
-                <dd id="voucherOracle">-</dd>
-              </div>
-              <div>
-                <dt>Debt price</dt>
-                <dd id="debtOracle">-</dd>
-              </div>
-            </dl>
-          </section>
+            <ul class="activity-changes" id="latestActionChanges">
+              <li>Nothing has changed yet.</li>
+            </ul>
+          </article>
+        </section>
 
-          <section class="rail-card">
-            <div class="section-head compact">
-              <p class="eyebrow">Imported source state</p>
-              <h2>Bank B’s view of Bank A</h2>
+        <aside class="dashboard-column dashboard-column--verification" id="verification-panel" aria-label="Advanced verification">
+          <article class="verification-shell">
+            <div class="verification-head">
+              <div>
+                <p class="eyebrow">Advanced Verification</p>
+                <h2>Proof, oracle, and safety details</h2>
+              </div>
+              <button class="button-secondary" id="focusMode" type="button" aria-pressed="false">Focus</button>
             </div>
-            <dl class="rail-grid">
-              <div>
-                <dt>Client status</dt>
-                <dd id="statusAOnB">-</dd>
-              </div>
-              <div>
-                <dt>Trusted header hash</dt>
-                <dd id="trustedConsensusAOnB">-</dd>
-              </div>
-              <div>
-                <dt>Trusted source block</dt>
-                <dd id="trustedSourceBlockAOnB">-</dd>
-              </div>
-              <div>
-                <dt>Packet range</dt>
-                <dd id="trustedPacketRangeA">-</dd>
-              </div>
-            </dl>
-          </section>
 
-          <section class="rail-card">
-            <div class="section-head compact">
-              <p class="eyebrow">Return path</p>
-              <h2>Bank A’s view of Bank B</h2>
-            </div>
-            <dl class="rail-grid">
-              <div>
-                <dt>Bank B packets</dt>
-                <dd id="packetSequenceB">-</dd>
-              </div>
-              <div>
-                <dt>Bank B head</dt>
-                <dd id="headerHeightB">-</dd>
-              </div>
-              <div>
-                <dt>Imported B header</dt>
-                <dd id="trustedBOnA">-</dd>
-              </div>
-              <div>
-                <dt>A client status</dt>
-                <dd id="statusBOnA">-</dd>
-              </div>
-            </dl>
-          </section>
+            <details class="advanced-card" open>
+              <summary>Verification Status</summary>
+              <dl class="technical-grid">
+                <div>
+                  <dt>Forward packet</dt>
+                  <dd id="forwardPacketId">-</dd>
+                </div>
+                <div>
+                  <dt>Consumed once</dt>
+                  <dd id="forwardConsumedState">-</dd>
+                </div>
+                <div>
+                  <dt>Replay protection</dt>
+                  <dd id="replayBlockedState">-</dd>
+                </div>
+                <div>
+                  <dt>Timeout absence</dt>
+                  <dd id="timeoutAbsenceState">-</dd>
+                </div>
+                <div>
+                  <dt>Packet sequence A</dt>
+                  <dd id="packetSequenceA">-</dd>
+                </div>
+                <div>
+                  <dt>Packet sequence B</dt>
+                  <dd id="packetSequenceB">-</dd>
+                </div>
+              </dl>
+            </details>
 
-          <section class="rail-card">
-            <div class="section-head compact">
-              <p class="eyebrow">Proof and safety</p>
-              <h2>Receipts, evidence, and timeout checks</h2>
-            </div>
-            <dl class="rail-grid">
-              <div>
-                <dt>Reverse packet id</dt>
-                <dd id="reversePacketId">-</dd>
+            <details class="advanced-card">
+              <summary>Light Client State</summary>
+              <dl class="technical-grid">
+                <div>
+                  <dt>Bank B client</dt>
+                  <dd id="statusAOnB">-</dd>
+                </div>
+                <div>
+                  <dt>Trusted A header</dt>
+                  <dd id="trustedAOnB">-</dd>
+                </div>
+                <div>
+                  <dt>Source head A</dt>
+                  <dd id="headerHeightA">-</dd>
+                </div>
+                <div>
+                  <dt>Execution root</dt>
+                  <dd id="trustedPacketRootA">-</dd>
+                </div>
+                <div>
+                  <dt>Imported epoch</dt>
+                  <dd id="trustedEpochAOnB">-</dd>
+                </div>
+                <div>
+                  <dt>Trusted hash</dt>
+                  <dd id="trustedConsensusAOnB">-</dd>
+                </div>
+                <div>
+                  <dt>Trusted source block</dt>
+                  <dd id="trustedSourceBlockAOnB">-</dd>
+                </div>
+                <div>
+                  <dt>Packet range</dt>
+                  <dd id="trustedPacketRangeA">-</dd>
+                </div>
+                <div>
+                  <dt>Bank A client</dt>
+                  <dd id="statusBOnA">-</dd>
+                </div>
+                <div>
+                  <dt>Bank B head</dt>
+                  <dd id="headerHeightB">-</dd>
+                </div>
+              </dl>
+            </details>
+
+            <details class="advanced-card">
+              <summary>Oracle and Risk Internals</summary>
+              <dl class="technical-grid">
+                <div>
+                  <dt>Oracle freshness</dt>
+                  <dd id="oracleFresh">-</dd>
+                </div>
+                <div>
+                  <dt>Voucher price</dt>
+                  <dd id="voucherOracle">-</dd>
+                </div>
+                <div>
+                  <dt>Debt price</dt>
+                  <dd id="debtOracle">-</dd>
+                </div>
+                <div>
+                  <dt>Supplier assets</dt>
+                  <dd id="supplierLiquidity">-</dd>
+                </div>
+                <div>
+                  <dt>Supplier shares</dt>
+                  <dd id="supplierShares">-</dd>
+                </div>
+                <div>
+                  <dt>Total liquidity shares</dt>
+                  <dd id="totalLiquidityShares">-</dd>
+                </div>
+                <div>
+                  <dt>Exchange rate</dt>
+                  <dd id="exchangeRate">-</dd>
+                </div>
+                <div>
+                  <dt>Total borrows</dt>
+                  <dd id="totalBorrows">-</dd>
+                </div>
+                <div>
+                  <dt>Total debt shares</dt>
+                  <dd id="totalDebtShares">-</dd>
+                </div>
+                <div>
+                  <dt>Borrow index</dt>
+                  <dd id="borrowIndex">-</dd>
+                </div>
+              </dl>
+            </details>
+
+            <details class="advanced-card">
+              <summary>Safety and Recovery</summary>
+              <dl class="technical-grid">
+                <div>
+                  <dt>Safety state</dt>
+                  <dd id="safetyState">-</dd>
+                </div>
+                <div>
+                  <dt>Misbehaviour evidence</dt>
+                  <dd id="misbehaviourState">-</dd>
+                </div>
+              </dl>
+              <div class="action-buttons action-buttons--compact">
+                <button class="button-danger" data-action="freezeClient" type="button">Submit Conflicting Header</button>
+                <button class="button-run" data-action="recoverClient" type="button">Recover Light Client</button>
+                <button class="button-danger" data-action="replayForward" type="button">Test Replay Protection</button>
+                <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Verify Timeout Absence</button>
               </div>
-              <div>
-                <dt>Timeout absence</dt>
-                <dd id="timeoutAbsenceState">-</dd>
-              </div>
-            </dl>
-          </section>
+            </details>
+          </article>
         </aside>
       </section>
+
+      <section class="journey-section" aria-label="Journey status">
+        <div class="section-head section-head--wide">
+          <div>
+            <p class="eyebrow">Journey Status</p>
+            <h2>Collateral lifecycle</h2>
+          </div>
+          <p class="section-text">
+            The lifecycle is shown as product progress first; proof details stay in the advanced panel.
+          </p>
+        </div>
+        <div class="protocol-roadmap">
+          <article id="routeEscrow">
+            <span>01</span>
+            <strong>Collateral locked</strong>
+            <small id="routeEscrowText">waiting</small>
+          </article>
+          <article id="routeHeader">
+            <span>02</span>
+            <strong>Proof prepared</strong>
+            <small id="routeHeaderText">waiting</small>
+          </article>
+          <article id="routeClient">
+            <span>03</span>
+            <strong>Trust synced</strong>
+            <small id="routeClientText">waiting</small>
+          </article>
+          <article id="routeProof">
+            <span>04</span>
+            <strong>Voucher minted</strong>
+            <small id="routeProofText">waiting</small>
+          </article>
+          <article id="routeLending">
+            <span>05</span>
+            <strong>Credit active</strong>
+            <small id="routeLendingText">waiting</small>
+          </article>
+          <article id="routeReverse">
+            <span>06</span>
+            <strong>Collateral redeemed</strong>
+            <small id="routeReverseText">waiting</small>
+          </article>
+          <article id="routeSafety">
+            <span>07</span>
+            <strong>Safety available</strong>
+            <small id="routeSafetyText">available</small>
+          </article>
+        </div>
+      </section>
+
+      <details class="protocol-events">
+        <summary>Protocol events and command output</summary>
+        <div class="console-frame">
+          <h2 id="lastMessage">Ready</h2>
+          <pre id="contractOutput">Start the Besu bank chains, then press Prepare Runtime.</pre>
+        </div>
+      </details>
+
+      <span id="visualBankABalance" hidden>-</span>
+      <span id="visualBankBBalance" hidden>-</span>
+      <span id="visualPacketLabel" hidden>-</span>
+      <span id="visualProofMode" hidden>-</span>
+      <span id="proofReadinessText" hidden>-</span>
+      <span id="creditUtilText" hidden>-</span>
+      <span id="nextActionTitle" hidden>-</span>
+      <span id="nextActionHint" hidden>-</span>
+      <i id="proofReadinessBar" hidden></i>
+      <i id="creditUtilBar" hidden></i>
     </main>
+
     <script type="module" src="./app.js"></script>
-    <script type="module">
-      const primaryDeployButton = document.getElementById("deploySeed");
-      const secondaryDeployButton = document.getElementById("deploySeedSecondary");
-      if (primaryDeployButton && secondaryDeployButton) {
-        secondaryDeployButton.addEventListener("click", () => primaryDeployButton.click());
-      }
-    </script>
   </body>
 </html>

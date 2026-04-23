@@ -54,6 +54,22 @@ function compactAmount(value, suffix = "") {
   return `${formatted}${suffix}`;
 }
 
+function marketValue(amount, price) {
+  return numeric(amount) * numeric(price);
+}
+
+function healthLabel(healthFactorBps) {
+  const raw = String(healthFactorBps ?? "");
+  if (!raw || raw === String(2n ** 256n - 1n)) {
+    return { label: "No debt", status: "Safe", percent: null };
+  }
+  const percent = Number(raw) / 100;
+  if (!Number.isFinite(percent)) return { label: "-", status: "Waiting", percent: null };
+  if (percent >= 150) return { label: `${percent.toFixed(1)}%`, status: "Safe", percent };
+  if (percent >= 110) return { label: `${percent.toFixed(1)}%`, status: "Watch", percent };
+  return { label: `${percent.toFixed(1)}%`, status: "At Risk", percent };
+}
+
 function clamp(value, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value));
 }
@@ -386,6 +402,15 @@ export function renderStatus(status) {
     );
     deploymentStatus?.classList.remove("is-live");
     deploymentStatus?.classList.add("is-offline");
+    setText("heroBorrowPower", "-");
+    setText("heroDebtPreview", "-");
+    setText("heroHealthPreview", "-");
+    setText("heroRiskPreview", "Waiting");
+    setText("heroPoolCashPreview", "-");
+    setText("heroOraclePreview", "-");
+    setText("heroRuntimePreview", runtime.besuFirst ? "Besu required" : "Local runtime");
+    setText("borrowPreviewHealth", "-");
+    setText("borrowPreviewLiquidity", "-");
     setText(
       "lastMessage",
       status?.message || (runtime.besuFirst ? "Start the Besu bank chains." : "Start the local runtime.")
@@ -434,8 +459,32 @@ export function renderStatus(status) {
   setText("reservesHero", `${status.market?.totalReserves ?? "-"} bCASH`);
   setText("oracleFreshHero", status.market?.oracleFresh ? "fresh" : "stale");
   setText("operatorMode", status.runtime?.proofPolicy === "storage-required" ? "Storage proof required" : "Demo mode");
+  const collateralValue = marketValue(status.balances.poolCollateral, status.market?.voucherPrice);
+  const health = healthLabel(status.market?.healthFactorBps);
+  setText("collateralValueHero", `${compactAmount(collateralValue)} bCASH`);
+  setText("collateralAssetHero", `${status.balances.poolCollateral} vA collateral`);
+  setText("currentDebtHero", `${status.balances.poolDebt} bCASH`);
+  setText("availableBorrowHero", `${status.market?.availableToBorrow ?? "-"} bCASH`);
+  setText("maxBorrowHero", `Max borrow ${status.market?.maxBorrow ?? "-"} bCASH`);
+  setText("healthFactorHero", health.label);
+  setText("riskBadge", health.status);
+  setText("heroBorrowPower", `${status.market?.availableToBorrow ?? "-"} bCASH`);
+  setText("heroDebtPreview", `${status.balances.poolDebt} bCASH`);
+  setText("heroHealthPreview", health.label);
+  setText("heroRiskPreview", health.status);
+  setText("heroPoolCashPreview", `${status.balances.poolCash} bCASH`);
+  setText(
+    "heroOraclePreview",
+    status.market?.oracleFresh
+      ? `Fresh ${status.market.voucherPriceAgeSeconds}s`
+      : `Stale ${status.market?.voucherPriceAgeSeconds ?? "-"}s`
+  );
+  setText("heroRuntimePreview", status.runtime?.proofPolicy === "storage-required" ? "Storage proof" : "Demo mode");
+  setText("riskStatusText", health.status);
   setText("maxBorrow", `${status.market?.maxBorrow ?? "-"} bCASH`);
   setText("availableBorrow", `${status.market?.availableToBorrow ?? "-"} bCASH`);
+  setText("borrowPreviewHealth", health.label === "No debt" ? "Safe" : health.label);
+  setText("borrowPreviewLiquidity", `${status.balances.poolCash} bCASH`);
   setText(
     "oracleFresh",
     status.market?.oracleFresh
