@@ -124,6 +124,15 @@ function setMeter(id, value) {
   if (node) node.style.setProperty("--value", `${clamp(value)}%`);
 }
 
+function setRiskTone(id, status) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.textContent = status ?? "-";
+  node.classList.toggle("is-safe", status === "Safe");
+  node.classList.toggle("is-watch", status === "Watch");
+  node.classList.toggle("is-risk", status === "At Risk" || status === "Safety Mode");
+}
+
 function setFlowCheck(id, state, text) {
   const node = document.getElementById(id);
   if (!node) return;
@@ -242,13 +251,13 @@ function renderVisualStatus(status) {
 
 export function renderRoadmap(status) {
   if (!status?.deployed) {
-    setRoute("routeEscrow", "active", "runtime waiting");
+    setRoute("routeEscrow", "active", "Ready for collateral bridge");
     setRoute("routeHeader", "", "waiting");
     setRoute("routeClient", "", "waiting");
     setRoute("routeProof", "", "waiting");
-    setRoute("routeLending", "", "waiting");
+    setRoute("routeLending", "", "Waiting for lending action");
     setRoute("routeReverse", "", "waiting");
-    setRoute("routeSafety", "", "available");
+    setRoute("routeSafety", "", "Monitoring ready");
     return;
   }
 
@@ -284,52 +293,62 @@ export function renderRoadmap(status) {
   const recovering = Number(progress.statusAOnB) === 3 || Number(progress.statusBOnA) === 3;
   const recovered = Boolean(trace.misbehaviour?.recovered);
 
-  setRoute("routeEscrow", escrowed ? "done" : "active", escrowed ? `${balances.escrow ?? "0.0"} aBANK locked` : "ready");
+  setRoute(
+    "routeEscrow",
+    escrowed ? "done" : "active",
+    escrowed ? `${balances.escrow ?? "0.0"} aBANK secured in escrow` : "Ready to bridge collateral"
+  );
   setRoute(
     "routeHeader",
     headerFinalized ? "done" : escrowed ? "active" : "",
-    headerFinalized ? "source proof captured" : "waiting"
+    headerFinalized ? "Source header captured for proof verification" : "Waiting for source proof capture"
   );
   setRoute(
     "routeClient",
     trusted ? "done" : headerFinalized ? "active" : "",
-    trusted ? `Bank B trusts header ${progress.trustedAOnB ?? "-"}` : "waiting"
+    trusted ? `Bank B synced trust at header ${progress.trustedAOnB ?? "-"}` : "Waiting for trust sync on Bank B"
   );
   const proofLabel =
     forwardProofMode === "storage"
-      ? "proof verified"
+      ? "Storage proof verified for voucher mint"
       : forwardProofMode === "merkle"
         ? runtime.besuFirst
-          ? "fallback proof verified"
-          : "fallback proof verified"
-        : "voucher pending";
-  setRoute("routeProof", proven ? "done" : trusted ? "active" : "", proven ? proofLabel : "waiting");
+          ? "Fallback proof verified"
+          : "Fallback proof verified"
+        : "Voucher pending verification";
+  setRoute("routeProof", proven ? "done" : trusted ? "active" : "", proven ? proofLabel : "Waiting for voucher proof");
   setRoute(
     "routeLending",
     lendingComplete ? "done" : lendingStarted ? "active" : proven ? "active" : "",
     lendingComplete
-      ? "collateral free"
+      ? "Position settled and collateral released"
       : lending.collateralWithdrawn
-        ? `${balances.poolCollateral ?? "0.0"} vA remains`
+        ? `${balances.poolCollateral ?? "0.0"} vA remains posted`
         : lending.repaid
-        ? "repayment submitted"
+        ? "Repayment submitted on Bank B"
         : lending.borrowed
-          ? "borrow executed"
+          ? "Borrow action completed on Bank B"
           : lendingStarted
-            ? "voucher deposited as collateral"
+            ? "Voucher deposited as live collateral"
             : proven
-              ? "voucher ready"
-              : "waiting"
+              ? "Voucher ready for collateral use"
+              : "Waiting for lending action"
   );
   setRoute(
     "routeReverse",
     unlocked ? "done" : reverseTrusted || reverseWritten ? "active" : "",
-    unlocked ? "unlocked on Bank A" : reverseTrusted ? "Bank A trusts redemption" : reverseWritten ? "redemption submitted" : "waiting"
+    unlocked
+      ? "Canonical collateral unlocked on Bank A"
+      : reverseTrusted
+        ? "Bank A synced trust for redemption"
+        : reverseWritten
+          ? "Redemption submitted for verification"
+          : "Ready when redemption is needed"
   );
   setRoute(
     "routeSafety",
     frozen || recovering ? "active" : recovered ? "done" : "",
-    frozen ? "frozen" : recovering ? "recovering" : recovered ? "recovered" : "available"
+    frozen ? "Safety controls engaged" : recovering ? "Recovery in progress" : recovered ? "Safety state recovered" : "Monitoring ready"
   );
 }
 
@@ -344,17 +363,17 @@ export function renderStatus(status) {
     deploymentStatus?.classList.remove("is-live");
     deploymentStatus?.classList.add("is-offline");
     setText("heroBorrowPower", "-");
-    setText("heroDebtPreview", "-");
     setText("heroHealthPreview", "-");
     setText("heroRiskPreview", "Waiting");
-    setText("heroPoolCashPreview", "-");
-    setText("heroOraclePreview", "-");
-    setText("heroRuntimePreview", runtime.besuFirst ? "Besu required" : "Local runtime");
     setText("borrowPreviewHealth", "-");
     setText("borrowPreviewLiquidity", "-");
+    setText("positionAvailableBorrow", "-");
+    setText("positionCurrentDebt", "-");
     setText("verificationSummaryStatus", "Pending");
     setText("verificationSummaryOracle", "Waiting");
-    setText("verificationSummaryClient", "Offline");
+    setText("verificationSummaryClient", "Waiting");
+    setText("verificationSummaryRisk", "Waiting");
+    setRiskTone("positionRiskBadge", "Waiting");
     setText(
       "lastMessage",
       status?.message || (runtime.besuFirst ? "Start the Besu bank chains." : "Start the local runtime.")
@@ -410,19 +429,13 @@ export function renderStatus(status) {
   setText("healthFactorHero", health.label);
   setText("riskBadge", health.status);
   setText("heroBorrowPower", `${status.market?.availableToBorrow ?? "-"} bCASH`);
-  setText("heroDebtPreview", `${status.balances.poolDebt} bCASH`);
   setText("heroHealthPreview", health.label);
   setText("heroRiskPreview", health.status);
-  setText("heroPoolCashPreview", `${status.balances.poolCash} bCASH`);
-  setText(
-    "heroOraclePreview",
-    status.market?.oracleFresh
-      ? `Fresh ${status.market.voucherPriceAgeSeconds}s`
-      : `Stale ${status.market?.voucherPriceAgeSeconds ?? "-"}s`
-  );
-  setText("heroRuntimePreview", status.runtime?.proofPolicy === "storage-required" ? "Storage proof" : "Demo mode");
   setText("riskStatusText", health.status);
+  setRiskTone("positionRiskBadge", health.status);
   setText("maxBorrow", `${status.market?.maxBorrow ?? "-"} bCASH`);
+  setText("positionAvailableBorrow", `${status.market?.availableToBorrow ?? "-"} bCASH`);
+  setText("positionCurrentDebt", `${status.balances.poolDebt} bCASH`);
   setText("availableBorrow", `${status.market?.availableToBorrow ?? "-"} bCASH`);
   setText("borrowPreviewHealth", health.label === "No debt" ? "Safe" : health.label);
   setText("borrowPreviewLiquidity", `${status.balances.poolCash} bCASH`);
@@ -447,7 +460,11 @@ export function renderStatus(status) {
     : security.recovering
       ? `Recovering / ${clientPairLabel(status.progress)}`
       : clientPairLabel(status.progress);
-  const clientSummary = security.frozen ? "Frozen" : security.recovering ? "Recovering" : "Healthy";
+  const trustSummary =
+    numeric(status.progress?.trustedAOnB) > 0 || security.forwardConsumed || numeric(status.balances.voucher) > 0
+      ? "Synced"
+      : "Pending";
+  const riskSummary = security.frozen ? "Safety Mode" : security.recovering ? "Recovering" : "Monitored";
 
   setText("packetSequenceA", status.progress.packetSequenceA);
   setText("headerHeightA", status.progress.headerHeightA);
@@ -492,7 +509,8 @@ export function renderStatus(status) {
   setText("misbehaviourState", evidenceLabel(misbehaviour, security));
   setText("verificationSummaryStatus", security.forwardConsumed || numeric(status.balances.voucher) > 0 ? "Verified" : "Pending");
   setText("verificationSummaryOracle", status.market?.oracleFresh ? "Fresh" : "Stale");
-  setText("verificationSummaryClient", clientSummary);
+  setText("verificationSummaryClient", trustSummary);
+  setText("verificationSummaryRisk", riskSummary);
   renderRoadmap(status);
 }
 
@@ -522,9 +540,13 @@ export function renderLatestActivity(activity) {
 export function markControllerOffline() {
   renderVisualStatus(null);
   setText("deploymentStatus", "Controller offline");
+  setText("positionAvailableBorrow", "-");
+  setText("positionCurrentDebt", "-");
+  setRiskTone("positionRiskBadge", "Waiting");
   setText("verificationSummaryStatus", "Pending");
   setText("verificationSummaryOracle", "Waiting");
-  setText("verificationSummaryClient", "Offline");
+  setText("verificationSummaryClient", "Waiting");
+  setText("verificationSummaryRisk", "Waiting");
   deploymentStatus?.classList.remove("is-live");
   deploymentStatus?.classList.add("is-offline");
 }

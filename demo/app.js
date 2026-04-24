@@ -6,8 +6,19 @@ const deploySeedButton = document.getElementById("deploySeed");
 const resetSeededButton = document.getElementById("resetSeeded");
 const refreshButton = document.getElementById("refreshState");
 const focusModeButton = document.getElementById("focusMode");
+const openDemoToolsButton = document.getElementById("openDemoTools");
+const openRuntimeOutputButton = document.getElementById("openRuntimeOutput");
+const verificationOpenButtons = [
+  document.getElementById("openVerificationPanel"),
+  document.getElementById("openVerificationPanelInline"),
+].filter(Boolean);
+const drawers = [...document.querySelectorAll(".surface-drawer")];
+const drawerCloseButtons = [...document.querySelectorAll("[data-drawer-close]")];
 const amountInputs = [...document.querySelectorAll(".amount-field input")];
 const amountFillButtons = [...document.querySelectorAll("[data-fill-target]")];
+const loanTabButtons = [...document.querySelectorAll("[data-loan-tab]")];
+const loanTabPanels = [...document.querySelectorAll("[data-loan-panel]")];
+const actionCards = [...document.querySelectorAll("[data-action-card]")];
 const ACTIVITY_STORAGE_KEY = "interchain-lending-latest-activity";
 const FOCUS_MODE_STORAGE_KEY = "interchain-lending-focus-mode";
 const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Recovering"];
@@ -18,7 +29,29 @@ const AMOUNT_ACTIONS = {
   repay: { inputId: "repayAmount", unit: "bCASH" },
   withdrawCollateral: { inputId: "withdrawAmount", unit: "vA" },
 };
+const ACTION_CARD_BY_ACTION = {
+  openRoute: "bridge",
+  lock: "bridge",
+  finalizeForwardHeader: "bridge",
+  updateForwardClient: "bridge",
+  proveForwardMint: "bridge",
+  depositCollateral: "loan",
+  borrow: "loan",
+  repay: "loan",
+  withdrawCollateral: "loan",
+  burn: "redeem",
+  finalizeReverseHeader: "redeem",
+  updateReverseClient: "redeem",
+  proveReverseUnlock: "redeem",
+};
+const LOAN_TAB_BY_ACTION = {
+  borrow: "borrow",
+  repay: "repay",
+  withdrawCollateral: "withdraw",
+};
 let currentStatus = null;
+let currentLoanTab = "borrow";
+let actionCardPinned = false;
 
 function setBusy(busy) {
   document.body.classList.toggle("is-busy", busy);
@@ -48,6 +81,39 @@ function applyActionAvailability(status) {
   updateAmountActionAvailability(status);
 }
 
+function setDrawerExpanded(id, expanded) {
+  if (id === "demoToolsDrawer" && openDemoToolsButton) {
+    openDemoToolsButton.setAttribute("aria-expanded", expanded ? "true" : "false");
+  }
+  if (id === "verificationDrawer") {
+    verificationOpenButtons.forEach((button) => button.setAttribute("aria-expanded", expanded ? "true" : "false"));
+  }
+  if (id === "runtimeOutputDrawer" && openRuntimeOutputButton) {
+    openRuntimeOutputButton.setAttribute("aria-expanded", expanded ? "true" : "false");
+  }
+}
+
+function closeDrawer(id) {
+  const drawer = document.getElementById(id);
+  if (!drawer) return;
+  drawer.classList.remove("is-open");
+  drawer.setAttribute("aria-hidden", "true");
+  setDrawerExpanded(id, false);
+  if (![...drawers].some((node) => node.classList.contains("is-open"))) {
+    document.body.classList.remove("has-drawer-open");
+  }
+}
+
+function openDrawer(id) {
+  drawers.forEach((drawer) => {
+    const shouldOpen = drawer.id === id;
+    drawer.classList.toggle("is-open", shouldOpen);
+    drawer.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
+    setDrawerExpanded(drawer.id, shouldOpen);
+  });
+  document.body.classList.toggle("has-drawer-open", true);
+}
+
 function numeric(value) {
   const number = Number(String(value ?? "0").replace(/,/g, ""));
   return Number.isFinite(number) ? number : 0;
@@ -72,12 +138,52 @@ function inputValue(id) {
   return numeric(input?.value);
 }
 
+function syncAmountFieldState(input) {
+  if (!input) return;
+  const field = input.closest(".amount-field");
+  if (!field) return;
+  field.classList.toggle("is-filled", numeric(input.value) > 0);
+  field.classList.toggle("is-dirty", input.dataset.dirty === "true");
+}
+
+function setActiveActionCard(cardName, { pinned = false } = {}) {
+  if (!cardName) return;
+  actionCards.forEach((card) => {
+    card.classList.toggle("is-active", card.dataset.actionCard === cardName);
+  });
+  if (pinned) actionCardPinned = true;
+}
+
+function suggestActionCard(status) {
+  const state = financialState(status);
+  const reverse = status?.trace?.reverse || {};
+  if (reverse.commitHeight || reverse.packetId || reverse.receiveTxHash) return "redeem";
+  if (state.voucher > 0 || state.collateral > 0 || state.debt > 0 || state.bankB > 0) return "loan";
+  return "bridge";
+}
+
+function setLoanTab(tab) {
+  currentLoanTab = tab;
+  loanTabButtons.forEach((button) => {
+    const active = button.dataset.loanTab === tab;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+    button.setAttribute("tabindex", active ? "0" : "-1");
+  });
+  loanTabPanels.forEach((panel) => {
+    const active = panel.dataset.loanPanel === tab;
+    panel.classList.toggle("is-active", active);
+    panel.hidden = !active;
+  });
+}
+
 function setInputValue(id, value, { force = false } = {}) {
   const input = document.getElementById(id);
   if (!input || (!force && input.dataset.dirty === "true")) return;
   const nextValue = clamp(numeric(value)).toFixed(4).replace(/\.?0+$/, "");
   input.value = nextValue === "" ? "0" : nextValue;
   input.dataset.dirty = "false";
+  syncAmountFieldState(input);
 }
 
 function financialState(status) {
@@ -261,6 +367,7 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   }
 
   updateAmountActionAvailability(status);
+  if (!actionCardPinned) setActiveActionCard(suggestActionCard(status));
 }
 
 function setFocusMode(enabled) {
@@ -478,6 +585,8 @@ async function runDeploySeed() {
   );
   try {
     const payload = await requestJson("/api/deploy-seed", { method: "POST" });
+    actionCardPinned = false;
+    setLoanTab("borrow");
     renderStatus(payload.status);
     refreshTransactionUi(payload.status, { forceDefaults: true });
     pushActivity("deploySeed", "The interchain lending runtime is ready for live demo actions.", payload.status);
@@ -501,6 +610,8 @@ async function runResetSeeded() {
   );
   try {
     const payload = await requestJson("/api/reset-seeded", { method: "POST" });
+    actionCardPinned = false;
+    setLoanTab("borrow");
     renderStatus(payload.status);
     refreshTransactionUi(payload.status, { forceDefaults: true });
     pushActivity("resetSeeded", "A fresh interchain lending runtime was deployed and seeded for a clean demo baseline.", payload.status);
@@ -537,6 +648,8 @@ function amountPayloadForAction(action) {
 }
 
 async function runAction(action) {
+  if (LOAN_TAB_BY_ACTION[action]) setLoanTab(LOAN_TAB_BY_ACTION[action]);
+  setActiveActionCard(ACTION_CARD_BY_ACTION[action] || suggestActionCard(currentStatus), { pinned: true });
   let requestBody;
   try {
     requestBody = { action, ...amountPayloadForAction(action) };
@@ -577,6 +690,14 @@ resetSeededButton?.addEventListener("click", runResetSeeded);
 focusModeButton?.addEventListener("click", () => {
   setFocusMode(!document.body.classList.contains("is-focus-mode"));
 });
+openDemoToolsButton?.addEventListener("click", () => openDrawer("demoToolsDrawer"));
+openRuntimeOutputButton?.addEventListener("click", () => openDrawer("runtimeOutputDrawer"));
+verificationOpenButtons.forEach((button) => {
+  button.addEventListener("click", () => openDrawer("verificationDrawer"));
+});
+drawerCloseButtons.forEach((button) => {
+  button.addEventListener("click", () => closeDrawer(button.dataset.drawerClose));
+});
 refreshButton?.addEventListener("click", async () => {
   setBusy(true);
   try {
@@ -597,10 +718,37 @@ actionButtons.forEach((button) => {
   button.addEventListener("click", () => runAction(button.dataset.action));
 });
 
+loanTabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setLoanTab(button.dataset.loanTab);
+    setActiveActionCard("loan", { pinned: true });
+  });
+});
+
+actionCards.forEach((card) => {
+  card.addEventListener("click", () => setActiveActionCard(card.dataset.actionCard, { pinned: true }));
+  card.addEventListener("focusin", () => setActiveActionCard(card.dataset.actionCard, { pinned: true }));
+});
+
 amountInputs.forEach((input) => {
   input.dataset.dirty = "false";
+  syncAmountFieldState(input);
+  input.addEventListener("focus", () => {
+    input.closest(".amount-field")?.classList.add("is-active");
+  });
+  input.addEventListener("blur", () => {
+    input.closest(".amount-field")?.classList.remove("is-active");
+    syncAmountFieldState(input);
+  });
+  input.addEventListener("focus", () => {
+    if (input.id === "borrowAmount") setLoanTab("borrow");
+    if (input.id === "repayAmount") setLoanTab("repay");
+    if (input.id === "withdrawAmount") setLoanTab("withdraw");
+    setActiveActionCard(input.id === "bridgeAmount" ? "bridge" : "loan", { pinned: true });
+  });
   input.addEventListener("input", () => {
     input.dataset.dirty = "true";
+    syncAmountFieldState(input);
     refreshTransactionUi(currentStatus);
   });
 });
@@ -615,9 +763,21 @@ amountFillButtons.forEach((button) => {
       debt: Math.min(state.debt, state.bankB),
       withdrawable: state.withdrawable,
     };
+    if (target.id === "borrowAmount") setLoanTab("borrow");
+    if (target.id === "repayAmount") setLoanTab("repay");
+    if (target.id === "withdrawAmount") setLoanTab("withdraw");
+    setActiveActionCard(target.id === "bridgeAmount" ? "bridge" : "loan", { pinned: true });
     target.value = clamp(values[button.dataset.fillSource] ?? 0).toFixed(4).replace(/\.?0+$/, "") || "0";
     target.dataset.dirty = "true";
+    syncAmountFieldState(target);
     refreshTransactionUi(currentStatus);
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  drawers.forEach((drawer) => {
+    if (drawer.classList.contains("is-open")) closeDrawer(drawer.id);
   });
 });
 
@@ -627,6 +787,8 @@ try {
   setFocusMode(false);
 }
 
+setLoanTab(currentLoanTab);
+setActiveActionCard("bridge");
 renderLatestActivity(loadPersistedActivity());
 
 refreshStatus()
