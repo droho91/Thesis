@@ -270,6 +270,20 @@ function projectedHealth(maxBorrow, debt) {
   return { label, status: "At Risk", percent };
 }
 
+function healthForShockPrice(status, shockPrice) {
+  const state = financialState(status);
+  const risk = status?.risk || {};
+  if (state.debt <= 0) return { label: "No debt", status: "Safe", percent: null };
+  const debtPrice = numeric(risk.oracle?.debtPrice) || 1;
+  const collateralFactor = numeric(risk.policy?.collateralFactorBps) || 0;
+  const haircut = numeric(risk.policy?.collateralHaircutBps) || 10_000;
+  const collateralValue = state.collateral * shockPrice * (haircut / 10_000);
+  const permittedDebtValue = collateralValue * (collateralFactor / 10_000);
+  const debtValue = state.debt * debtPrice;
+  const healthBps = debtValue > 0 ? (permittedDebtValue / debtValue) * 10_000 : Number.MAX_SAFE_INTEGER;
+  return healthFromBps(String(Math.floor(healthBps)));
+}
+
 function heightAtLeast(value, minimum) {
   if (value == null || minimum == null) return false;
   try {
@@ -726,7 +740,7 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   const repayableNow = Math.min(state.debt, state.bankB);
   const repayShortfall = Math.max(0, state.debt - state.bankB);
   const needsDemoCash = state.deployed && state.debt > 0 && repayShortfall > 0.000001;
-  setText("repayWalletBalance", status?.deployed ? formatAmount(state.bankB, "bCASH") : "-");
+  setText("repayDemoCashBalance", status?.deployed ? formatAmount(state.bankB, "bCASH") : "-");
   setText("repayableNow", status?.deployed ? formatAmount(repayableNow, "bCASH") : "-");
   setText("repayShortfall", status?.deployed ? formatAmount(repayShortfall, "bCASH") : "-");
   setText(
@@ -761,18 +775,35 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   const shockPrice = inputValue("shockPrice");
   const currentCollateralPrice = numeric(risk.oracle?.collateralPrice);
   const currentHealth = healthFromStatus(status);
-  const shockedHealth = risk.shockPreview?.healthFactorBps
-    ? healthFromBps(risk.shockPreview.healthFactorBps)
-    : { label: "-", status: "Waiting" };
-  setText("riskShockPriceInputPreview", formatAmount(shockPrice, "bCASH/vA"));
+  const shockedHealth = status?.deployed ? healthForShockPrice(status, shockPrice) : { label: "-", status: "Waiting" };
   setText("riskCurrentPriceInline", status?.deployed ? formatAmount(currentCollateralPrice, "bCASH/vA") : "-");
   setText("riskHealthBeforeShock", currentHealth.label);
-  setText("riskHealthAfterShock", status?.deployed ? healthFromBps(risk.shockPreview?.healthFactorBps).label : "-");
+  setText("riskHealthAfterShock", shockedHealth.label);
   setRiskBadge("riskShockBadge", shockedHealth);
 
   const liquidationAmount = inputValue("liquidationRepayAmount");
-  setText("liquidationRepayDecision", formatAmount(liquidationAmount, "bCASH"));
   setText("liquidationMaxRepayInline", status?.deployed ? formatAmount(risk.liquidationPreview?.repayAmount, "bCASH") : "-");
+  const liquidationExecuted = Boolean(risk.afterLiquidation?.executed);
+  const liquidatableAfterSelectedShock = shockedHealth.percent != null && shockedHealth.percent < 100;
+  setText(
+    "scenarioHealthyBefore",
+    status?.deployed
+      ? `${formatAmount(state.collateral, "vA")} collateral / ${formatAmount(state.availableBorrow, "bCASH")} available`
+      : "Needs demo account"
+  );
+  setText("scenarioHealthyAction", `Borrow ${formatAmount(borrowAmount, "bCASH")}`);
+  setText("scenarioHealthyAfter", `Debt ${formatAmount(projectedBorrowDebt, "bCASH")} / health ${borrowHealth.label}`);
+  setText(
+    "scenarioLiquidationBefore",
+    status?.deployed ? `Oracle ${formatAmount(currentCollateralPrice, "bCASH/vA")} / health ${currentHealth.label}` : "Needs demo account"
+  );
+  setText("scenarioLiquidationAction", `Shock to ${formatAmount(shockPrice, "bCASH/vA")}; repay ${formatAmount(liquidationAmount, "bCASH")}`);
+  setText(
+    "scenarioLiquidationAfter",
+    liquidationExecuted
+      ? `Debt ${formatAmount(risk.afterLiquidation?.debt, "bCASH")} / collateral ${formatAmount(risk.afterLiquidation?.collateral, "vA")}`
+      : `Health ${shockedHealth.label}; liquidatable ${liquidatableAfterSelectedShock || risk.shockPreview?.liquidatable ? "yes" : "no"}`
+  );
 
   for (const [action, field] of Object.entries({
     lock: "bridgeValidation",
@@ -1026,7 +1057,7 @@ async function runDeploySeed() {
     setText("lastMessage", "Demo runtime ready.");
     setOutput(payload.output);
   } catch (error) {
-    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Prepare / Reuse failed.");
+    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Prepare Demo Account failed.");
     setOutput(error.message);
     pushFailedActivity("deploySeed", error);
   } finally {
@@ -1072,6 +1103,8 @@ function amountPayloadForAction(action) {
         borrow: "borrowValidation",
         repay: "repayValidation",
         withdrawCollateral: "withdrawValidation",
+        simulatePriceShock: "shockValidation",
+        executeLiquidation: "liquidationValidation",
       }[action],
       validation.message,
       "error"

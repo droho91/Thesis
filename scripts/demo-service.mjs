@@ -56,9 +56,9 @@ async function expectedArtifactFingerprint() {
 
 function operationLabel(action) {
   const labels = {
-    deploySeed: "Prepare / Reuse",
+    deploySeed: "Prepare Demo Account",
     resetSeeded: "Fresh Reset",
-    fullFlow: "Run Full Flow",
+    fullFlow: "Run Guided Lifecycle",
     runFlow: "Run Flow",
     openRoute: "Open connection and channel",
     lock: "Lock canonical asset",
@@ -370,7 +370,7 @@ async function deployAndSeed({ reset = false } = {}) {
       return [
         "[controller] Existing runtime config is not confirmed ready by the fast probe.",
         `[controller] ${fastReady.reason}`,
-        "[controller] Skipped automatic redeploy to keep Prepare / Reuse fast.",
+        "[controller] Skipped automatic redeploy to keep Prepare Demo Account fast.",
         "[controller] Use Fresh Reset before the demo window if you need a clean deployment.",
       ].join("\n");
     }
@@ -402,7 +402,7 @@ async function runFlowStrict() {
   if (!(await hasDeploymentConfig())) {
     return {
       ok: false,
-      output: "[controller] No .interchain-lending.local.json found. Press Prepare / Reuse or Fresh Reset before running the flow.\n",
+      output: "[controller] No .interchain-lending.local.json found. Press Prepare Demo Account or Fresh Reset before running the flow.\n",
       error: "No local deployment config.",
     };
   }
@@ -447,7 +447,7 @@ export async function runActionPayload(actionRequest) {
         statusCode: 400,
         body: {
           ok: false,
-          output: "[controller] No .interchain-lending.local.json found. Press Prepare / Reuse or Fresh Reset before running demo actions.\n",
+          output: "[controller] No .interchain-lending.local.json found. Press Prepare Demo Account or Fresh Reset before running demo actions.\n",
           error: "No local deployment config.",
           message: "No local deployment config.",
           trace: await readTrace(),

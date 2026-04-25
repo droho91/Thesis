@@ -901,6 +901,37 @@ body[data-active-portal="scenarios"] .portal-section:not(.portal-scenarios) {
   gap: 9px;
 }
 
+.scenario-live {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scenario-live div {
+  min-height: 76px;
+  padding: 10px;
+  border: 1px solid rgba(29, 78, 216, 0.12);
+  border-radius: 12px;
+  background: rgba(239, 246, 255, 0.72);
+}
+
+.scenario-live span {
+  color: var(--blue);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.scenario-live strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .scenario-card dl div {
   padding: 11px;
   border: 1px solid var(--border);
@@ -2421,6 +2452,7 @@ body.product-dashboard.is-focus-mode .drawer-panel--technical {
   .metric-grid--three,
   .shock-grid,
   .scenario-grid,
+  .scenario-live,
   .journey-steps,
   .dashboard-grid,
   .workflow-layout,

@@ -433,7 +433,8 @@ function renderRiskAdmin(status) {
   setText("riskDebt", position.debt ? `${compactAmount(position.debt)} bCASH` : "-");
   setText("riskAvailableBorrow", position.availableBorrow ? `${compactAmount(position.availableBorrow)} bCASH` : "-");
   setText("riskHealthFactor", formatHealth(position.healthFactorBps));
-  setText("riskLiquidationThreshold", bpsToPercent(policy.liquidationThresholdBps));
+  setText("riskCollateralFactor", bpsToPercent(policy.collateralFactorBps));
+  setText("riskLiquidationTrigger", `HF < ${bpsToPercent(policy.liquidationHealthFactorTriggerBps)}`);
   setText("riskCloseFactor", bpsToPercent(policy.liquidationCloseFactorBps));
   setText("riskBonus", bpsToPercent(policy.liquidationBonusBps));
   setText("riskUtilization", bpsToPercent(market.utilizationRateBps));
@@ -458,11 +459,17 @@ function renderRiskAdmin(status) {
   setText("riskPreviewBadDebt", preview.badDebtWrittenOff ? `${compactAmount(preview.badDebtWrittenOff)} bCASH` : "-");
   setText("riskPreviewReserveUsed", preview.reserveUsed ? `${compactAmount(preview.reserveUsed)} bCASH` : "-");
   setText("riskPreviewSupplierLoss", preview.supplierLoss ? `${compactAmount(preview.supplierLoss)} bCASH` : "-");
-  setText("riskAfterDebt", after.debt ? `${compactAmount(after.debt)} bCASH` : "-");
-  setText("riskAfterCollateral", after.collateral ? `${compactAmount(after.collateral)} vA` : "-");
-  setText("riskAfterReserves", after.reserves ? `${compactAmount(after.reserves)} bCASH` : "-");
-  setText("riskAfterBadDebt", after.badDebt ? `${compactAmount(after.badDebt)} bCASH` : "-");
-  setText("riskAfterTx", after.latestTxHash ? compact(after.latestTxHash) : "No liquidation yet");
+  const liquidationExecuted = Boolean(after.executed);
+  setText("riskBeforeDebt", liquidationExecuted && after.debtBefore ? `${compactAmount(after.debtBefore)} bCASH` : "-");
+  setText("riskBeforeCollateral", liquidationExecuted && after.collateralBefore ? `${compactAmount(after.collateralBefore)} vA` : "-");
+  setText("riskAfterDebt", liquidationExecuted && after.debt ? `${compactAmount(after.debt)} bCASH` : "-");
+  setText("riskAfterCollateral", liquidationExecuted && after.collateral ? `${compactAmount(after.collateral)} vA` : "-");
+  setText("riskAfterReserves", liquidationExecuted && after.reserves ? `${compactAmount(after.reserves)} bCASH` : "-");
+  setText("riskAfterBadDebt", liquidationExecuted && after.badDebt ? `${compactAmount(after.badDebt)} bCASH` : "-");
+  setText("riskAfterBadDebtWrittenOff", liquidationExecuted && after.badDebtWrittenOff ? `${compactAmount(after.badDebtWrittenOff)} bCASH` : "-");
+  setText("riskAfterReserveUsed", liquidationExecuted && after.reservesUsed ? `${compactAmount(after.reservesUsed)} bCASH` : "-");
+  setText("riskAfterSupplierLoss", liquidationExecuted && after.supplierLoss ? `${compactAmount(after.supplierLoss)} bCASH` : "-");
+  setText("riskAfterTx", liquidationExecuted ? compact(after.latestTxHash) : after.message || "No liquidation executed yet");
 }
 
 function renderProofInspector(status) {
@@ -507,9 +514,11 @@ function renderScenarioState(status) {
   const balances = status?.balances || {};
   const risk = status?.risk || {};
   const security = status?.security || {};
+  const proof = status?.proofInspector || {};
   const trace = status?.trace || {};
   const collateral = numeric(balances.poolCollateral);
   const debt = numeric(balances.poolDebt);
+  const health = healthLabel(risk.position?.healthFactorBps || status?.market?.healthFactorBps);
 
   setStatusBadge("scenarioHealthyStatus", deployed && collateral > 0 ? "Executable" : "Needs collateral", collateral > 0 ? "verified" : "pending");
   setStatusBadge("scenarioRepayStatus", deployed && debt > 0 ? "Executable" : "Needs debt", debt > 0 ? "verified" : "pending");
@@ -533,6 +542,35 @@ function renderScenarioState(status) {
     security.frozen ? "Frozen" : security.recovering ? "Recovering" : trace.misbehaviour?.recovered ? "Recovered" : "Executable",
     security.frozen ? "risk" : trace.misbehaviour?.recovered ? "verified" : "pending"
   );
+
+  setText(
+    "scenarioRepayBefore",
+    debt > 0 ? `${compactAmount(debt)} bCASH debt / health ${health.label}` : "Needs active debt"
+  );
+  setText(
+    "scenarioRepayAction",
+    debt > 0 ? `Repay up to ${compactAmount(Math.min(debt, numeric(balances.bankB)))} bCASH` : "Needs previous step"
+  );
+  setText(
+    "scenarioRepayAfter",
+    trace.risk?.debtAfterRepay != null
+      ? `Debt ${compactAmount(trace.risk.debtAfterRepay)} bCASH`
+      : debt > 0
+        ? "After state appears after repay"
+        : "No repayment needed"
+  );
+  setText("scenarioReplayBefore", proof.packetId ? `Packet ${compact(proof.packetId)} / receipt ${proof.receiptStatus}` : "Needs packet");
+  setText("scenarioReplayAction", "Attempt duplicate packet proof");
+  setText("scenarioReplayAfter", proof.replayProtectionStatus || "Replay pending");
+  setText(
+    "scenarioTimeoutBefore",
+    proof.deniedPacketId ? `Denied ${compact(proof.deniedPacketId)}` : "Needs denied packet from script"
+  );
+  setText("scenarioTimeoutAction", proof.timeoutStorageKey ? `Proof key ${compact(proof.timeoutStorageKey)}` : "Script-backed receipt absence");
+  setText("scenarioTimeoutAfter", proof.timeoutStatus || "Timeout pending");
+  setText("scenarioFreezeBefore", proof.lightClientStatus ? `Client ${proof.lightClientStatus.bankAOnBankB || "-"}` : "Light client status -");
+  setText("scenarioFreezeAction", proof.freezeEvidence?.evidenceHash ? `Evidence ${compact(proof.freezeEvidence.evidenceHash)}` : "Submit conflict / recover");
+  setText("scenarioFreezeAfter", proof.recoveryStatus || "Recovery status -");
 }
 
 export function renderStatus(status) {

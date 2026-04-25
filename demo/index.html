@@ -370,7 +370,7 @@
                     <div class="repay-funding-grid">
                       <div>
                         <span>Demo account cash</span>
-                        <strong id="repayWalletBalance">-</strong>
+                        <strong id="repayDemoCashBalance">-</strong>
                       </div>
                       <div>
                         <span>Repayable now</span>
@@ -679,8 +679,12 @@
                 <dd id="riskHealthFactor">-</dd>
               </div>
               <div>
-                <dt>Liquidation threshold</dt>
-                <dd id="riskLiquidationThreshold">-</dd>
+                <dt>Collateral factor / Max LTV</dt>
+                <dd id="riskCollateralFactor">-</dd>
+              </div>
+              <div>
+                <dt>Liquidation trigger</dt>
+                <dd id="riskLiquidationTrigger">HF &lt; 100%</dd>
               </div>
               <div>
                 <dt>Close factor / bonus</dt>
@@ -835,9 +839,17 @@
                 <p class="eyebrow">After Liquidation</p>
                 <h3>Recorded pool impact</h3>
               </div>
-              <span class="soft-status" id="riskAfterTx">No liquidation yet</span>
+              <span class="soft-status" id="riskAfterTx">No liquidation executed yet</span>
             </div>
             <dl class="metric-grid metric-grid--four">
+              <div>
+                <dt>Debt before</dt>
+                <dd id="riskBeforeDebt">-</dd>
+              </div>
+              <div>
+                <dt>Collateral before</dt>
+                <dd id="riskBeforeCollateral">-</dd>
+              </div>
               <div>
                 <dt>Debt after</dt>
                 <dd id="riskAfterDebt">-</dd>
@@ -853,6 +865,18 @@
               <div>
                 <dt>Bad debt after</dt>
                 <dd id="riskAfterBadDebt">-</dd>
+              </div>
+              <div>
+                <dt>Bad debt written off</dt>
+                <dd id="riskAfterBadDebtWrittenOff">-</dd>
+              </div>
+              <div>
+                <dt>Reserve used</dt>
+                <dd id="riskAfterReserveUsed">-</dd>
+              </div>
+              <div>
+                <dt>Supplier loss</dt>
+                <dd id="riskAfterSupplierLoss">-</dd>
               </div>
             </dl>
           </article>
@@ -986,6 +1010,11 @@
               <h3>Healthy Borrow Scenario</h3>
               <span class="status-chip" id="scenarioHealthyStatus">Waiting</span>
             </div>
+            <div class="scenario-live">
+              <div><span>Before</span><strong id="scenarioHealthyBefore">Needs collateral</strong></div>
+              <div><span>Action</span><strong id="scenarioHealthyAction">Borrow -</strong></div>
+              <div><span>After</span><strong id="scenarioHealthyAfter">Debt - / health -</strong></div>
+            </div>
             <dl>
               <div><dt>Before</dt><dd>User has verified collateral and safe health.</dd></div>
               <div><dt>Action</dt><dd>Borrow bCASH within available capacity.</dd></div>
@@ -999,6 +1028,11 @@
             <div class="scenario-card-head">
               <h3>Repay and Withdraw Scenario</h3>
               <span class="status-chip" id="scenarioRepayStatus">Waiting</span>
+            </div>
+            <div class="scenario-live">
+              <div><span>Before</span><strong id="scenarioRepayBefore">Needs active debt</strong></div>
+              <div><span>Action</span><strong id="scenarioRepayAction">Repay / withdraw selected amount</strong></div>
+              <div><span>After</span><strong id="scenarioRepayAfter">Remaining debt -</strong></div>
             </div>
             <dl>
               <div><dt>Before</dt><dd>User has debt backed by voucher collateral.</dd></div>
@@ -1017,8 +1051,13 @@
               <h3>Price Shock and Liquidation</h3>
               <span class="status-chip" id="scenarioLiquidationStatus">Waiting</span>
             </div>
+            <div class="scenario-live">
+              <div><span>Before</span><strong id="scenarioLiquidationBefore">Needs active debt</strong></div>
+              <div><span>Action</span><strong id="scenarioLiquidationAction">Shock price / liquidate</strong></div>
+              <div><span>After</span><strong id="scenarioLiquidationAfter">No liquidation executed yet</strong></div>
+            </div>
             <dl>
-              <div><dt>Before</dt><dd>Health factor is above the liquidation threshold.</dd></div>
+              <div><dt>Before</dt><dd>Health factor is above the liquidation trigger.</dd></div>
               <div><dt>Action</dt><dd>Governed demo oracle drops collateral price, then authorized liquidator repays debt.</dd></div>
               <div><dt>After</dt><dd>Collateral is seized; residual debt can become reserve-covered bad debt.</dd></div>
               <div><dt>What this proves</dt><dd>The risk layer reacts to adverse price movement and records pool losses.</dd></div>
@@ -1034,6 +1073,11 @@
               <h3>Replay Attack Rejection</h3>
               <span class="status-chip" id="scenarioReplayStatus">Waiting</span>
             </div>
+            <div class="scenario-live">
+              <div><span>Before</span><strong id="scenarioReplayBefore">Needs packet</strong></div>
+              <div><span>Action</span><strong id="scenarioReplayAction">Attempt duplicate packet proof</strong></div>
+              <div><span>After</span><strong id="scenarioReplayAfter">Replay pending</strong></div>
+            </div>
             <dl>
               <div><dt>Before</dt><dd>A packet has already been received on Bank B.</dd></div>
               <div><dt>Action</dt><dd>Submit the same packet proof again.</dd></div>
@@ -1048,6 +1092,11 @@
               <h3>Timeout Refund Scenario</h3>
               <span class="status-chip" id="scenarioTimeoutStatus">Script-backed</span>
             </div>
+            <div class="scenario-live">
+              <div><span>Before</span><strong id="scenarioTimeoutBefore">Needs denied packet</strong></div>
+              <div><span>Action</span><strong id="scenarioTimeoutAction">Verify receipt absence</strong></div>
+              <div><span>After</span><strong id="scenarioTimeoutAfter">Timeout pending</strong></div>
+            </div>
             <dl>
               <div><dt>Before</dt><dd>A policy-denied packet has no destination receipt.</dd></div>
               <div><dt>Action</dt><dd>Run the timeout absence proof path from the script-backed flow.</dd></div>
@@ -1061,6 +1110,11 @@
             <div class="scenario-card-head">
               <h3>Light Client Freeze and Recovery</h3>
               <span class="status-chip" id="scenarioFreezeStatus">Waiting</span>
+            </div>
+            <div class="scenario-live">
+              <div><span>Before</span><strong id="scenarioFreezeBefore">Light client status -</strong></div>
+              <div><span>Action</span><strong id="scenarioFreezeAction">Submit conflict / recover</strong></div>
+              <div><span>After</span><strong id="scenarioFreezeAfter">Recovery status -</strong></div>
             </div>
             <dl>
               <div><dt>Before</dt><dd>Bank B trusts a Bank A Besu header.</dd></div>

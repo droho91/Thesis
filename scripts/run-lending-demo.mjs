@@ -1853,6 +1853,8 @@ export async function runDemoStep(action, options = {}) {
           debtBeforeLiquidation: units(debtBefore),
           debtAfterLiquidation: units(debtAfter),
           collateralAfterLiquidation: units(collateralAfter),
+          reservesAfterLiquidation: units(reservesAfter),
+          badDebtAfterLiquidation: units(badDebtAfter),
           badDebtWrittenOff: units(badDebtWrittenOff),
           reservesUsed: units(reservesUsed),
           supplierLoss: units(supplierLoss),
@@ -2546,6 +2548,8 @@ async function main() {
     ctx.destinationUserAddress,
     LIQUIDATION_REPAY
   );
+  const reservesBeforeLiquidation = await ctx.B.lendingPoolAdmin.totalReserves();
+  const badDebtBeforeLiquidation = await ctx.B.lendingPoolAdmin.totalBadDebt();
   await txStep("approve liquidation repay", () =>
     ctx.B.debtLiquidator.approve(config.chains.B.lendingPool, LIQUIDATION_REPAY, txOptions())
   );
@@ -2554,7 +2558,15 @@ async function main() {
   );
   const debtAfterLiquidation = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
   const collateralAfterLiquidation = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
+  const reservesAfterLiquidation = await ctx.B.lendingPoolAdmin.totalReserves();
+  const badDebtAfterLiquidation = await ctx.B.lendingPoolAdmin.totalBadDebt();
   const liquidatorVoucherBalance = await ctx.B.voucherAdmin.balanceOf(ctx.liquidatorAddress);
+  const badDebtWrittenOff =
+    debtAfterBorrow > LIQUIDATION_REPAY + debtAfterLiquidation ? debtAfterBorrow - LIQUIDATION_REPAY - debtAfterLiquidation : 0n;
+  const reservesUsed =
+    reservesBeforeLiquidation > reservesAfterLiquidation ? reservesBeforeLiquidation - reservesAfterLiquidation : 0n;
+  const supplierLoss =
+    badDebtAfterLiquidation > badDebtBeforeLiquidation ? badDebtAfterLiquidation - badDebtBeforeLiquidation : 0n;
 
   setPhase("send-denied-packet");
   await txStep("block destination user", () =>
@@ -2731,8 +2743,15 @@ async function main() {
       liquidationRepaid: units(LIQUIDATION_REPAY),
       liquidationTxHash: liquidationReceipt.hash,
       seizedCollateral: units(seizedCollateralPreview),
+      collateralBeforeLiquidation: units(collateralAfterDeposit),
+      debtBeforeLiquidation: units(debtAfterBorrow),
       debtAfterLiquidation: units(debtAfterLiquidation),
       collateralAfterLiquidation: units(collateralAfterLiquidation),
+      reservesAfterLiquidation: units(reservesAfterLiquidation),
+      badDebtAfterLiquidation: units(badDebtAfterLiquidation),
+      badDebtWrittenOff: units(badDebtWrittenOff),
+      reservesUsed: units(reservesUsed),
+      supplierLoss: units(supplierLoss),
       liquidatorVoucherBalance: units(liquidatorVoucherBalance),
       poolLiquidity: units(poolLiquidity),
       destinationDebtTokenBalance: units(destinationDebtBalance),

@@ -270,7 +270,7 @@ async function main() {
   await waitForBesuRuntimeReady();
 
   CURRENT_PHASE = "connect-rpcs";
-  logPhase("connecting wallets and RPC providers");
+  logPhase("connecting signers and RPC providers");
   const sourceProvider = new ethers.JsonRpcProvider(CHAIN_A_RPC);
   const destinationProvider = new ethers.JsonRpcProvider(CHAIN_B_RPC);
   const sourceSigner = await signerForRpc(CHAIN_A_RPC, SOURCE_CHAIN_KEY, 0);

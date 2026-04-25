@@ -5,6 +5,7 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "test:solidity": "npm run test",
+    "test:read-model": "node scripts/check-demo-read-model.mjs",
     "besu:generate": "node scripts/generate-besu-qbft-networks.mjs",
     "besu:up": "node scripts/ensure-docker-ready.mjs && docker compose -f networks/besu/docker-compose.yml up -d && node scripts/wait-for-besu-rpc.mjs",
     "besu:down": "docker compose -f networks/besu/docker-compose.yml down -v",

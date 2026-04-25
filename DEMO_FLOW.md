@@ -35,14 +35,16 @@ The Borrower Portal shows collateral value, current debt, available borrow, heal
 
 Open **Risk Admin**.
 
-1. Review the governed demo oracle prices, collateral value, debt, available borrow, health factor, liquidation threshold, utilization, reserves, and bad debt.
+1. Review the governed demo oracle prices, collateral value, debt, available borrow, health factor, collateral factor / max LTV, liquidation trigger, utilization, reserves, and bad debt.
 2. Set or accept the shock price and run **Simulate Oracle Shock**.
 3. Compare health factor before and after the price drop.
 4. Review the liquidation preview: repay amount, seized collateral, remaining debt, remaining collateral, bad debt, reserve use, and supplier loss.
 5. Run **Execute Liquidation** when the account is liquidatable.
-6. Review the after-liquidation state and transaction hash.
+6. Review the after-liquidation state and transaction hash. This section stays blank until **Execute Liquidation** has actually produced a liquidation transaction.
 
-The oracle is intentionally labeled as a governed demo oracle. It is not a decentralized market oracle.
+The oracle is intentionally labeled as a governed demo oracle. It is manual and demo-only, not a decentralized market oracle.
+
+The collateral factor / max LTV is different from the liquidation trigger. The collateral factor limits how much can be borrowed against collateral. Liquidation is triggered when health factor falls below 100%, meaning `healthFactorBps < 10000`.
 
 ## Proof inspector flow
 
@@ -65,6 +67,8 @@ Open **Scenarios** for defense-ready flows:
 - Timeout Refund Scenario: the UI shows the timeout absence proof path; the full refund path is exercised by `npm run demo`.
 - Light Client Freeze and Recovery Scenario: submits conflicting-header evidence and then recovers the client.
 
+Scenario cards show live snapshots where available. If the necessary packet, debt, proof, or client state does not exist yet, the UI labels that scenario as “Needs previous step” or “Script-backed” instead of pretending the flow has already run.
+
 ## Terminal demo
 
 With Besu running:
@@ -81,7 +85,7 @@ npm run demo
 
 - Lending layer: collateralized borrowing, debt shares, borrow index interest, reserves, liquidation, and bad debt accounting.
 - Cross-chain proof layer: Besu header trust, EVM storage proof verification, packet receipt replay protection, acknowledgements, and timeout absence proofs.
-- Risk layer: governed oracle price movement, health factor changes, liquidation threshold enforcement, collateral seizure, reserve coverage, and supplier loss recording.
+- Risk layer: governed oracle price movement, health factor changes, max-LTV enforcement, HF < 100% liquidation trigger, collateral seizure, reserve coverage, and supplier loss recording.
 
 ## Known limitations
 

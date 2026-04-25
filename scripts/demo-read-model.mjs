@@ -7,7 +7,7 @@ import { loadRuntimeConfig, providerForChain, signerForChain, RUNTIME_CONFIG_PAT
 // Demo read-model: probes local health and assembles the UI/status snapshot from deployed contracts.
 const TRACE_JSON_PATH = resolve(process.cwd(), "demo", "latest-run.json");
 const TRANSFER_AMOUNT = ethers.parseUnits(process.env.DEMO_AMOUNT || "100", 18);
-const SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits(process.env.DEMO_SHOCKED_VOUCHER_PRICE || "0.5", 18);
+const DEFAULT_SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits("0.5", 18);
 const BPS = 10_000n;
 const WAD = 10n ** 18n;
 
@@ -25,6 +25,97 @@ function minBigInt(a, b) {
 
 function safeSub(a, b) {
   return a > b ? a - b : 0n;
+}
+
+function parseRawE18(value) {
+  if (value == null || value === "") return null;
+  try {
+    const parsed = typeof value === "bigint" ? value : BigInt(value);
+    return parsed > 0n ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseDecimalE18(value) {
+  if (value == null || value === "") return null;
+  try {
+    const parsed = ethers.parseUnits(String(value), 18);
+    return parsed > 0n ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveShockPreviewPriceE18({
+  traceRisk,
+  currentCollateralPrice,
+  initialCollateralPrice,
+  envShockPrice = process.env.DEMO_SHOCKED_VOUCHER_PRICE,
+} = {}) {
+  const tracePrice = parseRawE18(traceRisk?.shockedVoucherPriceE18);
+  if (tracePrice) return tracePrice;
+
+  const currentPrice = parseRawE18(currentCollateralPrice);
+  const initialPrice = parseRawE18(initialCollateralPrice);
+  if (currentPrice && initialPrice && currentPrice !== initialPrice) return currentPrice;
+
+  return parseDecimalE18(envShockPrice) || DEFAULT_SHOCKED_VOUCHER_PRICE_E18;
+}
+
+export function riskPolicySnapshot({
+  collateralFactorBps,
+  collateralHaircutBps,
+  liquidationCloseFactorBps,
+  liquidationBonusBps,
+}) {
+  return {
+    collateralFactorBps: bps(collateralFactorBps),
+    collateralHaircutBps: bps(collateralHaircutBps),
+    liquidationHealthFactorTriggerBps: BPS.toString(),
+    liquidationCloseFactorBps: bps(liquidationCloseFactorBps),
+    liquidationBonusBps: bps(liquidationBonusBps),
+  };
+}
+
+export function afterLiquidationState({
+  traceRisk,
+  liveDebt,
+  liveCollateral,
+  liveReserves,
+  liveBadDebt,
+} = {}) {
+  if (!traceRisk?.liquidationTxHash) {
+    return {
+      executed: false,
+      message: "No liquidation executed yet",
+      debtBefore: null,
+      collateralBefore: null,
+      debt: null,
+      collateral: null,
+      reserves: null,
+      badDebt: null,
+      badDebtWrittenOff: null,
+      reservesUsed: null,
+      supplierLoss: null,
+      latestTxHash: null,
+    };
+  }
+
+  return {
+    executed: true,
+    message: "Liquidation executed",
+    debtBefore: traceRisk.debtBeforeLiquidation ?? null,
+    collateralBefore: traceRisk.collateralBeforeLiquidation ?? null,
+    debt: traceRisk.debtAfterLiquidation ?? units(liveDebt ?? 0n),
+    collateral: traceRisk.collateralAfterLiquidation ?? units(liveCollateral ?? 0n),
+    reserves: traceRisk.reservesAfterLiquidation ?? units(liveReserves ?? 0n),
+    badDebt: traceRisk.badDebtAfterLiquidation ?? units(liveBadDebt ?? 0n),
+    badDebtWrittenOff: traceRisk.badDebtWrittenOff ?? null,
+    reservesUsed: traceRisk.reservesUsed ?? null,
+    supplierLoss: traceRisk.supplierLoss ?? null,
+    latestTxHash: traceRisk.liquidationTxHash,
+  };
 }
 
 function hash32(value) {
@@ -69,7 +160,7 @@ function maxBorrowFor({ collateral, collateralPrice, debtPrice, haircutBps, coll
   return debtPrice === 0n ? 0n : borrowValue * WAD / debtPrice;
 }
 
-function healthFactorFor({ collateral, debt, collateralPrice, debtPrice, haircutBps, collateralFactorBps }) {
+export function healthFactorFor({ collateral, debt, collateralPrice, debtPrice, haircutBps, collateralFactorBps }) {
   if (debt === 0n) return (2n ** 256n) - 1n;
   const permittedDebtValue = collateralValueOf(collateral, collateralPrice, haircutBps) * collateralFactorBps / BPS;
   const currentDebtValue = debtValueOf(debt, debtPrice);
@@ -240,7 +331,7 @@ export async function localHealth() {
       label: "No deployment",
       stackVersion: "besu-light-client",
       runtime,
-      message: "Start the Besu bank chains with npm run besu:generate and npm run besu:up, then press Prepare / Reuse or Fresh Reset.",
+      message: "Start the Besu bank chains with npm run besu:generate and npm run besu:up, then press Prepare Demo Account or Fresh Reset.",
     };
   }
   return readLocalHealth(runtime);
@@ -555,10 +646,15 @@ async function readOnchainDemoStatus(health) {
   const voucherPriceAge = oracleAge(voucherPriceUpdatedAt);
   const debtPriceAge = oracleAge(debtPriceUpdatedAt);
   const oracleFresh = voucherPriceUpdatedAt > 0n && debtPriceUpdatedAt > 0n && voucherPriceAge <= maxStaleness && debtPriceAge <= maxStaleness;
-  const shockedCollateralValue = collateralValueOf(poolCollateral, SHOCKED_VOUCHER_PRICE_E18, collateralHaircutBps);
+  const shockPreviewPriceE18 = resolveShockPreviewPriceE18({
+    traceRisk: trace?.risk,
+    currentCollateralPrice: voucherPrice,
+    initialCollateralPrice: cfg.seed?.initialVoucherPriceE18,
+  });
+  const shockedCollateralValue = collateralValueOf(poolCollateral, shockPreviewPriceE18, collateralHaircutBps);
   const shockedMaxBorrow = maxBorrowFor({
     collateral: poolCollateral,
-    collateralPrice: SHOCKED_VOUCHER_PRICE_E18,
+    collateralPrice: shockPreviewPriceE18,
     debtPrice,
     haircutBps: collateralHaircutBps,
     collateralFactorBps,
@@ -566,7 +662,7 @@ async function readOnchainDemoStatus(health) {
   const shockedHealthFactor = healthFactorFor({
     collateral: poolCollateral,
     debt: poolDebt,
-    collateralPrice: SHOCKED_VOUCHER_PRICE_E18,
+    collateralPrice: shockPreviewPriceE18,
     debtPrice,
     haircutBps: collateralHaircutBps,
     collateralFactorBps,
@@ -582,6 +678,14 @@ async function readOnchainDemoStatus(health) {
   const misbehaviourTrace = trace?.misbehaviour || {};
   const deniedTimedOutLive = Boolean(deniedTimedOut || trace?.denied?.timedOut);
   const forwardProofVerified = Boolean(forwardConsumed || trace?.forward?.receiveTxHash || voucherBalance > 0n || poolCollateral > 0n);
+  const traceRisk = trace?.risk || {};
+  const afterLiquidation = afterLiquidationState({
+    traceRisk,
+    liveDebt: poolDebt,
+    liveCollateral: poolCollateral,
+    liveReserves: totalReserves,
+    liveBadDebt: totalBadDebt,
+  });
   const packetLifecycleStatus = packetStatusLabel({
     consumed: forwardProofVerified,
     acknowledged: forwardAcknowledged,
@@ -667,15 +771,15 @@ async function readOnchainDemoStatus(health) {
         utilizationRateBps: utilizationRate.toString(),
         borrowRateBps: borrowRate.toString(),
       },
-      policy: {
-        collateralFactorBps: bps(collateralFactorBps),
-        collateralHaircutBps: bps(collateralHaircutBps),
-        liquidationThresholdBps: bps(collateralFactorBps),
-        liquidationCloseFactorBps: bps(liquidationCloseFactorBps),
-        liquidationBonusBps: bps(liquidationBonusBps),
-      },
+      policy: riskPolicySnapshot({
+        collateralFactorBps,
+        collateralHaircutBps,
+        liquidationCloseFactorBps,
+        liquidationBonusBps,
+      }),
       shockPreview: {
-        collateralPrice: units(SHOCKED_VOUCHER_PRICE_E18),
+        collateralPrice: units(shockPreviewPriceE18),
+        collateralPriceRaw: shockPreviewPriceE18.toString(),
         collateralValue: units(shockedCollateralValue),
         maxBorrow: units(shockedMaxBorrow),
         availableBorrow: units(safeSub(shockedMaxBorrow, poolDebt)),
@@ -690,13 +794,7 @@ async function readOnchainDemoStatus(health) {
         bonusBps: liquidationBonusBps.toString(),
         executable: Boolean(isLiquidatable && maxLiquidationRepay > 0n),
       },
-      afterLiquidation: {
-        debt: units(poolDebt),
-        collateral: units(poolCollateral),
-        reserves: units(totalReserves),
-        badDebt: units(totalBadDebt),
-        latestTxHash: trace?.risk?.liquidationTxHash || null,
-      },
+      afterLiquidation,
     },
     progress: {
       packetSequenceA: packetSequenceA.toString(),
