@@ -70,6 +70,70 @@ function healthLabel(healthFactorBps) {
   return { label: `${percent.toFixed(1)}%`, status: "At Risk", percent };
 }
 
+function positionRiskGuidance(status, health) {
+  const balances = status?.balances || {};
+  const security = status?.security || {};
+  const debt = numeric(balances.poolDebt);
+  const activeCollateral = numeric(balances.poolCollateral);
+  const voucher = numeric(balances.voucher);
+  const escrow = numeric(balances.escrow);
+
+  if (security.frozen || security.recovering) {
+    return {
+      focus: "Recover account",
+      copy: "Safety controls are active, so position changes should wait until the account is recovered.",
+      action: "Recover the account before borrowing, withdrawing, or returning collateral.",
+    };
+  }
+  if (debt > 0 && health.status === "At Risk") {
+    return {
+      focus: "Reduce risk",
+      copy: "Your open loan is close to the safety boundary and needs attention before any new withdrawal.",
+      action: "Repay debt or add collateral to reduce liquidation risk.",
+    };
+  }
+  if (debt > 0 && health.status === "Watch") {
+    return {
+      focus: "Improve buffer",
+      copy: "Your loan is active with a thinner safety buffer than ideal.",
+      action: "Repay part of the debt before taking on more exposure.",
+    };
+  }
+  if (debt > 0) {
+    return {
+      focus: "Monitor loan",
+      copy: "Your loan is active and currently inside the healthy range.",
+      action: "Monitor safety, repay when ready, or withdraw only if health remains strong.",
+    };
+  }
+  if (activeCollateral > 0) {
+    return {
+      focus: "Borrow ready",
+      copy: "Collateral is active and no debt is open yet.",
+      action: "Borrow within your limit when you are ready.",
+    };
+  }
+  if (voucher > 0) {
+    return {
+      focus: "Activate collateral",
+      copy: "Verified collateral is available, but it is not supporting borrowing yet.",
+      action: "Use the verified collateral to activate your borrowing power.",
+    };
+  }
+  if (escrow > 0) {
+    return {
+      focus: "Verify transfer",
+      copy: "Your transfer has started and is waiting for verification to finish.",
+      action: "Continue the bridge flow once verification is ready.",
+    };
+  }
+  return {
+    focus: "Start position",
+    copy: "No active loan yet. The next meaningful move is to bring collateral into this account.",
+    action: "Bridge collateral to unlock borrowing power.",
+  };
+}
+
 function clamp(value, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value));
 }
@@ -122,15 +186,6 @@ function setRoute(id, state, text) {
 function setMeter(id, value) {
   const node = document.getElementById(id);
   if (node) node.style.setProperty("--value", `${clamp(value)}%`);
-}
-
-function setRiskTone(id, status) {
-  const node = document.getElementById(id);
-  if (!node) return;
-  node.textContent = status ?? "-";
-  node.classList.toggle("is-safe", status === "Safe");
-  node.classList.toggle("is-watch", status === "Watch");
-  node.classList.toggle("is-risk", status === "At Risk" || status === "Safety Mode");
 }
 
 function setFlowCheck(id, state, text) {
@@ -242,10 +297,6 @@ function renderVisualStatus(status) {
     ? Number(market.healthFactorBps) / 100
     : null;
 
-  setText(
-    "collateralHealthText",
-    debt > 0 && healthFactor != null ? `${healthFactor.toFixed(1)}% HF` : debt > 0 ? `${Math.round(collateralRatio)}%` : collateral > 0 ? "covered" : status?.deployed ? "idle" : "-"
-  );
   setMeter("collateralHealthBar", debt > 0 && healthFactor != null ? healthFactor / 2 : debt > 0 ? collateralRatio / 2 : collateral > 0 ? 100 : 0);
 }
 
@@ -358,25 +409,22 @@ export function renderStatus(status) {
     renderVisualStatus(status);
     setText(
       "deploymentStatus",
-      status?.label || (runtime.besuFirst ? "Besu runtime waiting" : "Local runtime waiting")
+      status?.label || (runtime.besuFirst ? "System waiting" : "Local system waiting")
     );
     deploymentStatus?.classList.remove("is-live");
     deploymentStatus?.classList.add("is-offline");
-    setText("heroBorrowPower", "-");
-    setText("heroHealthPreview", "-");
-    setText("heroRiskPreview", "Waiting");
     setText("borrowPreviewHealth", "-");
     setText("borrowPreviewLiquidity", "-");
-    setText("positionAvailableBorrow", "-");
-    setText("positionCurrentDebt", "-");
+    setText("riskStatusText", "Connect account");
+    setText("positionRiskCopy", "Connect your account first; later lending actions stay locked until the route is ready.");
+    setText("positionRiskAction", "Connect Wallet to begin.");
     setText("verificationSummaryStatus", "Pending");
     setText("verificationSummaryOracle", "Waiting");
     setText("verificationSummaryClient", "Waiting");
     setText("verificationSummaryRisk", "Waiting");
-    setRiskTone("positionRiskBadge", "Waiting");
     setText(
       "lastMessage",
-      status?.message || (runtime.besuFirst ? "Start the Besu bank chains." : "Start the local runtime.")
+      status?.message || (runtime.besuFirst ? "Start the bank network." : "Start the local system.")
     );
     renderRoadmap();
     return;
@@ -390,12 +438,12 @@ export function renderStatus(status) {
   setText(
     "deploymentStatus",
     activeOperation
-      ? `Controller busy / ${activeOperation.label}`
+      ? `Processing / ${activeOperation.label}`
       : status.stackVersion === "besu-light-client"
-      ? "Besu runtime active / light-client header + storage proof path"
+      ? "Account connected / verified route ready"
       : runtime.besuFirst
-      ? `Besu runtime active${runtime.proofPolicy === "storage-required" ? " / storage proof required" : ""}`
-      : "Local runtime active"
+      ? "Account connected / bank network ready"
+      : "Account connected"
   );
   setText("bankABalance", `${status.balances.bankA} aBANK`);
   setText("escrowBalance", `${status.balances.escrow} aBANK`);
@@ -418,7 +466,7 @@ export function renderStatus(status) {
   setText("borrowRate", bpsToPercent(status.market?.borrowRateBps));
   setText("utilizationBps", bpsToPercent(status.market?.utilizationRateBps));
   setText("borrowRateHero", bpsToPercent(status.market?.borrowRateBps));
-  setText("operatorMode", status.runtime?.proofPolicy === "storage-required" ? "Storage proof required" : "Demo mode");
+  setText("operatorMode", status.runtime?.proofPolicy === "storage-required" ? "Verified route" : "Guided mode");
   const collateralValue = marketValue(status.balances.poolCollateral, status.market?.voucherPrice);
   const health = healthLabel(status.market?.healthFactorBps);
   setText("collateralValueHero", `${compactAmount(collateralValue)} bCASH`);
@@ -428,14 +476,11 @@ export function renderStatus(status) {
   setText("maxBorrowHero", `Max borrow ${status.market?.maxBorrow ?? "-"} bCASH`);
   setText("healthFactorHero", health.label);
   setText("riskBadge", health.status);
-  setText("heroBorrowPower", `${status.market?.availableToBorrow ?? "-"} bCASH`);
-  setText("heroHealthPreview", health.label);
-  setText("heroRiskPreview", health.status);
-  setText("riskStatusText", health.status);
-  setRiskTone("positionRiskBadge", health.status);
+  const riskGuidance = positionRiskGuidance(status, health);
+  setText("riskStatusText", riskGuidance.focus);
+  setText("positionRiskCopy", riskGuidance.copy);
+  setText("positionRiskAction", riskGuidance.action);
   setText("maxBorrow", `${status.market?.maxBorrow ?? "-"} bCASH`);
-  setText("positionAvailableBorrow", `${status.market?.availableToBorrow ?? "-"} bCASH`);
-  setText("positionCurrentDebt", `${status.balances.poolDebt} bCASH`);
   setText("availableBorrow", `${status.market?.availableToBorrow ?? "-"} bCASH`);
   setText("borrowPreviewHealth", health.label === "No debt" ? "Safe" : health.label);
   setText("borrowPreviewLiquidity", `${status.balances.poolCash} bCASH`);
@@ -539,10 +584,10 @@ export function renderLatestActivity(activity) {
 
 export function markControllerOffline() {
   renderVisualStatus(null);
-  setText("deploymentStatus", "Controller offline");
-  setText("positionAvailableBorrow", "-");
-  setText("positionCurrentDebt", "-");
-  setRiskTone("positionRiskBadge", "Waiting");
+  setText("deploymentStatus", "Service offline");
+  setText("riskStatusText", "Offline");
+  setText("positionRiskCopy", "The local service is offline, so live account safety cannot be evaluated yet.");
+  setText("positionRiskAction", "Start the service before taking lending actions.");
   setText("verificationSummaryStatus", "Pending");
   setText("verificationSummaryOracle", "Waiting");
   setText("verificationSummaryClient", "Waiting");

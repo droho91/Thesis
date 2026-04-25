@@ -69,6 +69,7 @@ function operationLabel(action) {
     depositCollateral: "Deposit collateral",
     borrow: "Borrow",
     repay: "Repay",
+    topUpRepayCash: "Get demo bCASH",
     withdrawCollateral: "Withdraw collateral",
     burn: "Burn voucher",
     finalizeReverseHeader: "Read Bank B Besu header",

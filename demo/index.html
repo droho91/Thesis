@@ -19,46 +19,38 @@
             <div class="nav-meta">
               <div class="nav-badges">
                 <span class="trust-badge" id="operatorMode">Light-client verified</span>
-                <span class="status-pill" id="deploymentStatus">Checking runtime</span>
+                <span class="status-pill" id="deploymentStatus">Checking system</span>
               </div>
               <div class="nav-actions">
                 <button class="utility-button" id="refreshState" type="button">Refresh</button>
-                <button class="utility-button" id="openDemoTools" type="button" aria-expanded="false">Demo Tools</button>
+                <button class="utility-button" id="openVerificationPanel" type="button" aria-expanded="false">Technical Details</button>
               </div>
             </div>
           </nav>
 
-          <div class="product-hero-content">
-            <div class="hero-copy">
-              <p class="eyebrow">Trust-verified cross-chain lending</p>
-              <h1>Bridge collateral from Bank A. Borrow on Bank B.</h1>
-              <p class="hero-text">
-                Use verified collateral without leaving the institutional trust boundary. Technical
-                proof, oracle freshness, and light-client safety stay available when you need them.
+          <div class="summary-hero">
+            <div class="dashboard-title">
+              <p class="eyebrow">Lending Dashboard</p>
+              <h1>Cross-chain credit account</h1>
+              <p class="summary-copy" id="workflowSummaryCopy">
+                Connect your account, bridge collateral, and borrow with a clear safety margin.
               </p>
-              <div class="hero-actions product-actions">
-                <a class="button-primary" href="#bridge-action">Bridge Collateral</a>
-                <a class="button-run" href="#borrow-action">Borrow</a>
-                <button class="button-link" id="openVerificationPanel" type="button" aria-expanded="false">View Technical Proof</button>
-              </div>
-              <div class="hero-signal-row" aria-label="Borrower snapshot">
-                <div>
-                  <span>Available now</span>
-                  <strong id="heroBorrowPower">-</strong>
-                </div>
-                <div>
-                  <span>Position health</span>
-                  <strong id="heroHealthPreview">-</strong>
-                  <small id="heroRiskPreview">Waiting</small>
-                </div>
-              </div>
             </div>
+            <aside class="primary-action-card" aria-live="polite">
+              <div>
+                <span class="eyebrow">Next step</span>
+                <h2 id="primaryActionTitle">Connect Wallet</h2>
+                <p id="primaryActionDescription">Prepare your lending account before moving collateral.</p>
+              </div>
+              <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Connect Wallet</button>
+              <small id="primaryActionHint">Later steps stay locked until your account is ready.</small>
+            </aside>
           </div>
 
           <div class="route-ribbon" aria-label="Cross-chain route">
             <span>Bank A collateral</span>
             <i></i>
-            <strong>Verified trust layer</strong>
+            <strong>Risk-managed route</strong>
             <i></i>
             <span>Bank B credit</span>
           </div>
@@ -67,7 +59,7 @@
             <article>
               <span>Collateral Value</span>
               <strong id="collateralValueHero">-</strong>
-              <small id="collateralAssetHero">Voucher collateral</small>
+              <small id="collateralAssetHero">Active collateral</small>
             </article>
             <article>
               <span>Current Debt</span>
@@ -85,32 +77,82 @@
               <small id="riskBadge">Waiting</small>
             </article>
           </div>
+
+          <div class="journey-steps" aria-label="Borrower journey">
+            <button class="journey-step journey-step--wallet" data-workflow-step="connect" type="button">
+              <span class="journey-step-number">1</span>
+              <div>
+                <strong>Connect Wallet</strong>
+                <small id="workflowStepConnect">Prepare account</small>
+              </div>
+            </button>
+            <button class="journey-step" data-workflow-step="bridge" type="button">
+              <span class="journey-step-number">2</span>
+              <div>
+                <strong>Bridge Collateral</strong>
+                <small id="visualEscrowState"><strong>waiting</strong></small>
+              </div>
+            </button>
+            <button class="journey-step" data-workflow-step="activate" type="button">
+              <span class="journey-step-number">3</span>
+              <div>
+                <strong>Deposit</strong>
+                <small id="workflowStepActivate">Locked</small>
+              </div>
+            </button>
+            <button class="journey-step" data-workflow-step="borrow" type="button">
+              <span class="journey-step-number">4</span>
+              <div>
+                <strong>Borrow</strong>
+                <small id="visualCreditState"><strong>waiting</strong></small>
+              </div>
+            </button>
+            <button class="journey-step" data-workflow-step="manage" type="button">
+              <span class="journey-step-number">5</span>
+              <div>
+                <strong>Manage Position</strong>
+                <small id="workflowStepManage">Locked</small>
+              </div>
+            </button>
+          </div>
         </div>
       </section>
 
-      <section class="dashboard-grid">
-        <section class="dashboard-column dashboard-column--actions" aria-label="Borrower actions">
-          <div class="section-head compact">
-            <p class="eyebrow">Actions</p>
-            <h2>Manage your position</h2>
+      <section class="workflow-layout" aria-label="Guided lending workflow">
+        <section class="workflow-main" aria-label="Current workflow">
+          <div class="workflow-panel-head">
+            <div>
+              <p class="eyebrow">Guided Workflow</p>
+              <h2 id="workflowPanelTitle">Connect your account</h2>
+            </div>
+            <span class="soft-status" id="workflowPanelStatus">Current step</span>
           </div>
 
-          <article class="product-card action-card" id="bridge-action" data-action-card="bridge">
+          <article class="product-card action-card workflow-panel" data-workflow-panel="connect">
+            <div class="empty-state-card">
+              <span class="action-index">Step 1</span>
+              <h3>Connect Wallet</h3>
+              <p id="connectPanelCopy">Prepare the borrower account to unlock bridge and lending actions.</p>
+              <button class="button-primary" id="deploySeed" type="button">Connect Wallet</button>
+            </div>
+          </article>
+
+          <article class="product-card action-card workflow-panel" id="bridge-action" data-action-card="bridge" data-workflow-panel="bridge">
             <div class="action-card-head">
               <div>
                 <span class="action-index">Bridge</span>
                 <h3>Bridge Collateral</h3>
-                <p>Lock aBANK on Bank A, sync trust, and mint a verified voucher on Bank B.</p>
+                <p>Move source-bank collateral into this lending account.</p>
               </div>
-              <span class="soft-status" id="visualEscrowState"><strong>waiting</strong></span>
+              <span class="soft-status" data-panel-status="bridge">Ready</span>
             </div>
             <div class="action-preview">
               <div>
-                <span>Escrowed</span>
+                <span>Locked collateral</span>
                 <strong id="escrowBalance">-</strong>
               </div>
               <div>
-                <span>Voucher</span>
+                <span>Collateral available</span>
                 <strong id="voucherBalance">-</strong>
               </div>
             </div>
@@ -128,39 +170,50 @@
               </label>
               <div class="decision-preview">
                 <div>
-                  <span>Bridge request</span>
+                  <span>Collateral transfer</span>
                   <strong id="bridgePreviewAmount">-</strong>
                 </div>
                 <div>
-                  <span>Expected voucher</span>
+                  <span>Available after verification</span>
                   <strong id="bridgePreviewVoucher">-</strong>
                 </div>
-                <p id="bridgePreviewNote">Verification will make this collateral usable on Bank B.</p>
+                <p id="bridgePreviewNote">After verification, this collateral can be activated for borrowing.</p>
               </div>
               <p class="validation-message" id="bridgeValidation" aria-live="polite"></p>
             </div>
             <div class="action-buttons action-buttons--primary">
-              <button class="button-secondary" data-action="openRoute" type="button">Initialize Route</button>
-              <button class="button-primary" data-action="lock" data-amount-input="bridgeAmount" type="button">Lock Collateral</button>
-              <button class="button-run" data-action="proveForwardMint" type="button">Verify and Mint Voucher</button>
+              <button class="button-secondary" data-action="openRoute" type="button">Start Bridge</button>
+              <button class="button-primary" data-action="lock" data-amount-input="bridgeAmount" type="button">Bridge Collateral</button>
+              <button class="button-run" data-action="proveForwardMint" type="button">Receive Voucher</button>
             </div>
-            <details class="workflow-technical">
-              <summary>Proof preparation</summary>
-              <div class="action-buttons action-buttons--compact">
-                <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Fetch Source Proof</button>
-                <button class="button-secondary" data-action="updateForwardClient" type="button">Sync Trust on Bank B</button>
-              </div>
-            </details>
           </article>
 
-          <article class="product-card action-card action-card--loan" id="borrow-action" data-action-card="loan">
+          <article class="product-card action-card workflow-panel" data-action-card="activate" data-workflow-panel="activate">
+            <div class="action-card-head">
+              <div>
+                <span class="action-index">Deposit</span>
+                <h3>Activate Collateral</h3>
+                <p>Use your available collateral so it can support borrowing.</p>
+              </div>
+              <span class="soft-status" data-panel-status="activate">Waiting</span>
+            </div>
+            <div class="collateral-use-row collateral-use-row--focus">
+              <div>
+                <strong>Available collateral</strong>
+                <span id="depositCollateralHint">Waiting for verified collateral.</span>
+              </div>
+              <button class="button-primary" data-action="depositCollateral" type="button">Use as Collateral</button>
+            </div>
+          </article>
+
+          <article class="product-card action-card action-card--loan workflow-panel" id="borrow-action" data-action-card="loan" data-workflow-panel="borrow manage">
             <div class="action-card-head">
               <div>
                 <span class="action-index">Loan</span>
-                <h3>Loan Management</h3>
-                <p>Use verified collateral, then borrow, repay, or withdraw from one compact workflow.</p>
+                <h3>Borrow and Manage</h3>
+                <p>Borrow within your limit, repay debt, or reduce risk from one place.</p>
               </div>
-              <span class="soft-status" id="visualCreditState"><strong>waiting</strong></span>
+              <span class="soft-status" data-panel-status="loan">Waiting</span>
             </div>
             <div class="action-preview">
               <div>
@@ -181,13 +234,6 @@
               </div>
             </div>
             <div class="transaction-stack">
-              <div class="collateral-use-row">
-                <div>
-                  <strong>Voucher collateral</strong>
-                  <span id="depositCollateralHint">Waiting for a verified voucher.</span>
-                </div>
-                <button class="button-primary" data-action="depositCollateral" type="button">Use Voucher as Collateral</button>
-              </div>
               <div class="loan-tabs" role="tablist" aria-label="Loan management modes">
                 <button
                   class="loan-tab is-active"
@@ -305,6 +351,26 @@
                     />
                     <em>bCASH</em>
                   </label>
+                  <div class="repay-funding-panel" id="repayFundingPanel">
+                    <div class="repay-funding-grid">
+                      <div>
+                        <span>Wallet balance</span>
+                        <strong id="repayWalletBalance">-</strong>
+                      </div>
+                      <div>
+                        <span>Repayable now</span>
+                        <strong id="repayableNow">-</strong>
+                      </div>
+                      <div>
+                        <span>Needed to close</span>
+                        <strong id="repayShortfall">-</strong>
+                      </div>
+                    </div>
+                    <div class="repay-funding-action">
+                      <p id="repayFundingCopy">Your wallet balance will appear here before repayment.</p>
+                      <button class="button-primary-soft" id="topUpRepayCashButton" type="button" hidden>Get demo bCASH</button>
+                    </div>
+                  </div>
                   <div class="decision-preview">
                     <div>
                       <span>Repaying</span>
@@ -382,40 +448,23 @@
             </div>
           </article>
 
-          <article class="product-card action-card action-card--compact" data-action-card="redeem">
+          <article class="product-card action-card action-card--compact workflow-panel" data-action-card="redeem" data-workflow-panel="redeem">
             <div class="action-card-head">
               <div>
                 <span class="action-index">Redeem</span>
-                <h3>Redeem Collateral</h3>
-                <p>Burn the voucher on Bank B and unlock the canonical asset on Bank A.</p>
+                <h3>Return Collateral</h3>
+                <p>Close the wrapped position and return collateral to the source account.</p>
               </div>
-              <span class="soft-status" id="visualTrustState"><strong>waiting</strong></span>
-            </div>
-            <div class="action-preview">
-              <div>
-                <span>Reverse packet</span>
-                <strong id="reversePacketId">-</strong>
-              </div>
-              <div>
-                <span>Bank A view</span>
-                <strong id="trustedBOnA">-</strong>
-              </div>
+              <span class="soft-status">Optional</span>
             </div>
             <div class="action-buttons action-buttons--primary">
-              <button class="button-primary-soft" data-action="burn" type="button">Redeem Voucher</button>
-              <button class="button-run" data-action="proveReverseUnlock" type="button">Verify and Unlock</button>
+              <button class="button-primary-soft" data-action="burn" type="button">Return Collateral</button>
+              <button class="button-run" data-action="proveReverseUnlock" type="button">Complete Release</button>
             </div>
-            <details class="workflow-technical">
-              <summary>Redemption proof</summary>
-              <div class="action-buttons action-buttons--compact">
-                <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Fetch Redemption Proof</button>
-                <button class="button-secondary" data-action="updateReverseClient" type="button">Sync Trust on Bank A</button>
-              </div>
-            </details>
           </article>
         </section>
 
-        <section class="dashboard-column dashboard-column--position" aria-label="Position overview">
+        <section class="workflow-side" aria-label="Position overview">
           <div class="sticky-summary-stack">
             <article class="product-card verification-glance" aria-label="Verification summary">
               <div class="verification-glance-head">
@@ -457,100 +506,102 @@
                 <div class="section-head compact section-head--position">
                   <div>
                     <p class="eyebrow">My Position</p>
-                    <h2>Borrowing capacity and risk</h2>
+                    <h2>Safety and risk</h2>
                   </div>
-                  <span class="position-risk-badge" id="positionRiskBadge">Waiting</span>
                 </div>
                 <div class="position-health">
                   <div class="position-health-head">
                     <div>
-                      <span>Risk Status</span>
+                      <span>Current focus</span>
                       <strong id="riskStatusText">Waiting</strong>
                     </div>
                     <div class="position-health-copy">
                       <span>Position health</span>
-                      <small>Live voucher value, debt level, and oracle freshness inform your current safety margin.</small>
+                      <small id="positionRiskCopy">This panel highlights what needs attention without repeating the account metrics above.</small>
                     </div>
                   </div>
                   <div class="meter-track meter-track--position"><i id="collateralHealthBar"></i></div>
-                  <div class="position-health-grid">
-                    <div>
-                      <span>Health factor</span>
-                      <strong id="collateralHealthText">-</strong>
-                    </div>
-                    <div>
-                      <span>Available to borrow</span>
-                      <strong id="positionAvailableBorrow">-</strong>
-                    </div>
-                    <div>
-                      <span>Current debt</span>
-                      <strong id="positionCurrentDebt">-</strong>
-                    </div>
+                  <div class="position-risk-guidance">
+                    <span>Recommended action</span>
+                    <strong id="positionRiskAction">Follow the next step above.</strong>
                   </div>
                 </div>
               </div>
-              <dl class="position-grid position-grid--support">
-                <div>
-                  <dt>Bank A balance</dt>
-                  <dd id="bankABalance">-</dd>
-                </div>
-                <div>
-                  <dt>Bank B cash</dt>
-                  <dd id="bankBBalance">-</dd>
-                </div>
-                <div>
-                  <dt>Pool collateral</dt>
-                  <dd id="poolCollateral">-</dd>
-                </div>
-                <div>
-                  <dt>Current debt</dt>
-                  <dd id="poolDebt">-</dd>
-                </div>
-                <div>
-                  <dt>Max borrow</dt>
-                  <dd id="maxBorrow">-</dd>
-                </div>
-                <div>
-                  <dt>Debt shares</dt>
-                  <dd id="borrowerDebtShares">-</dd>
-                </div>
-              </dl>
-            </article>
-
-            <article class="product-card market-card">
-              <div class="section-head compact">
-                <p class="eyebrow">Market Overview</p>
-                <h2>Liquidity and accrual</h2>
-              </div>
-              <dl class="position-grid">
-                <div>
-                  <dt>Pool liquidity</dt>
-                  <dd id="poolLiquidity">-</dd>
-                </div>
-                <div>
-                  <dt>Pool cash</dt>
-                  <dd id="poolCash">-</dd>
-                </div>
-                <div>
-                  <dt>Utilization</dt>
-                  <dd id="utilizationBps">-</dd>
-                </div>
-                <div>
-                  <dt>Borrow APR</dt>
-                  <dd id="borrowRate">-</dd>
-                </div>
-                <div>
-                  <dt>Reserves</dt>
-                  <dd id="totalReserves">-</dd>
-                </div>
-                <div>
-                  <dt>Bad debt</dt>
-                  <dd id="totalBadDebt">-</dd>
-                </div>
-              </dl>
+              <details class="position-support-disclosure">
+                <summary>Account details</summary>
+                <dl class="position-grid position-grid--support">
+                  <div>
+                    <dt>Source balance</dt>
+                    <dd id="bankABalance">-</dd>
+                  </div>
+                  <div>
+                    <dt>Wallet cash</dt>
+                    <dd id="bankBBalance">-</dd>
+                  </div>
+                  <div>
+                    <dt>Active collateral</dt>
+                    <dd id="poolCollateral">-</dd>
+                  </div>
+                  <div>
+                    <dt>Debt balance</dt>
+                    <dd id="poolDebt">-</dd>
+                  </div>
+                  <div>
+                    <dt>Borrow limit</dt>
+                    <dd id="maxBorrow">-</dd>
+                  </div>
+                  <div>
+                    <dt>Debt shares</dt>
+                    <dd id="borrowerDebtShares">-</dd>
+                  </div>
+                </dl>
+              </details>
             </article>
           </div>
+        </section>
+      </section>
 
+      <section class="secondary-stack" aria-label="Supporting details">
+        <details class="secondary-disclosure">
+          <summary>
+            <span>Market details</span>
+            <small>APR, liquidity, utilization, and reserves</small>
+          </summary>
+          <article class="product-card market-card">
+            <dl class="position-grid">
+              <div>
+                <dt>Pool liquidity</dt>
+                <dd id="poolLiquidity">-</dd>
+              </div>
+              <div>
+                <dt>Pool cash</dt>
+                <dd id="poolCash">-</dd>
+              </div>
+              <div>
+                <dt>Utilization</dt>
+                <dd id="utilizationBps">-</dd>
+              </div>
+              <div>
+                <dt>Borrow APR</dt>
+                <dd id="borrowRate">-</dd>
+              </div>
+              <div>
+                <dt>Reserves</dt>
+                <dd id="totalReserves">-</dd>
+              </div>
+              <div>
+                <dt>Bad debt</dt>
+                <dd id="totalBadDebt">-</dd>
+              </div>
+            </dl>
+          </article>
+        </details>
+
+        <details class="secondary-disclosure">
+          <summary>
+            <span>Recent activity</span>
+            <small>Latest visible state changes</small>
+          </summary>
           <article class="activity-panel product-card" aria-label="Recent activity">
             <div class="activity-copy">
               <p class="eyebrow">Recent Activity</p>
@@ -566,82 +617,7 @@
               <li>Nothing has changed yet.</li>
             </ul>
           </article>
-        </section>
-      </section>
-
-      <section class="journey-section" aria-label="Activity timeline">
-        <div class="section-head section-head--wide">
-          <div>
-            <p class="eyebrow">Position Activity</p>
-            <h2>Verified capital activity</h2>
-          </div>
-          <p class="section-text">
-            Borrower, trust, and safety events land here as the verified lending route progresses.
-          </p>
-        </div>
-        <div class="activity-timeline">
-          <article id="routeEscrow">
-            <span class="timeline-dot"></span>
-            <div>
-              <strong>Collateral locked on Bank A</strong>
-              <small id="routeEscrowText">waiting</small>
-            </div>
-          </article>
-          <article id="routeHeader">
-            <span class="timeline-dot"></span>
-            <div>
-              <strong>Trust synced on Bank B</strong>
-              <small id="routeHeaderText">waiting</small>
-            </div>
-          </article>
-          <article id="routeClient">
-            <span class="timeline-dot"></span>
-            <div>
-              <strong>Proof anchor imported</strong>
-              <small id="routeClientText">waiting</small>
-            </div>
-          </article>
-          <article id="routeProof">
-            <span class="timeline-dot"></span>
-            <div>
-              <strong>Voucher ready for collateral use</strong>
-              <small id="routeProofText">waiting</small>
-            </div>
-          </article>
-          <article id="routeLending">
-            <span class="timeline-dot"></span>
-            <div>
-              <strong>Borrowing position updated</strong>
-              <small id="routeLendingText">waiting</small>
-            </div>
-          </article>
-          <article id="routeReverse">
-            <span class="timeline-dot"></span>
-            <div>
-              <strong>Collateral redeemed on Bank A</strong>
-              <small id="routeReverseText">waiting</small>
-            </div>
-          </article>
-          <article id="routeSafety">
-            <span class="timeline-dot"></span>
-            <div>
-              <strong>Safety checks available</strong>
-              <small id="routeSafetyText">available</small>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="protocol-access" aria-label="Technical event log">
-        <div class="section-head section-head--wide">
-          <div>
-            <p class="eyebrow">Technical Event Log</p>
-            <h2>Runtime output stays available without taking over the page.</h2>
-          </div>
-          <div class="protocol-access-actions">
-            <button class="utility-button" id="openRuntimeOutput" type="button" aria-expanded="false">Open Runtime Output</button>
-          </div>
-        </div>
+        </details>
       </section>
 
       <div class="surface-drawer" id="demoToolsDrawer" aria-hidden="true">
@@ -658,7 +634,6 @@
             These controls prepare the thesis runtime or run scripted support flows. They stay available without competing with borrower actions.
           </p>
           <div class="runtime-tool-actions">
-            <button class="button-secondary" id="deploySeed" type="button">Prepare Runtime</button>
             <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
             <button class="button-secondary" data-action="fullFlow" type="button">Run Guided Lifecycle</button>
           </div>
@@ -680,6 +655,8 @@
                 <h2 id="verificationDrawerTitle">Proof, oracle, and safety details</h2>
               </div>
               <div class="verification-controls">
+                <button class="button-secondary" id="openDemoTools" type="button" aria-expanded="false">Admin Controls</button>
+                <button class="button-secondary" id="openRuntimeOutput" type="button" aria-expanded="false">Runtime Output</button>
                 <button class="button-secondary" id="focusMode" type="button" aria-pressed="false">Focus</button>
                 <button class="utility-button utility-button--invert" data-drawer-close="verificationDrawer" type="button">Close</button>
               </div>
@@ -689,12 +666,93 @@
               Inspect how trusted headers, packet proof execution, replay protection, oracle freshness, and safety controls enforce the cross-chain lending flow.
             </p>
 
+            <section class="journey-section journey-section--drawer" aria-label="Technical activity timeline">
+              <div class="section-head section-head--wide">
+                <div>
+                  <p class="eyebrow">Technical Timeline</p>
+                  <h2>Cross-chain execution path</h2>
+                </div>
+                <p class="section-text">
+                  Internal route, proof, client, and safety events are grouped here for thesis review.
+                </p>
+              </div>
+              <div class="activity-timeline">
+                <article id="routeEscrow">
+                  <span class="timeline-dot"></span>
+                  <div>
+                    <strong>Collateral locked on Bank A</strong>
+                    <small id="routeEscrowText">waiting</small>
+                  </div>
+                </article>
+                <article id="routeHeader">
+                  <span class="timeline-dot"></span>
+                  <div>
+                    <strong>Source header prepared</strong>
+                    <small id="routeHeaderText">waiting</small>
+                  </div>
+                </article>
+                <article id="routeClient">
+                  <span class="timeline-dot"></span>
+                  <div>
+                    <strong>Light client updated</strong>
+                    <small id="routeClientText">waiting</small>
+                  </div>
+                </article>
+                <article id="routeProof">
+                  <span class="timeline-dot"></span>
+                  <div>
+                    <strong>Voucher proof accepted</strong>
+                    <small id="routeProofText">waiting</small>
+                  </div>
+                </article>
+                <article id="routeLending">
+                  <span class="timeline-dot"></span>
+                  <div>
+                    <strong>Borrowing position updated</strong>
+                    <small id="routeLendingText">waiting</small>
+                  </div>
+                </article>
+                <article id="routeReverse">
+                  <span class="timeline-dot"></span>
+                  <div>
+                    <strong>Redemption path prepared</strong>
+                    <small id="routeReverseText">waiting</small>
+                  </div>
+                </article>
+                <article id="routeSafety">
+                  <span class="timeline-dot"></span>
+                  <div>
+                    <strong>Safety checks available</strong>
+                    <small id="routeSafetyText">available</small>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <details class="advanced-card">
+              <summary>Technical Actions</summary>
+              <div class="technical-action-status">
+                <span>Trust import</span>
+                <span id="visualTrustState"><strong>waiting</strong></span>
+              </div>
+              <div class="action-buttons action-buttons--compact">
+                <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Fetch Source Proof</button>
+                <button class="button-secondary" data-action="updateForwardClient" type="button">Sync Trust on Bank B</button>
+                <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Fetch Redemption Proof</button>
+                <button class="button-secondary" data-action="updateReverseClient" type="button">Sync Trust on Bank A</button>
+              </div>
+            </details>
+
             <details class="advanced-card">
               <summary>Verification Status</summary>
               <dl class="technical-grid">
                 <div>
                   <dt>Forward packet</dt>
                   <dd id="forwardPacketId">-</dd>
+                </div>
+                <div>
+                  <dt>Reverse packet</dt>
+                  <dd id="reversePacketId">-</dd>
                 </div>
                 <div>
                   <dt>Consumed once</dt>
@@ -757,6 +815,10 @@
                 <div>
                   <dt>Bank A client</dt>
                   <dd id="statusBOnA">-</dd>
+                </div>
+                <div>
+                  <dt>Trusted B header</dt>
+                  <dd id="trustedBOnA">-</dd>
                 </div>
                 <div>
                   <dt>Bank B head</dt>

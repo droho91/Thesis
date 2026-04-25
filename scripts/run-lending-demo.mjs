@@ -1440,7 +1440,7 @@ function isKnownReplay(error) {
   return text.includes("PACKET_ALREADY_RECEIVED") || text.includes("PACKET_ALREADY_ACKNOWLEDGED");
 }
 
-const SAFETY_MODE_ACTIONS = new Set(["freezeClient", "recoverClient"]);
+const SAFETY_MODE_ACTIONS = new Set(["freezeClient", "recoverClient", "topUpRepayCash"]);
 
 async function requireDemoSafetyModeAllows(action, ctx, sourceChainId) {
   if (SAFETY_MODE_ACTIONS.has(action)) return;
@@ -1778,6 +1778,36 @@ export async function runDemoStep(action, options = {}) {
         phase: "repaid",
         label: "Repaid bCASH debt",
         summary: `Repaid bCASH debt; remaining debt is ${units(remainingDebt)} bCASH.`,
+      }
+    );
+  }
+
+  if (action === "topUpRepayCash") {
+    setPhase("step-top-up-repay-cash");
+    const debt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
+    if (debt === 0n) {
+      throw new Error("There is no active debt to fund for repayment.");
+    }
+    const debtBalance = await ctx.B.debtAdmin.balanceOf(ctx.destinationUserAddress);
+    if (debtBalance < debt) {
+      await txStep("step mint demo repayment cash", () =>
+        ctx.B.debtAdmin.mint(ctx.destinationUserAddress, debt - debtBalance, txOptions())
+      );
+    }
+    const updatedBalance = await ctx.B.debtAdmin.balanceOf(ctx.destinationUserAddress);
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        risk: {
+          demoRepayCashFunded: units(updatedBalance),
+          demoRepayCashShortfall: units(updatedBalance >= debt ? 0n : debt - updatedBalance),
+        },
+      },
+      {
+        phase: "repay-cash-funded",
+        label: "Added demo bCASH for repayment",
+        summary: `Demo wallet now has ${units(updatedBalance)} bCASH available for repayment.`,
       }
     );
   }
