@@ -29,15 +29,19 @@ const amountFillButtons = [...document.querySelectorAll("[data-fill-target]")];
 const loanTabButtons = [...document.querySelectorAll("[data-loan-tab]")];
 const loanTabPanels = [...document.querySelectorAll("[data-loan-panel]")];
 const actionCards = [...document.querySelectorAll("[data-action-card]")];
+const portalButtons = [...document.querySelectorAll("[data-portal-tab]")];
 const ACTIVITY_STORAGE_KEY = "interchain-lending-latest-activity";
 const FOCUS_MODE_STORAGE_KEY = "interchain-lending-focus-mode";
+const PORTAL_STORAGE_KEY = "interchain-lending-active-portal";
 const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Recovering"];
-const SAFETY_MODE_ACTIONS = new Set(["recoverClient", "topUpRepayCash"]);
+const SAFETY_MODE_ACTIONS = new Set(["recoverClient", "topUpRepayCash", "simulatePriceShock", "executeLiquidation"]);
 const AMOUNT_ACTIONS = {
   lock: { inputId: "bridgeAmount", unit: "aBANK" },
   borrow: { inputId: "borrowAmount", unit: "bCASH" },
   repay: { inputId: "repayAmount", unit: "bCASH" },
   withdrawCollateral: { inputId: "withdrawAmount", unit: "vA" },
+  simulatePriceShock: { inputId: "shockPrice", unit: "bCASH/vA" },
+  executeLiquidation: { inputId: "liquidationRepayAmount", unit: "bCASH" },
 };
 const ACTION_CARD_BY_ACTION = {
   openRoute: "bridge",
@@ -50,6 +54,8 @@ const ACTION_CARD_BY_ACTION = {
   repay: "loan",
   withdrawCollateral: "loan",
   topUpRepayCash: "loan",
+  simulatePriceShock: "loan",
+  executeLiquidation: "loan",
   burn: "redeem",
   finalizeReverseHeader: "redeem",
   updateReverseClient: "redeem",
@@ -204,6 +210,19 @@ function setLoanTab(tab) {
   });
 }
 
+function setActivePortal(portal) {
+  const active = ["borrower", "risk", "technical", "scenarios"].includes(portal) ? portal : "borrower";
+  document.body.dataset.activePortal = active;
+  portalButtons.forEach((button) => {
+    const selected = button.dataset.portalTab === active;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+  });
+  try {
+    sessionStorage.setItem(PORTAL_STORAGE_KEY, active);
+  } catch {}
+}
+
 function setInputValue(id, value, { force = false } = {}) {
   const input = document.getElementById(id);
   if (!input || (!force && input.dataset.dirty === "true")) return;
@@ -262,6 +281,11 @@ function heightAtLeast(value, minimum) {
 
 function healthFromStatus(status) {
   const raw = String(status?.market?.healthFactorBps ?? "");
+  return healthFromBps(raw);
+}
+
+function healthFromBps(rawValue) {
+  const raw = String(rawValue ?? "");
   if (!raw || raw === String(2n ** 256n - 1n)) return { label: "No debt", status: "Safe", percent: null };
   const percent = Number(raw) / 100;
   if (!Number.isFinite(percent)) return { label: "-", status: "Waiting", percent: null };
@@ -326,7 +350,7 @@ function workflowModel(status) {
   const locked = safetyLocked(status);
 
   const steps = {
-    connect: { complete: deployed, unlocked: true, label: deployed ? "Connected" : "Prepare account" },
+    connect: { complete: deployed, unlocked: true, label: deployed ? "Ready" : "Prepare account" },
     bridge: {
       complete: voucherReady || collateralActive || debtActive,
       unlocked: deployed,
@@ -352,12 +376,12 @@ function workflowModel(status) {
   if (!deployed) {
     return {
       step: "connect",
-      title: "Connect your account",
+      title: "Prepare demo account",
       status: "Start here",
-      summary: "Connect your account to unlock collateral transfer and borrowing actions.",
-      cta: { type: "deploySeed", label: "Connect Wallet" },
-      description: "Prepare the borrower account before moving collateral.",
-      hint: "Later steps stay locked until your account is ready.",
+      summary: "Prepare the local Besu runtime and demo borrower before collateral transfer and borrowing actions.",
+      cta: { type: "deploySeed", label: "Prepare Demo Account" },
+      description: "Prepare the borrower account and reuse an existing seeded runtime when available.",
+      hint: "Later steps stay locked until the demo account is ready.",
       steps,
       risk: "waiting",
     };
@@ -542,7 +566,13 @@ function syncWorkflowUi(status = currentStatus) {
     if (inMainWorkflow) {
       button.hidden = true;
     }
-    if (!allowed && !button.closest(".surface-drawer")) {
+    if (
+      !allowed &&
+      !button.closest(".surface-drawer") &&
+      !button.closest(".portal-risk") &&
+      !button.closest(".portal-technical") &&
+      !button.closest(".portal-scenarios")
+    ) {
       button.disabled = true;
       button.title = "Complete the current step before using this action.";
     }
@@ -572,11 +602,28 @@ function setValidation(id, message = "", severity = "") {
 
 function validateAmountAction(action, status = currentStatus) {
   const state = financialState(status);
+  const risk = status?.risk || {};
   const inputId = AMOUNT_ACTIONS[action]?.inputId;
   const amount = inputId ? inputValue(inputId) : 0;
   if (!AMOUNT_ACTIONS[action]) return { ok: true, amount };
-  if (!state.deployed) return { ok: false, amount, message: "Connect your wallet before submitting." };
+  if (!state.deployed) return { ok: false, amount, message: "Prepare the demo account before submitting." };
   if (amount <= 0) return { ok: false, amount, message: "Enter an amount greater than zero." };
+
+  if (action === "simulatePriceShock") {
+    const currentPrice = numeric(risk.oracle?.collateralPrice);
+    if (currentPrice > 0 && amount >= currentPrice) {
+      return { ok: true, amount, message: "This updates the governed demo oracle; choose a lower value to show stress." };
+    }
+    return { ok: true, amount, message: "Oracle shock is ready." };
+  }
+
+  if (action === "executeLiquidation") {
+    const maxRepay = numeric(risk.liquidationPreview?.repayAmount);
+    if (!risk.position?.liquidatable) return { ok: false, amount, message: "The account is not liquidatable at the current oracle price." };
+    if (maxRepay <= 0) return { ok: false, amount, message: "No debt is available for liquidation." };
+    if (amount > maxRepay) return { ok: false, amount, message: "Amount exceeds the liquidation close factor." };
+    return { ok: true, amount, message: "Liquidation is ready." };
+  }
 
   if (action === "lock") {
     if (amount > state.bankA) return { ok: false, amount, message: "Amount exceeds your source-bank balance." };
@@ -632,11 +679,14 @@ function updateAmountActionAvailability(status) {
 
 function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   const state = financialState(status);
+  const risk = status?.risk || {};
   const suggestedBridge = status?.trace?.forward?.amount || status?.amount || Math.min(state.bankA, 100);
   setInputValue("bridgeAmount", suggestedBridge, { force: forceDefaults });
   setInputValue("borrowAmount", state.availableBorrow, { force: forceDefaults });
   setInputValue("repayAmount", state.debt, { force: forceDefaults });
   setInputValue("withdrawAmount", state.withdrawable, { force: forceDefaults });
+  setInputValue("shockPrice", risk.shockPreview?.collateralPrice ?? 0.5, { force: forceDefaults });
+  setInputValue("liquidationRepayAmount", risk.liquidationPreview?.repayAmount ?? 0, { force: forceDefaults });
 
   setText("bridgeSourceBalance", status?.deployed ? formatAmount(state.bankA, "aBANK") : "-");
   setText("borrowMaxInline", status?.deployed ? formatAmount(state.availableBorrow, "bCASH") : "-");
@@ -682,12 +732,12 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   setText(
     "repayFundingCopy",
     !status?.deployed
-      ? "Connect your account before managing repayment."
+      ? "Prepare the demo account before managing repayment."
       : state.debt <= 0
         ? "No active debt is open, so repayment is not needed."
         : needsDemoCash
-          ? `Demo wallet is short by ${formatAmount(repayShortfall, "bCASH")}. Add demo bCASH to close the debt cleanly.`
-          : "Your wallet has enough bCASH for the selected repayment flow."
+          ? `Demo account is short by ${formatAmount(repayShortfall, "bCASH")}. Add demo bCASH to close the debt cleanly.`
+          : "The demo account has enough bCASH for the selected repayment flow."
   );
   if (topUpRepayCashButton) {
     topUpRepayCashButton.hidden = !needsDemoCash;
@@ -708,11 +758,29 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   setText("withdrawProjectedHealth", withdrawHealth.label);
   setRiskBadge("withdrawRiskBadge", withdrawHealth);
 
+  const shockPrice = inputValue("shockPrice");
+  const currentCollateralPrice = numeric(risk.oracle?.collateralPrice);
+  const currentHealth = healthFromStatus(status);
+  const shockedHealth = risk.shockPreview?.healthFactorBps
+    ? healthFromBps(risk.shockPreview.healthFactorBps)
+    : { label: "-", status: "Waiting" };
+  setText("riskShockPriceInputPreview", formatAmount(shockPrice, "bCASH/vA"));
+  setText("riskCurrentPriceInline", status?.deployed ? formatAmount(currentCollateralPrice, "bCASH/vA") : "-");
+  setText("riskHealthBeforeShock", currentHealth.label);
+  setText("riskHealthAfterShock", status?.deployed ? healthFromBps(risk.shockPreview?.healthFactorBps).label : "-");
+  setRiskBadge("riskShockBadge", shockedHealth);
+
+  const liquidationAmount = inputValue("liquidationRepayAmount");
+  setText("liquidationRepayDecision", formatAmount(liquidationAmount, "bCASH"));
+  setText("liquidationMaxRepayInline", status?.deployed ? formatAmount(risk.liquidationPreview?.repayAmount, "bCASH") : "-");
+
   for (const [action, field] of Object.entries({
     lock: "bridgeValidation",
     borrow: "borrowValidation",
     repay: "repayValidation",
     withdrawCollateral: "withdrawValidation",
+    simulatePriceShock: "shockValidation",
+    executeLiquidation: "liquidationValidation",
   })) {
     const validation = validateAmountAction(action, status);
     const touched = document.getElementById(AMOUNT_ACTIONS[action]?.inputId)?.dataset.dirty === "true";
@@ -801,7 +869,7 @@ const FACT_LABELS = {
   headerHeightA: "Bank A header height",
   trustedAOnB: "Bank B imported Bank A header",
   voucherBalance: "Voucher balance",
-  bankBBalance: "Wallet bCASH",
+  bankBBalance: "Demo account bCASH",
   poolCollateral: "Pool collateral",
   poolDebt: "Pool debt",
   totalBorrows: "Accrued total borrows",
@@ -846,6 +914,8 @@ function actionTitle(action) {
     repay: "Repaid debt",
     topUpRepayCash: "Added demo bCASH",
     withdrawCollateral: "Withdrew collateral",
+    simulatePriceShock: "Simulated oracle shock",
+    executeLiquidation: "Executed liquidation",
     burn: "Started collateral return",
     finalizeReverseHeader: "Checked return confirmation",
     updateReverseClient: "Confirmed collateral return",
@@ -855,7 +925,7 @@ function actionTitle(action) {
     replayForward: "Tested duplicate protection",
     verifyTimeoutAbsence: "Checked timeout protection",
     fullFlow: "Completed cross-chain lending flow",
-    deploySeed: "Connected account",
+    deploySeed: "Prepared demo account",
     resetSeeded: "Reset account baseline",
     refresh: "Refreshed account state",
   };
@@ -1122,6 +1192,10 @@ loanTabButtons.forEach((button) => {
   });
 });
 
+portalButtons.forEach((button) => {
+  button.addEventListener("click", () => setActivePortal(button.dataset.portalTab));
+});
+
 actionCards.forEach((card) => {
   card.addEventListener("click", () => setActiveActionCard(card.dataset.actionCard, { pinned: true }));
   card.addEventListener("focusin", () => setActiveActionCard(card.dataset.actionCard, { pinned: true }));
@@ -1159,6 +1233,8 @@ amountFillButtons.forEach((button) => {
       borrowAvailable: state.availableBorrow,
       debt: Math.min(state.debt, state.bankB),
       withdrawable: state.withdrawable,
+      shockTarget: numeric(currentStatus?.risk?.shockPreview?.collateralPrice),
+      maxLiquidationRepay: numeric(currentStatus?.risk?.liquidationPreview?.repayAmount),
     };
     if (target.id === "borrowAmount") setLoanTab("borrow");
     if (target.id === "repayAmount") setLoanTab("repay");
@@ -1182,6 +1258,12 @@ try {
   setFocusMode(sessionStorage.getItem(FOCUS_MODE_STORAGE_KEY) === "true");
 } catch {
   setFocusMode(false);
+}
+
+try {
+  setActivePortal(sessionStorage.getItem(PORTAL_STORAGE_KEY) || "borrower");
+} catch {
+  setActivePortal("borrower");
 }
 
 setLoanTab(currentLoanTab);

@@ -34,10 +34,7 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--ink);
-  background:
-    radial-gradient(circle at 12% -6%, rgba(34, 211, 238, 0.18), transparent 30%),
-    radial-gradient(circle at 86% 4%, rgba(29, 78, 216, 0.11), transparent 28%),
-    linear-gradient(180deg, var(--page) 0%, var(--surface-alt) 100%);
+  background: linear-gradient(180deg, var(--page) 0%, var(--surface-alt) 100%);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -435,17 +432,8 @@ a.button-secondary {
 }
 
 .primary-action-card::before {
+  display: none;
   content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  background: linear-gradient(120deg, transparent 18%, rgba(255, 255, 255, 0.7) 45%, transparent 70%);
-  opacity: 0;
-  transform: translateX(-100%);
-  transition:
-    opacity 180ms ease,
-    transform 620ms ease;
 }
 
 .primary-action-card:hover {
@@ -611,7 +599,7 @@ h3 {
   transform: scaleX(1);
 }
 
-.journey-step--wallet {
+.journey-step--account {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   border-color: rgba(29, 78, 216, 0.14);
@@ -714,6 +702,230 @@ h3 {
 
 .route-ribbon strong {
   color: #0369a1;
+}
+
+.portal-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(241, 245, 249, 0.82);
+}
+
+.portal-tab {
+  min-height: 40px;
+  padding: 0 12px;
+  border-color: transparent;
+  border-radius: 12px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.84rem;
+  font-weight: 850;
+}
+
+.portal-tab.is-active {
+  color: var(--blue);
+  border-color: rgba(29, 78, 216, 0.14);
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.07);
+}
+
+.portal-section {
+  margin-top: 22px;
+}
+
+body[data-active-portal="borrower"] .portal-section:not(.portal-borrower),
+body[data-active-portal="risk"] .portal-section:not(.portal-risk),
+body[data-active-portal="technical"] .portal-section:not(.portal-technical),
+body[data-active-portal="scenarios"] .portal-section:not(.portal-scenarios) {
+  display: none;
+}
+
+.portal-heading,
+.panel-head,
+.scenario-card-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.portal-heading {
+  margin-bottom: 14px;
+  padding: 0 4px;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid rgba(100, 116, 139, 0.18);
+  border-radius: 999px;
+  color: var(--faint);
+  background: rgba(100, 116, 139, 0.08);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.status-chip.is-safe,
+.status-chip.is-verified {
+  color: var(--green-dark);
+  border-color: rgba(16, 185, 129, 0.24);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.status-chip.is-watch,
+.status-chip.is-pending {
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.26);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.status-chip.is-risk,
+.status-chip.is-frozen {
+  color: #b91c1c;
+  border-color: rgba(239, 68, 68, 0.28);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.risk-admin-console {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.risk-panel,
+.proof-inspector,
+.scenario-card {
+  display: grid;
+  gap: 14px;
+}
+
+.risk-panel--action {
+  align-content: start;
+}
+
+.metric-grid,
+.shock-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.metric-grid--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.metric-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-grid div,
+.shock-grid div {
+  min-height: 72px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.88);
+}
+
+.metric-grid dt,
+.shock-grid span {
+  color: var(--faint);
+  font-size: 0.74rem;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.metric-grid dd,
+.shock-grid strong {
+  display: block;
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92rem;
+  font-weight: 780;
+  overflow-wrap: anywhere;
+}
+
+.shock-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.proof-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.proof-flow span {
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 840;
+}
+
+.proof-flow i {
+  width: 24px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.proof-copy {
+  color: var(--muted);
+  line-height: 1.58;
+}
+
+.proof-actions {
+  padding: 0;
+}
+
+.scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.scenario-card dl {
+  display: grid;
+  gap: 9px;
+}
+
+.scenario-card dl div {
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.88);
+}
+
+.scenario-card dt {
+  color: var(--blue);
+  font-size: 0.74rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.scenario-card dd {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.scenario-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .product-kpis {
@@ -1443,7 +1655,7 @@ h3 {
       rgba(29, 78, 216, 0.92) 100%
     );
   background-size: 220px 100%;
-  animation: meter-flow 7s linear infinite;
+  animation: none;
   transition: width 260ms ease;
 }
 
@@ -1457,9 +1669,7 @@ body[data-workflow-risk="risk"] .meter-track--position i {
       rgba(245, 158, 11, 0.9) 100%
     );
   background-size: 220px 100%;
-  animation:
-    meter-flow 6s linear infinite,
-    risk-breathe 2.4s ease-in-out infinite;
+  animation: none;
 }
 
 .market-card {
@@ -1509,32 +1719,13 @@ body[data-workflow-risk="risk"] .meter-track--position i {
 }
 
 .position-card::before {
+  display: none;
   content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  background:
-    radial-gradient(circle at 18% 0%, rgba(29, 78, 216, 0.08), transparent 34%),
-    radial-gradient(circle at 92% 6%, rgba(16, 185, 129, 0.08), transparent 36%);
-  opacity: 0.72;
-  transition: opacity 180ms ease;
 }
 
 .position-card::after {
+  display: none;
   content: "";
-  position: absolute;
-  inset: 1px;
-  z-index: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  background: linear-gradient(120deg, transparent 20%, rgba(255, 255, 255, 0.62), transparent 68%);
-  opacity: 0;
-  transform: translateX(-110%);
-  transition:
-    opacity 180ms ease,
-    transform 760ms ease;
 }
 
 .position-card:hover {
@@ -2195,6 +2386,9 @@ body.product-dashboard.is-focus-mode .drawer-panel--technical {
   .dashboard-command-bar,
   .summary-hero,
   .workflow-panel-head,
+  .portal-heading,
+  .panel-head,
+  .scenario-card-head,
   .verification-head,
   .verification-glance-head,
   .section-head--wide,
@@ -2221,6 +2415,12 @@ body.product-dashboard.is-focus-mode .drawer-panel--technical {
   }
 
   .product-kpis,
+  .portal-tabs,
+  .risk-admin-console,
+  .metric-grid--four,
+  .metric-grid--three,
+  .shock-grid,
+  .scenario-grid,
   .journey-steps,
   .dashboard-grid,
   .workflow-layout,
@@ -2239,7 +2439,7 @@ body.product-dashboard.is-focus-mode .drawer-panel--technical {
     font-size: 1.65rem;
   }
 
-  .journey-step--wallet {
+  .journey-step--account {
     grid-template-columns: auto minmax(0, 1fr);
   }
 

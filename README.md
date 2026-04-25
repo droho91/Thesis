@@ -91,7 +91,9 @@ Open:
 http://127.0.0.1:5173/
 ```
 
-Use `Prepare / Reuse` or `Fresh Reset`, then run the flow step by step or use `Run Full Flow`.
+Use `Prepare Demo Account` or `Fresh Reset`, then run the flow step by step or use `Run Guided Lifecycle`.
+
+For the thesis-defense walkthrough, including the Borrower Portal, Risk Admin liquidation console, Proof Inspector, scenario panel, and known limitations, see [DEMO_FLOW.md](./DEMO_FLOW.md).
 
 ## Run The Demo From Terminal
 

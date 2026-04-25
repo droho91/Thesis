@@ -215,6 +215,25 @@ contract LendingValuationTest is Test {
         assertEq(voucher.balanceOf(liquidator), 84 ether);
     }
 
+    function testHealthFactorDropsAfterOracleShockAndPreviewMatchesCloseFactor() public {
+        vm.startPrank(alice);
+        voucher.approve(address(lendingPool), 100 ether);
+        lendingPool.depositCollateral(100 ether);
+        lendingPool.borrow(60 ether);
+        vm.stopPrank();
+
+        assertEq(lendingPool.healthFactorBps(alice), 13_333);
+        assertFalse(lendingPool.isLiquidatable(alice));
+
+        oracle.setPrice(address(voucher), 0.5 ether);
+        oracle.setPrice(address(debtAsset), 1 ether);
+
+        assertEq(lendingPool.healthFactorBps(alice), 6_666);
+        assertTrue(lendingPool.isLiquidatable(alice));
+        assertEq(lendingPool.maxLiquidationRepay(alice), 30 ether);
+        assertEq(lendingPool.previewLiquidation(alice, 30 ether), 63 ether);
+    }
+
     function testLiquidationRecognizesBadDebtWhenCollateralIsExhausted() public {
         lendingPool.grantRole(lendingPool.LIQUIDATOR_ROLE(), liquidator);
 
@@ -238,6 +257,36 @@ contract LendingValuationTest is Test {
         assertEq(lendingPool.totalBadDebt(), 40 ether);
         assertEq(policy.accountDebtOutstanding(alice, address(debtAsset)), 0);
         assertEq(voucher.balanceOf(liquidator), 100 ether);
+    }
+
+    function testLiquidationUsesReservesBeforeRecordingSupplierLoss() public {
+        lendingPool.grantRole(lendingPool.LIQUIDATOR_ROLE(), liquidator);
+        lendingPool.setInterestRateModel(10_000, 8_000, 0, 0);
+
+        vm.startPrank(alice);
+        voucher.approve(address(lendingPool), 100 ether);
+        lendingPool.depositCollateral(100 ether);
+        lendingPool.borrow(80 ether);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 365 days);
+        lendingPool.accrueInterest();
+        assertEq(lendingPool.debtBalance(alice), 160 ether);
+        assertEq(lendingPool.totalReserves(), 8 ether);
+
+        oracle.setPrice(address(voucher), 0.01 ether);
+        oracle.setPrice(address(debtAsset), 1 ether);
+
+        debtAsset.mint(liquidator, 80 ether);
+        vm.startPrank(liquidator);
+        debtAsset.approve(address(lendingPool), 80 ether);
+        lendingPool.liquidate(alice, 80 ether);
+        vm.stopPrank();
+
+        assertEq(lendingPool.collateralBalance(alice), 0);
+        assertEq(lendingPool.debtBalance(alice), 0);
+        assertEq(lendingPool.totalReserves(), 0);
+        assertEq(lendingPool.totalBadDebt(), 72 ether);
     }
 
     function testLiquidationRejectsHealthyPositionUnauthorizedCallerAndCloseFactorExcess() public {

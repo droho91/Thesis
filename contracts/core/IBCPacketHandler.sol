@@ -91,6 +91,7 @@ contract IBCPacketHandler is AccessControl, IBCProofVerifier {
         );
 
         packetId = IBCPacketLib.packetIdCalldata(packet);
+        // The packet receipt is the replay guard: the same valid storage proof cannot mint or execute twice.
         require(!packetReceipts[packetId], "PACKET_ALREADY_RECEIVED");
         packetReceipts[packetId] = true;
         emit PacketReceiptWritten(packetId, packet.source.chainId, leafProof.trustedHeight);
@@ -185,6 +186,7 @@ contract IBCPacketHandler is AccessControl, IBCProofVerifier {
             receiptAbsenceProof.storageKey == IBCPacketHandlerSlots.packetReceipt(packetId),
             "RECEIPT_STORAGE_KEY_MISMATCH"
         );
+        // Timeout safety is proven by absence of the destination receipt under the trusted remote state root.
         require(_verifyTrustedEVMStorageAbsenceProof(receiptAbsenceProof), "INVALID_RECEIPT_ABSENCE_PROOF");
 
         packetTimeouts[packetId] = true;

@@ -71,6 +71,8 @@ function operationLabel(action) {
     repay: "Repay",
     topUpRepayCash: "Get demo bCASH",
     withdrawCollateral: "Withdraw collateral",
+    simulatePriceShock: "Simulate oracle shock",
+    executeLiquidation: "Execute liquidation",
     burn: "Burn voucher",
     finalizeReverseHeader: "Read Bank B Besu header",
     updateReverseClient: "Import Bank B header on Bank A",
@@ -215,6 +217,8 @@ function actionAmountEnv(request) {
   if (request.action === "borrow") return { DEMO_BORROW_AMOUNT: request.amount };
   if (request.action === "repay") return { DEMO_REPAY_AMOUNT: request.amount };
   if (request.action === "withdrawCollateral") return { DEMO_WITHDRAW_AMOUNT: request.amount };
+  if (request.action === "simulatePriceShock") return { DEMO_SHOCKED_VOUCHER_PRICE: request.amount };
+  if (request.action === "executeLiquidation") return { DEMO_LIQUIDATION_REPAY: request.amount };
   return {};
 }
 

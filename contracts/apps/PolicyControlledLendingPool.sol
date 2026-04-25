@@ -509,6 +509,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
             policyEngine.noteDebtWrittenOff(borrower, address(debtToken), principalOutstanding);
         }
 
+        // Bad debt is first absorbed by accumulated reserves; only the uncovered remainder is supplier loss.
         uint256 reservesUsed = debtWrittenOff > totalReserves ? totalReserves : debtWrittenOff;
         totalReserves -= reservesUsed;
         uint256 supplierLoss = debtWrittenOff - reservesUsed;
@@ -527,6 +528,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
             return (0, 0);
         }
 
+        // Borrowers hold debt shares, so interest updates the global borrow index instead of each account.
         uint256 rateBps = _currentBorrowRateBps(totalBorrows, totalCash());
         interestAccrued = totalBorrows * rateBps * elapsed / (BPS * SECONDS_PER_YEAR);
         reservesAccrued = interestAccrued * reserveFactorBps / BPS;
@@ -547,6 +549,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         uint256 debt = debtOf(user);
         if (debt == 0) return type(uint256).max;
 
+        // Health factor is permitted debt value divided by current debt value; below 10_000 bps is liquidatable.
         uint256 permittedDebtValue = _collateralValue(collateralBalance[user]) * collateralFactorBps / BPS;
         uint256 currentDebtValue = _debtValue(debt);
         if (currentDebtValue == 0) return type(uint256).max;
@@ -562,6 +565,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         uint256 debtPrice = _price(address(debtToken));
         uint256 collateralPrice = _price(address(collateralToken));
         uint256 repayValue = repayAmount * debtPrice / WAD;
+        // The liquidation bonus compensates the liquidator by increasing collateral seized for a given repayment.
         uint256 bonusValue = repayValue * (BPS + liquidationBonusBps) / BPS;
         return bonusValue * WAD / collateralPrice;
     }

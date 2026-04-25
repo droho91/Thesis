@@ -33,18 +33,33 @@
               <p class="eyebrow">Lending Dashboard</p>
               <h1>Cross-chain credit account</h1>
               <p class="summary-copy" id="workflowSummaryCopy">
-                Connect your account, bridge collateral, and borrow with a clear safety margin.
+                Prepare the demo account, bridge collateral, and borrow with a clear safety margin.
               </p>
             </div>
             <aside class="primary-action-card" aria-live="polite">
               <div>
                 <span class="eyebrow">Next step</span>
-                <h2 id="primaryActionTitle">Connect Wallet</h2>
+                <h2 id="primaryActionTitle">Prepare Demo Account</h2>
                 <p id="primaryActionDescription">Prepare your lending account before moving collateral.</p>
               </div>
-              <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Connect Wallet</button>
+              <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Prepare Demo Account</button>
               <small id="primaryActionHint">Later steps stay locked until your account is ready.</small>
             </aside>
+          </div>
+
+          <div class="portal-tabs" role="tablist" aria-label="Demo portals">
+            <button class="portal-tab is-active" data-portal-tab="borrower" role="tab" aria-selected="true" type="button">
+              Borrower Portal
+            </button>
+            <button class="portal-tab" data-portal-tab="risk" role="tab" aria-selected="false" type="button">
+              Risk Admin
+            </button>
+            <button class="portal-tab" data-portal-tab="technical" role="tab" aria-selected="false" type="button">
+              Technical / Thesis
+            </button>
+            <button class="portal-tab" data-portal-tab="scenarios" role="tab" aria-selected="false" type="button">
+              Scenarios
+            </button>
           </div>
 
           <div class="route-ribbon" aria-label="Cross-chain route">
@@ -79,10 +94,10 @@
           </div>
 
           <div class="journey-steps" aria-label="Borrower journey">
-            <button class="journey-step journey-step--wallet" data-workflow-step="connect" type="button">
+            <button class="journey-step journey-step--account" data-workflow-step="connect" type="button">
               <span class="journey-step-number">1</span>
               <div>
-                <strong>Connect Wallet</strong>
+                <strong>Prepare Account</strong>
                 <small id="workflowStepConnect">Prepare account</small>
               </div>
             </button>
@@ -118,12 +133,12 @@
         </div>
       </section>
 
-      <section class="workflow-layout" aria-label="Guided lending workflow">
+      <section class="workflow-layout portal-section portal-borrower" aria-label="Guided lending workflow">
         <section class="workflow-main" aria-label="Current workflow">
           <div class="workflow-panel-head">
             <div>
               <p class="eyebrow">Guided Workflow</p>
-              <h2 id="workflowPanelTitle">Connect your account</h2>
+              <h2 id="workflowPanelTitle">Prepare demo account</h2>
             </div>
             <span class="soft-status" id="workflowPanelStatus">Current step</span>
           </div>
@@ -131,9 +146,9 @@
           <article class="product-card action-card workflow-panel" data-workflow-panel="connect">
             <div class="empty-state-card">
               <span class="action-index">Step 1</span>
-              <h3>Connect Wallet</h3>
+              <h3>Prepare Demo Account</h3>
               <p id="connectPanelCopy">Prepare the borrower account to unlock bridge and lending actions.</p>
-              <button class="button-primary" id="deploySeed" type="button">Connect Wallet</button>
+              <button class="button-primary" id="deploySeed" type="button">Prepare Demo Account</button>
             </div>
           </article>
 
@@ -354,7 +369,7 @@
                   <div class="repay-funding-panel" id="repayFundingPanel">
                     <div class="repay-funding-grid">
                       <div>
-                        <span>Wallet balance</span>
+                        <span>Demo account cash</span>
                         <strong id="repayWalletBalance">-</strong>
                       </div>
                       <div>
@@ -367,7 +382,7 @@
                       </div>
                     </div>
                     <div class="repay-funding-action">
-                      <p id="repayFundingCopy">Your wallet balance will appear here before repayment.</p>
+                      <p id="repayFundingCopy">The demo account balance will appear here before repayment.</p>
                       <button class="button-primary-soft" id="topUpRepayCashButton" type="button" hidden>Get demo bCASH</button>
                     </div>
                   </div>
@@ -535,7 +550,7 @@
                     <dd id="bankABalance">-</dd>
                   </div>
                   <div>
-                    <dt>Wallet cash</dt>
+                    <dt>Demo cash</dt>
                     <dd id="bankBBalance">-</dd>
                   </div>
                   <div>
@@ -561,7 +576,7 @@
         </section>
       </section>
 
-      <section class="secondary-stack" aria-label="Supporting details">
+      <section class="secondary-stack portal-section portal-borrower" aria-label="Supporting details">
         <details class="secondary-disclosure">
           <summary>
             <span>Market details</span>
@@ -618,6 +633,447 @@
             </ul>
           </article>
         </details>
+      </section>
+
+      <section class="portal-section portal-risk" aria-label="Risk admin portal">
+        <div class="portal-heading">
+          <div>
+            <p class="eyebrow">Risk Admin Portal</p>
+            <h2>Liquidation console</h2>
+          </div>
+          <span class="status-chip" id="riskLiquidatableState">Waiting</span>
+        </div>
+
+        <div class="risk-admin-console">
+          <article class="product-card risk-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Live Position</p>
+                <h3>Oracle and account risk</h3>
+              </div>
+              <span class="soft-status" id="riskOracleLabel">Governed Demo Oracle</span>
+            </div>
+            <dl class="metric-grid metric-grid--four">
+              <div>
+                <dt>Collateral oracle price</dt>
+                <dd id="riskOracleCollateralPrice">-</dd>
+              </div>
+              <div>
+                <dt>Stable asset price</dt>
+                <dd id="riskOracleDebtPrice">-</dd>
+              </div>
+              <div>
+                <dt>Collateral value</dt>
+                <dd id="riskCollateralValue">-</dd>
+              </div>
+              <div>
+                <dt>Current debt</dt>
+                <dd id="riskDebt">-</dd>
+              </div>
+              <div>
+                <dt>Available borrow</dt>
+                <dd id="riskAvailableBorrow">-</dd>
+              </div>
+              <div>
+                <dt>Health factor</dt>
+                <dd id="riskHealthFactor">-</dd>
+              </div>
+              <div>
+                <dt>Liquidation threshold</dt>
+                <dd id="riskLiquidationThreshold">-</dd>
+              </div>
+              <div>
+                <dt>Close factor / bonus</dt>
+                <dd><span id="riskCloseFactor">-</span> / <span id="riskBonus">-</span></dd>
+              </div>
+            </dl>
+          </article>
+
+          <article class="product-card risk-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Market State</p>
+                <h3>Liquidity, reserves, and losses</h3>
+              </div>
+            </div>
+            <dl class="metric-grid metric-grid--four">
+              <div>
+                <dt>Utilization</dt>
+                <dd id="riskUtilization">-</dd>
+              </div>
+              <div>
+                <dt>Total liquidity</dt>
+                <dd id="riskTotalLiquidity">-</dd>
+              </div>
+              <div>
+                <dt>Total debt</dt>
+                <dd id="riskTotalDebt">-</dd>
+              </div>
+              <div>
+                <dt>Total reserves</dt>
+                <dd id="riskTotalReserves">-</dd>
+              </div>
+              <div>
+                <dt>Total bad debt</dt>
+                <dd id="riskTotalBadDebt">-</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article class="product-card risk-panel risk-panel--action">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Oracle Shock</p>
+                <h3>Price drop simulation</h3>
+              </div>
+              <span class="risk-chip" id="riskShockBadge">Waiting</span>
+            </div>
+            <div class="shock-grid">
+              <div>
+                <span>Current price</span>
+                <strong id="riskCurrentPriceInline">-</strong>
+              </div>
+              <div>
+                <span>Target shock price</span>
+                <strong id="riskShockTarget">-</strong>
+              </div>
+              <div>
+                <span>Health before</span>
+                <strong id="riskHealthBeforeShock">-</strong>
+              </div>
+              <div>
+                <span>Health after shock</span>
+                <strong id="riskHealthAfterShock">-</strong>
+              </div>
+            </div>
+            <label class="amount-field" for="shockPrice">
+              <span>Collateral price after shock</span>
+              <input id="shockPrice" type="number" min="0" step="0.0001" inputmode="decimal" autocomplete="off" placeholder="0.5" />
+              <em>bCASH/vA</em>
+            </label>
+            <p class="validation-message" id="shockValidation" aria-live="polite"></p>
+            <button class="button-danger transaction-submit" data-action="simulatePriceShock" data-amount-input="shockPrice" type="button">
+              Simulate Oracle Shock
+            </button>
+          </article>
+
+          <article class="product-card risk-panel risk-panel--action">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Liquidation Preview</p>
+                <h3>What the liquidator can do</h3>
+              </div>
+            </div>
+            <dl class="metric-grid metric-grid--three">
+              <div>
+                <dt>Repay amount</dt>
+                <dd id="riskPreviewRepay">-</dd>
+              </div>
+              <div>
+                <dt>Seized collateral</dt>
+                <dd id="riskPreviewSeized">-</dd>
+              </div>
+              <div>
+                <dt>Remaining debt</dt>
+                <dd id="riskPreviewRemainingDebt">-</dd>
+              </div>
+              <div>
+                <dt>Remaining collateral</dt>
+                <dd id="riskPreviewRemainingCollateral">-</dd>
+              </div>
+              <div>
+                <dt>Bad debt written off</dt>
+                <dd id="riskPreviewBadDebt">-</dd>
+              </div>
+              <div>
+                <dt>Reserve used</dt>
+                <dd id="riskPreviewReserveUsed">-</dd>
+              </div>
+              <div>
+                <dt>Supplier loss</dt>
+                <dd id="riskPreviewSupplierLoss">-</dd>
+              </div>
+            </dl>
+            <div class="transaction-panel">
+              <div class="transaction-panel-head">
+                <div>
+                  <strong>Liquidation repay</strong>
+                  <span>Max under close factor <b id="liquidationMaxRepayInline">-</b></span>
+                </div>
+                <button class="amount-fill" data-fill-target="liquidationRepayAmount" data-fill-source="maxLiquidationRepay" type="button">
+                  Max
+                </button>
+              </div>
+              <label class="amount-field" for="liquidationRepayAmount">
+                <span>Amount</span>
+                <input
+                  id="liquidationRepayAmount"
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="0.0"
+                />
+                <em>bCASH</em>
+              </label>
+              <p class="validation-message" id="liquidationValidation" aria-live="polite"></p>
+              <button
+                class="button-danger transaction-submit"
+                data-action="executeLiquidation"
+                data-amount-input="liquidationRepayAmount"
+                type="button"
+              >
+                Execute Liquidation
+              </button>
+            </div>
+          </article>
+
+          <article class="product-card risk-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">After Liquidation</p>
+                <h3>Recorded pool impact</h3>
+              </div>
+              <span class="soft-status" id="riskAfterTx">No liquidation yet</span>
+            </div>
+            <dl class="metric-grid metric-grid--four">
+              <div>
+                <dt>Debt after</dt>
+                <dd id="riskAfterDebt">-</dd>
+              </div>
+              <div>
+                <dt>Collateral after</dt>
+                <dd id="riskAfterCollateral">-</dd>
+              </div>
+              <div>
+                <dt>Reserves after</dt>
+                <dd id="riskAfterReserves">-</dd>
+              </div>
+              <div>
+                <dt>Bad debt after</dt>
+                <dd id="riskAfterBadDebt">-</dd>
+              </div>
+            </dl>
+          </article>
+        </div>
+      </section>
+
+      <section class="portal-section portal-technical" aria-label="Technical thesis portal">
+        <div class="portal-heading">
+          <div>
+            <p class="eyebrow">Technical / Thesis Portal</p>
+            <h2>Proof inspector</h2>
+          </div>
+          <span class="status-chip" id="proofStatusChip">Pending</span>
+        </div>
+
+        <article class="product-card proof-inspector">
+          <div class="proof-flow" aria-label="Proof flow">
+            <span>Bank A / Source Chain</span>
+            <i></i>
+            <span>Packet committed</span>
+            <i></i>
+            <span>Trusted Besu header imported</span>
+            <i></i>
+            <span>Storage proof verified</span>
+            <i></i>
+            <span>Voucher minted once</span>
+          </div>
+          <p class="proof-copy">
+            This panel shows what the proof proves: Bank B accepts the packet only when a storage proof matches a packet commitment under a trusted Bank A state root. The backend relays data, but it does not get to decide whether the voucher is minted.
+          </p>
+          <dl class="metric-grid metric-grid--three">
+            <div>
+              <dt>Model</dt>
+              <dd id="proofModel">-</dd>
+            </div>
+            <div>
+              <dt>Source chain</dt>
+              <dd id="proofSourceChain">-</dd>
+            </div>
+            <div>
+              <dt>Destination chain</dt>
+              <dd id="proofDestinationChain">-</dd>
+            </div>
+            <div>
+              <dt>Packet ID</dt>
+              <dd id="proofPacketId">-</dd>
+            </div>
+            <div>
+              <dt>Packet commitment</dt>
+              <dd id="proofCommitment">-</dd>
+            </div>
+            <div>
+              <dt>Trusted height</dt>
+              <dd id="proofTrustedHeight">-</dd>
+            </div>
+            <div>
+              <dt>Header hash</dt>
+              <dd id="proofHeaderHash">-</dd>
+            </div>
+            <div>
+              <dt>State root</dt>
+              <dd id="proofStateRoot">-</dd>
+            </div>
+            <div>
+              <dt>Storage slot / proof key</dt>
+              <dd id="proofStorageSlot">-</dd>
+            </div>
+            <div>
+              <dt>Proof verification</dt>
+              <dd id="proofVerificationResult">-</dd>
+            </div>
+            <div>
+              <dt>Receipt status</dt>
+              <dd id="proofReceiptStatus">-</dd>
+            </div>
+            <div>
+              <dt>Acknowledgement</dt>
+              <dd id="proofAckStatus">-</dd>
+            </div>
+            <div>
+              <dt>Timeout</dt>
+              <dd id="proofTimeoutStatus">-</dd>
+            </div>
+            <div>
+              <dt>Replay protection</dt>
+              <dd id="proofReplayStatus">-</dd>
+            </div>
+            <div>
+              <dt>Light client</dt>
+              <dd id="proofLightClientStatus">-</dd>
+            </div>
+            <div>
+              <dt>Freeze evidence</dt>
+              <dd id="proofFreezeEvidence">-</dd>
+            </div>
+            <div>
+              <dt>Recovery</dt>
+              <dd id="proofRecoveryStatus">-</dd>
+            </div>
+            <div>
+              <dt>Denied packet</dt>
+              <dd id="proofDeniedPacketId">-</dd>
+            </div>
+            <div>
+              <dt>Timeout proof key</dt>
+              <dd id="proofTimeoutKey">-</dd>
+            </div>
+          </dl>
+          <div class="action-buttons action-buttons--compact proof-actions">
+            <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Fetch Source Header</button>
+            <button class="button-secondary" data-action="updateForwardClient" type="button">Import Header on Bank B</button>
+            <button class="button-run" data-action="proveForwardMint" type="button">Verify Packet Proof</button>
+            <button class="button-danger" data-action="replayForward" type="button">Attempt Replay</button>
+            <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Proof Path</button>
+            <button class="button-danger" data-action="freezeClient" type="button">Freeze Client</button>
+            <button class="button-run" data-action="recoverClient" type="button">Recover Client</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="portal-section portal-scenarios" aria-label="Scenario demo panel">
+        <div class="portal-heading">
+          <div>
+            <p class="eyebrow">Scenario Demo Panel</p>
+            <h2>Defense-ready flows</h2>
+          </div>
+        </div>
+        <div class="scenario-grid">
+          <article class="product-card scenario-card">
+            <div class="scenario-card-head">
+              <h3>Healthy Borrow Scenario</h3>
+              <span class="status-chip" id="scenarioHealthyStatus">Waiting</span>
+            </div>
+            <dl>
+              <div><dt>Before</dt><dd>User has verified collateral and safe health.</dd></div>
+              <div><dt>Action</dt><dd>Borrow bCASH within available capacity.</dd></div>
+              <div><dt>After</dt><dd>Debt increases and health factor decreases but remains above threshold.</dd></div>
+              <div><dt>What this proves</dt><dd>Collateralized borrowing is risk-limited by policy and oracle valuation.</dd></div>
+            </dl>
+            <button class="button-run" data-action="borrow" type="button">Run Borrow Step</button>
+          </article>
+
+          <article class="product-card scenario-card">
+            <div class="scenario-card-head">
+              <h3>Repay and Withdraw Scenario</h3>
+              <span class="status-chip" id="scenarioRepayStatus">Waiting</span>
+            </div>
+            <dl>
+              <div><dt>Before</dt><dd>User has debt backed by voucher collateral.</dd></div>
+              <div><dt>Action</dt><dd>Repay debt, then withdraw collateral if the position remains healthy.</dd></div>
+              <div><dt>After</dt><dd>Debt falls and more collateral becomes withdrawable.</dd></div>
+              <div><dt>What this proves</dt><dd>The pool enforces health checks on withdrawals, not just borrowing.</dd></div>
+            </dl>
+            <div class="scenario-actions">
+              <button class="button-secondary" data-action="repay" type="button">Repay</button>
+              <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw</button>
+            </div>
+          </article>
+
+          <article class="product-card scenario-card">
+            <div class="scenario-card-head">
+              <h3>Price Shock and Liquidation</h3>
+              <span class="status-chip" id="scenarioLiquidationStatus">Waiting</span>
+            </div>
+            <dl>
+              <div><dt>Before</dt><dd>Health factor is above the liquidation threshold.</dd></div>
+              <div><dt>Action</dt><dd>Governed demo oracle drops collateral price, then authorized liquidator repays debt.</dd></div>
+              <div><dt>After</dt><dd>Collateral is seized; residual debt can become reserve-covered bad debt.</dd></div>
+              <div><dt>What this proves</dt><dd>The risk layer reacts to adverse price movement and records pool losses.</dd></div>
+            </dl>
+            <div class="scenario-actions">
+              <button class="button-danger" data-action="simulatePriceShock" type="button">Shock Price</button>
+              <button class="button-danger" data-action="executeLiquidation" type="button">Liquidate</button>
+            </div>
+          </article>
+
+          <article class="product-card scenario-card">
+            <div class="scenario-card-head">
+              <h3>Replay Attack Rejection</h3>
+              <span class="status-chip" id="scenarioReplayStatus">Waiting</span>
+            </div>
+            <dl>
+              <div><dt>Before</dt><dd>A packet has already been received on Bank B.</dd></div>
+              <div><dt>Action</dt><dd>Submit the same packet proof again.</dd></div>
+              <div><dt>After</dt><dd>Packet receipt prevents a second execution.</dd></div>
+              <div><dt>What this proves</dt><dd>Replay protection lives in contract state, not in the relayer.</dd></div>
+            </dl>
+            <button class="button-danger" data-action="replayForward" type="button">Attempt Replay</button>
+          </article>
+
+          <article class="product-card scenario-card">
+            <div class="scenario-card-head">
+              <h3>Timeout Refund Scenario</h3>
+              <span class="status-chip" id="scenarioTimeoutStatus">Script-backed</span>
+            </div>
+            <dl>
+              <div><dt>Before</dt><dd>A policy-denied packet has no destination receipt.</dd></div>
+              <div><dt>Action</dt><dd>Run the timeout absence proof path from the script-backed flow.</dd></div>
+              <div><dt>After</dt><dd>Source chain records timeout and refund state when the full flow runs.</dd></div>
+              <div><dt>What this proves</dt><dd>Timeouts rely on receipt absence under a trusted destination state root.</dd></div>
+            </dl>
+            <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Proof Path</button>
+          </article>
+
+          <article class="product-card scenario-card">
+            <div class="scenario-card-head">
+              <h3>Light Client Freeze and Recovery</h3>
+              <span class="status-chip" id="scenarioFreezeStatus">Waiting</span>
+            </div>
+            <dl>
+              <div><dt>Before</dt><dd>Bank B trusts a Bank A Besu header.</dd></div>
+              <div><dt>Action</dt><dd>Submit conflicting finalized-header evidence, then recover with a new anchor.</dd></div>
+              <div><dt>After</dt><dd>Client freezes, blocks proof execution, and returns active after recovery.</dd></div>
+              <div><dt>What this proves</dt><dd>The light client has safety controls for conflicting header evidence.</dd></div>
+            </dl>
+            <div class="scenario-actions">
+              <button class="button-danger" data-action="freezeClient" type="button">Freeze</button>
+              <button class="button-run" data-action="recoverClient" type="button">Recover</button>
+            </div>
+          </article>
+        </div>
       </section>
 
       <div class="surface-drawer" id="demoToolsDrawer" aria-hidden="true">
@@ -919,7 +1375,7 @@
               <span class="eyebrow">Latest runtime message</span>
               <h3 id="lastMessage">Ready</h3>
             </div>
-            <pre id="contractOutput">Start the Besu bank chains, then press Prepare Runtime.</pre>
+            <pre id="contractOutput">Start the Besu bank chains, then press Prepare Demo Account.</pre>
           </div>
         </aside>
       </div>

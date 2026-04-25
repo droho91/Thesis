@@ -70,6 +70,19 @@ function healthLabel(healthFactorBps) {
   return { label: `${percent.toFixed(1)}%`, status: "At Risk", percent };
 }
 
+function setStatusBadge(id, label, kind = "") {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.textContent = label ?? "-";
+  node.classList.remove("is-safe", "is-watch", "is-risk", "is-pending", "is-verified", "is-frozen");
+  if (kind) node.classList.add(`is-${kind}`);
+}
+
+function formatHealth(healthFactorBps) {
+  if (healthFactorBps == null || healthFactorBps === "") return "-";
+  return healthLabel(healthFactorBps).label;
+}
+
 function positionRiskGuidance(status, health) {
   const balances = status?.balances || {};
   const security = status?.security || {};
@@ -403,7 +416,130 @@ export function renderRoadmap(status) {
   );
 }
 
+function renderRiskAdmin(status) {
+  const risk = status?.risk || {};
+  const position = risk.position || {};
+  const market = risk.market || {};
+  const oracle = risk.oracle || {};
+  const policy = risk.policy || {};
+  const shock = risk.shockPreview || {};
+  const preview = risk.liquidationPreview || {};
+  const after = risk.afterLiquidation || {};
+
+  setText("riskOracleLabel", oracle.label || "Governed Demo Oracle");
+  setText("riskOracleCollateralPrice", oracle.collateralPrice ? `${compactAmount(oracle.collateralPrice)} bCASH / vA` : "-");
+  setText("riskOracleDebtPrice", oracle.debtPrice ? `${compactAmount(oracle.debtPrice)} bCASH / bCASH` : "-");
+  setText("riskCollateralValue", position.collateralValue ? `${compactAmount(position.collateralValue)} bCASH` : "-");
+  setText("riskDebt", position.debt ? `${compactAmount(position.debt)} bCASH` : "-");
+  setText("riskAvailableBorrow", position.availableBorrow ? `${compactAmount(position.availableBorrow)} bCASH` : "-");
+  setText("riskHealthFactor", formatHealth(position.healthFactorBps));
+  setText("riskLiquidationThreshold", bpsToPercent(policy.liquidationThresholdBps));
+  setText("riskCloseFactor", bpsToPercent(policy.liquidationCloseFactorBps));
+  setText("riskBonus", bpsToPercent(policy.liquidationBonusBps));
+  setText("riskUtilization", bpsToPercent(market.utilizationRateBps));
+  setText("riskTotalLiquidity", market.totalLiquidity ? `${compactAmount(market.totalLiquidity)} bCASH` : "-");
+  setText("riskTotalDebt", market.totalDebt ? `${compactAmount(market.totalDebt)} bCASH` : "-");
+  setText("riskTotalReserves", market.totalReserves ? `${compactAmount(market.totalReserves)} bCASH` : "-");
+  setText("riskTotalBadDebt", market.totalBadDebt ? `${compactAmount(market.totalBadDebt)} bCASH` : "-");
+  setText("riskCurrentPriceInline", oracle.collateralPrice ? `${compactAmount(oracle.collateralPrice)} bCASH / vA` : "-");
+  setText("riskShockTarget", shock.collateralPrice ? `${compactAmount(shock.collateralPrice)} bCASH / vA` : "-");
+  setText("riskHealthBeforeShock", formatHealth(position.healthFactorBps));
+  setText("riskHealthAfterShock", formatHealth(shock.healthFactorBps));
+  setStatusBadge(
+    "riskLiquidatableState",
+    position.liquidatable ? "Liquidatable" : "Not liquidatable",
+    position.liquidatable ? "risk" : "safe"
+  );
+
+  setText("riskPreviewRepay", preview.repayAmount ? `${compactAmount(preview.repayAmount)} bCASH` : "-");
+  setText("riskPreviewSeized", preview.seizedCollateral ? `${compactAmount(preview.seizedCollateral)} vA` : "-");
+  setText("riskPreviewRemainingDebt", preview.remainingDebt ? `${compactAmount(preview.remainingDebt)} bCASH` : "-");
+  setText("riskPreviewRemainingCollateral", preview.remainingCollateral ? `${compactAmount(preview.remainingCollateral)} vA` : "-");
+  setText("riskPreviewBadDebt", preview.badDebtWrittenOff ? `${compactAmount(preview.badDebtWrittenOff)} bCASH` : "-");
+  setText("riskPreviewReserveUsed", preview.reserveUsed ? `${compactAmount(preview.reserveUsed)} bCASH` : "-");
+  setText("riskPreviewSupplierLoss", preview.supplierLoss ? `${compactAmount(preview.supplierLoss)} bCASH` : "-");
+  setText("riskAfterDebt", after.debt ? `${compactAmount(after.debt)} bCASH` : "-");
+  setText("riskAfterCollateral", after.collateral ? `${compactAmount(after.collateral)} vA` : "-");
+  setText("riskAfterReserves", after.reserves ? `${compactAmount(after.reserves)} bCASH` : "-");
+  setText("riskAfterBadDebt", after.badDebt ? `${compactAmount(after.badDebt)} bCASH` : "-");
+  setText("riskAfterTx", after.latestTxHash ? compact(after.latestTxHash) : "No liquidation yet");
+}
+
+function renderProofInspector(status) {
+  const proof = status?.proofInspector || {};
+  const light = proof.lightClientStatus || {};
+  const evidence = proof.freezeEvidence;
+  const lifecycle = proof.lifecycleStatus || "Pending";
+  const lifecycleKind =
+    lifecycle === "Verified" || lifecycle === "Executed" || lifecycle === "Acknowledged" || lifecycle === "Recovered"
+      ? "verified"
+      : lifecycle === "Frozen" || lifecycle === "Rejected" || lifecycle === "Timed out"
+        ? "risk"
+        : "pending";
+
+  setStatusBadge("proofStatusChip", lifecycle, lifecycleKind);
+  setText("proofModel", proof.model || "Besu-first light-client verification model");
+  setText("proofSourceChain", proof.sourceChain || "-");
+  setText("proofDestinationChain", proof.destinationChain || "-");
+  setText("proofPacketId", compact(proof.packetId));
+  setText("proofCommitment", compact(proof.packetCommitment));
+  setText("proofTrustedHeight", proof.trustedHeight || "-");
+  setText("proofHeaderHash", compact(proof.headerHash));
+  setText("proofStateRoot", compact(proof.stateRoot));
+  setText("proofStorageSlot", compact(proof.storageSlot || proof.proofKey));
+  setText("proofVerificationResult", proof.proofVerificationResult || "Pending");
+  setText("proofReceiptStatus", proof.receiptStatus || "Pending");
+  setText("proofAckStatus", proof.acknowledgementStatus || "Pending");
+  setText("proofTimeoutStatus", proof.timeoutStatus || "Pending");
+  setText("proofReplayStatus", proof.replayProtectionStatus || "Pending");
+  setText(
+    "proofLightClientStatus",
+    light.bankAOnBankB || light.bankBOnBankA ? `${light.bankAOnBankB || "-"} / ${light.bankBOnBankA || "-"}` : "-"
+  );
+  setText("proofFreezeEvidence", evidence?.evidenceHash ? `${evidence.height || "-"} / ${compact(evidence.evidenceHash)}` : "none");
+  setText("proofRecoveryStatus", proof.recoveryStatus || "-");
+  setText("proofDeniedPacketId", compact(proof.deniedPacketId));
+  setText("proofTimeoutKey", compact(proof.timeoutStorageKey));
+}
+
+function renderScenarioState(status) {
+  const deployed = Boolean(status?.deployed);
+  const balances = status?.balances || {};
+  const risk = status?.risk || {};
+  const security = status?.security || {};
+  const trace = status?.trace || {};
+  const collateral = numeric(balances.poolCollateral);
+  const debt = numeric(balances.poolDebt);
+
+  setStatusBadge("scenarioHealthyStatus", deployed && collateral > 0 ? "Executable" : "Needs collateral", collateral > 0 ? "verified" : "pending");
+  setStatusBadge("scenarioRepayStatus", deployed && debt > 0 ? "Executable" : "Needs debt", debt > 0 ? "verified" : "pending");
+  setStatusBadge(
+    "scenarioLiquidationStatus",
+    risk.position?.liquidatable ? "Liquidatable" : debt > 0 ? "Shock first" : "Needs debt",
+    risk.position?.liquidatable ? "risk" : "pending"
+  );
+  setStatusBadge(
+    "scenarioReplayStatus",
+    security.replayBlocked ? "Rejected" : trace.forward?.packetId ? "Executable" : "Needs packet",
+    security.replayBlocked ? "verified" : "pending"
+  );
+  setStatusBadge(
+    "scenarioTimeoutStatus",
+    security.deniedTimedOut || trace.denied?.timedOut ? "Timed out" : "Script-backed",
+    security.deniedTimedOut || trace.denied?.timedOut ? "verified" : "pending"
+  );
+  setStatusBadge(
+    "scenarioFreezeStatus",
+    security.frozen ? "Frozen" : security.recovering ? "Recovering" : trace.misbehaviour?.recovered ? "Recovered" : "Executable",
+    security.frozen ? "risk" : trace.misbehaviour?.recovered ? "verified" : "pending"
+  );
+}
+
 export function renderStatus(status) {
+  renderRiskAdmin(status);
+  renderProofInspector(status);
+  renderScenarioState(status);
+
   if (!status?.deployed) {
     const runtime = status?.runtime || {};
     renderVisualStatus(status);
@@ -415,9 +551,9 @@ export function renderStatus(status) {
     deploymentStatus?.classList.add("is-offline");
     setText("borrowPreviewHealth", "-");
     setText("borrowPreviewLiquidity", "-");
-    setText("riskStatusText", "Connect account");
-    setText("positionRiskCopy", "Connect your account first; later lending actions stay locked until the route is ready.");
-    setText("positionRiskAction", "Connect Wallet to begin.");
+    setText("riskStatusText", "Prepare account");
+    setText("positionRiskCopy", "Prepare the local demo account first; later lending actions stay locked until the route is ready.");
+    setText("positionRiskAction", "Prepare Demo Account to begin.");
     setText("verificationSummaryStatus", "Pending");
     setText("verificationSummaryOracle", "Waiting");
     setText("verificationSummaryClient", "Waiting");
@@ -440,10 +576,10 @@ export function renderStatus(status) {
     activeOperation
       ? `Processing / ${activeOperation.label}`
       : status.stackVersion === "besu-light-client"
-      ? "Account connected / verified route ready"
+      ? "Demo account ready / verified route ready"
       : runtime.besuFirst
-      ? "Account connected / bank network ready"
-      : "Account connected"
+      ? "Demo account ready / bank network ready"
+      : "Demo account ready"
   );
   setText("bankABalance", `${status.balances.bankA} aBANK`);
   setText("escrowBalance", `${status.balances.escrow} aBANK`);
@@ -583,6 +719,9 @@ export function renderLatestActivity(activity) {
 }
 
 export function markControllerOffline() {
+  renderRiskAdmin(null);
+  renderProofInspector(null);
+  renderScenarioState(null);
   renderVisualStatus(null);
   setText("deploymentStatus", "Service offline");
   setText("riskStatusText", "Offline");

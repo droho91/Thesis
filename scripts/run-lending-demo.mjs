@@ -51,6 +51,7 @@ const BORROW_AMOUNT_CONFIGURED = process.env.DEMO_BORROW_AMOUNT != null;
 const BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW_AMOUNT || "140", 18);
 const REPAY_AMOUNT = process.env.DEMO_REPAY_AMOUNT ? ethers.parseUnits(process.env.DEMO_REPAY_AMOUNT, 18) : null;
 const WITHDRAW_AMOUNT = process.env.DEMO_WITHDRAW_AMOUNT ? ethers.parseUnits(process.env.DEMO_WITHDRAW_AMOUNT, 18) : null;
+const LIQUIDATION_REPAY_CONFIGURED = process.env.DEMO_LIQUIDATION_REPAY != null;
 const LIQUIDATION_REPAY = ethers.parseUnits(process.env.DEMO_LIQUIDATION_REPAY || "40", 18);
 const SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits(process.env.DEMO_SHOCKED_VOUCHER_PRICE || "0.5", 18);
 const DEMO_TX_GAS_LIMIT = BigInt(process.env.DEMO_TX_GAS_LIMIT || "8000000");
@@ -1440,7 +1441,13 @@ function isKnownReplay(error) {
   return text.includes("PACKET_ALREADY_RECEIVED") || text.includes("PACKET_ALREADY_ACKNOWLEDGED");
 }
 
-const SAFETY_MODE_ACTIONS = new Set(["freezeClient", "recoverClient", "topUpRepayCash"]);
+const SAFETY_MODE_ACTIONS = new Set([
+  "freezeClient",
+  "recoverClient",
+  "topUpRepayCash",
+  "simulatePriceShock",
+  "executeLiquidation",
+]);
 
 async function requireDemoSafetyModeAllows(action, ctx, sourceChainId) {
   if (SAFETY_MODE_ACTIONS.has(action)) return;
@@ -1749,6 +1756,119 @@ export async function runDemoStep(action, options = {}) {
     );
   }
 
+  if (action === "simulatePriceShock") {
+    setPhase("step-price-shock");
+    await ensureRiskSeeded(config, ctx);
+    const healthBeforeShock = await ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress);
+    await txStep("step shock voucher oracle price", () =>
+      ctx.B.oracle.setPrice(config.chains.B.voucherToken, SHOCKED_VOUCHER_PRICE_E18, txOptions())
+    );
+    const [healthAfterShock, liquidatableAfterShock, maxLiquidationRepay, previewSeized] = await Promise.all([
+      ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress),
+      ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress),
+      ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress),
+      (async () => {
+        const repay = await ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress);
+        return repay > 0n ? ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, repay) : 0n;
+      })(),
+    ]);
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        risk: {
+          shockedVoucherPriceE18: SHOCKED_VOUCHER_PRICE_E18.toString(),
+          healthBeforeShockBps: healthBeforeShock.toString(),
+          healthAfterShockBps: healthAfterShock.toString(),
+          liquidatableAfterShock,
+          maxLiquidationRepay: units(maxLiquidationRepay),
+          seizedCollateralPreview: units(previewSeized),
+        },
+      },
+      {
+        phase: "price-shocked",
+        label: "Simulated governed oracle price shock",
+        summary:
+          `Voucher collateral price is now ${units(SHOCKED_VOUCHER_PRICE_E18)} bCASH; ` +
+          `position is ${liquidatableAfterShock ? "liquidatable" : "not liquidatable"}.`,
+      }
+    );
+  }
+
+  if (action === "executeLiquidation") {
+    setPhase("step-liquidation");
+    const liquidatable = await ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress);
+    if (!liquidatable) {
+      throw new Error("Position is not liquidatable at the current oracle price. Run Simulate Oracle Shock first.");
+    }
+
+    const [debtBefore, collateralBefore, maxLiquidationRepay, reservesBefore, badDebtBefore] = await Promise.all([
+      ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress),
+      ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress),
+      ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress),
+      ctx.B.lendingPoolAdmin.totalReserves(),
+      ctx.B.lendingPoolAdmin.totalBadDebt(),
+    ]);
+    const repayAmount = LIQUIDATION_REPAY_CONFIGURED ? LIQUIDATION_REPAY : maxLiquidationRepay;
+    if (repayAmount === 0n) throw new Error("No debt is available for liquidation.");
+    if (repayAmount > maxLiquidationRepay) {
+      throw new Error(
+        `LIQUIDATION_CLOSE_FACTOR: max repay is ${units(maxLiquidationRepay)} bCASH, requested ${units(repayAmount)}.`
+      );
+    }
+    const previewSeizedRaw = await ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, repayAmount);
+    const previewSeized = previewSeizedRaw > collateralBefore ? collateralBefore : previewSeizedRaw;
+    const liquidatorBalance = await ctx.B.debtAdmin.balanceOf(ctx.liquidatorAddress);
+    if (liquidatorBalance < repayAmount) {
+      await txStep("step fund liquidator repay balance", () =>
+        ctx.B.debtAdmin.mint(ctx.liquidatorAddress, repayAmount - liquidatorBalance, txOptions())
+      );
+    }
+    await txStep("step approve liquidation repay", () =>
+      ctx.B.debtLiquidator.approve(config.chains.B.lendingPool, repayAmount, txOptions())
+    );
+    const liquidationReceipt = await txStep("step liquidate unhealthy position", () =>
+      ctx.B.lendingPoolLiquidator.liquidate(ctx.destinationUserAddress, repayAmount, txOptions())
+    );
+    const [debtAfter, collateralAfter, reservesAfter, badDebtAfter, liquidatorVoucherBalance] = await Promise.all([
+      ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress),
+      ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress),
+      ctx.B.lendingPoolAdmin.totalReserves(),
+      ctx.B.lendingPoolAdmin.totalBadDebt(),
+      ctx.B.voucherAdmin.balanceOf(ctx.liquidatorAddress),
+    ]);
+    const badDebtWrittenOff = debtBefore > repayAmount + debtAfter ? debtBefore - repayAmount - debtAfter : 0n;
+    const reservesUsed = reservesBefore > reservesAfter ? reservesBefore - reservesAfter : 0n;
+    const supplierLoss = badDebtAfter > badDebtBefore ? badDebtAfter - badDebtBefore : 0n;
+
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        risk: {
+          liquidationRepaid: units(repayAmount),
+          liquidationTxHash: liquidationReceipt.hash,
+          seizedCollateral: units(previewSeized),
+          collateralBeforeLiquidation: units(collateralBefore),
+          debtBeforeLiquidation: units(debtBefore),
+          debtAfterLiquidation: units(debtAfter),
+          collateralAfterLiquidation: units(collateralAfter),
+          badDebtWrittenOff: units(badDebtWrittenOff),
+          reservesUsed: units(reservesUsed),
+          supplierLoss: units(supplierLoss),
+          liquidatorVoucherBalance: units(liquidatorVoucherBalance),
+        },
+      },
+      {
+        phase: "liquidated",
+        label: "Executed authorized liquidation",
+        summary:
+          `Liquidator repaid ${units(repayAmount)} bCASH and seized ${units(previewSeized)} vA; ` +
+          `remaining debt is ${units(debtAfter)} bCASH.`,
+      }
+    );
+  }
+
   if (action === "repay") {
     setPhase("step-repay");
     const debt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
@@ -1807,7 +1927,7 @@ export async function runDemoStep(action, options = {}) {
       {
         phase: "repay-cash-funded",
         label: "Added demo bCASH for repayment",
-        summary: `Demo wallet now has ${units(updatedBalance)} bCASH available for repayment.`,
+        summary: `Demo account now has ${units(updatedBalance)} bCASH available for repayment.`,
       }
     );
   }
