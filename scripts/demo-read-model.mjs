@@ -212,9 +212,12 @@ export function normalizeTrace(trace) {
   return normalizeTraceForUi(trace);
 }
 
-function normalizeTraceForUi(trace) {
+export function normalizeTraceForUi(trace) {
   const risk = trace.risk || {};
   const security = trace.security || {};
+  const liquidated = Boolean(risk.liquidationTxHash || risk.liquidationRepaid);
+  const liquidationCollateral = liquidated ? risk.collateralAfterLiquidation : undefined;
+  const liquidationDebt = liquidated ? risk.debtAfterLiquidation : undefined;
   return {
     ...trace,
     forward: {
@@ -228,13 +231,13 @@ function normalizeTraceForUi(trace) {
     },
     lending: {
       collateralDeposited: Boolean(risk.collateralDeposited),
-      collateral: risk.collateralAfterLiquidation ?? risk.collateralDeposited,
+      collateral: risk.collateralAfterWithdrawal ?? liquidationCollateral ?? risk.collateralDeposited,
       borrowed: Boolean(risk.borrowed),
-      debt: risk.debtAfterLiquidation ?? risk.borrowed,
+      debt: risk.debtAfterRepay ?? liquidationDebt ?? risk.borrowed,
       repaid: Boolean(risk.repaid),
       collateralWithdrawn: Boolean(risk.collateralWithdrawn),
       completed: Boolean(risk.completed),
-      liquidated: Boolean(risk.liquidationRepaid || risk.debtAfterLiquidation),
+      liquidated,
     },
     reverse: {
       ...(trace.reverse || {}),

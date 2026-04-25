@@ -1874,8 +1874,10 @@ export async function runDemoStep(action, options = {}) {
   if (action === "repay") {
     setPhase("step-repay");
     const debt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
+    let repayAmount = 0n;
+    let repayTxHash = null;
     if (debt > 0n) {
-      const repayAmount = REPAY_AMOUNT ?? debt;
+      repayAmount = REPAY_AMOUNT ?? debt;
       if (repayAmount > debt) {
         throw new Error(`REPAY_LIMIT: outstanding debt is ${units(debt)} bCASH, requested ${units(repayAmount)}.`);
       }
@@ -1883,7 +1885,8 @@ export async function runDemoStep(action, options = {}) {
       if (debtBalance < repayAmount) throw new Error("Destination user does not have enough bCASH to repay the requested amount.");
       const debtUser = ctx.B.debtAdmin.connect(ctx.destinationUser);
       await txStep("step approve debt repayment", () => debtUser.approve(config.chains.B.lendingPool, repayAmount, txOptions()));
-      await txStep("step repay debt", () => ctx.B.lendingPoolUser.repay(repayAmount, txOptions()));
+      const repayReceipt = await txStep("step repay debt", () => ctx.B.lendingPoolUser.repay(repayAmount, txOptions()));
+      repayTxHash = repayReceipt.hash;
     }
     const remainingDebt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
     return writeTracePatch(
@@ -1892,8 +1895,10 @@ export async function runDemoStep(action, options = {}) {
       {
         risk: {
           repaid: REPAY_AMOUNT != null || remainingDebt === 0n,
+          debtBeforeRepay: units(debt),
+          repayAmount: units(repayAmount),
           debtAfterRepay: units(remainingDebt),
-          debtAfterLiquidation: units(remainingDebt),
+          repayTxHash,
         },
       },
       {
@@ -1937,12 +1942,17 @@ export async function runDemoStep(action, options = {}) {
   if (action === "withdrawCollateral") {
     setPhase("step-withdraw-collateral");
     const collateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
+    let withdrawAmount = 0n;
+    let withdrawTxHash = null;
     if (collateral > 0n) {
-      const withdrawAmount = WITHDRAW_AMOUNT ?? collateral;
+      withdrawAmount = WITHDRAW_AMOUNT ?? collateral;
       if (withdrawAmount > collateral) {
         throw new Error(`WITHDRAW_LIMIT: deposited collateral is ${units(collateral)} vA, requested ${units(withdrawAmount)}.`);
       }
-      await txStep("step withdraw collateral", () => ctx.B.lendingPoolUser.withdrawCollateral(withdrawAmount, txOptions()));
+      const withdrawReceipt = await txStep("step withdraw collateral", () =>
+        ctx.B.lendingPoolUser.withdrawCollateral(withdrawAmount, txOptions())
+      );
+      withdrawTxHash = withdrawReceipt.hash;
     }
     const remainingCollateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
     return writeTracePatch(
@@ -1952,8 +1962,10 @@ export async function runDemoStep(action, options = {}) {
         risk: {
           collateralWithdrawn: WITHDRAW_AMOUNT != null || remainingCollateral === 0n,
           completed: remainingCollateral === 0n,
+          collateralBeforeWithdrawal: units(collateral),
+          withdrawAmount: units(withdrawAmount),
           collateralAfterWithdrawal: units(remainingCollateral),
-          collateralAfterLiquidation: units(remainingCollateral),
+          withdrawTxHash,
         },
       },
       {

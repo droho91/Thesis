@@ -31,6 +31,8 @@ Use **Prepare Demo Account** to reuse an already seeded local runtime. Use **Fre
 
 The Borrower Portal shows collateral value, current debt, available borrow, health factor, position guidance, and recent activity.
 
+Repay and withdraw actions update their own trace fields and the live position view. They do not overwrite the liquidation-specific “After Liquidation” snapshot.
+
 ## Admin liquidation flow
 
 Open **Risk Admin**.
@@ -43,6 +45,10 @@ Open **Risk Admin**.
 6. Review the after-liquidation state and transaction hash. This section stays blank until **Execute Liquidation** has actually produced a liquidation transaction.
 
 The oracle is intentionally labeled as a governed demo oracle. It is manual and demo-only, not a decentralized market oracle.
+
+The liquidation preview uses the current on-chain oracle state. Run **Simulate Oracle Shock** before expecting executable liquidation values to change. A higher oracle price update is allowed because this is a governed oracle update, but it is not a downside shock.
+
+“After Liquidation” is a liquidation-specific snapshot. Later repay or withdraw actions should change the live position and their own trace fields, not the liquidation snapshot.
 
 The collateral factor / max LTV is different from the liquidation trigger. The collateral factor limits how much can be borrowed against collateral. Liquidation is triggered when health factor falls below 100%, meaning `healthFactorBps < 10000`.
 

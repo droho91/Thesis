@@ -626,7 +626,7 @@ function validateAmountAction(action, status = currentStatus) {
   if (action === "simulatePriceShock") {
     const currentPrice = numeric(risk.oracle?.collateralPrice);
     if (currentPrice > 0 && amount >= currentPrice) {
-      return { ok: true, amount, message: "This updates the governed demo oracle; choose a lower value to show stress." };
+      return { ok: true, amount, message: "This is an oracle update, not a downside shock.", severity: "warning" };
     }
     return { ok: true, amount, message: "Oracle shock is ready." };
   }
@@ -819,7 +819,7 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
     setValidation(
       field,
       validation.message || (unhealthyWithdrawal ? "Projected health is at risk after withdrawal." : ""),
-      validation.ok && unhealthyWithdrawal ? "warning" : validation.ok || !touched ? "" : "error"
+      validation.severity || (validation.ok && unhealthyWithdrawal ? "warning" : validation.ok || !touched ? "" : "error")
     );
   }
 
