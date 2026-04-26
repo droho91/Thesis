@@ -238,6 +238,7 @@ function financialState(status) {
   const collateral = numeric(balances.poolCollateral);
   const debt = numeric(balances.poolDebt);
   const maxBorrow = numeric(market.maxBorrow);
+  const liquidationThresholdValue = numeric(market.liquidationThresholdValue || status?.risk?.position?.liquidationThresholdValue);
   const withdrawable =
     collateral <= 0
       ? 0
@@ -256,18 +257,20 @@ function financialState(status) {
     debt,
     poolCash: numeric(balances.poolCash),
     maxBorrow,
+    liquidationThresholdValue,
     availableBorrow: numeric(market.availableToBorrow),
     withdrawable,
   };
 }
 
-function projectedHealth(maxBorrow, debt) {
+function projectedHealth(liquidationThresholdValue, debt) {
   if (debt <= 0) return { label: "No debt", status: "Safe", percent: null };
-  const percent = maxBorrow > 0 ? (maxBorrow / debt) * 100 : 0;
+  const percent = liquidationThresholdValue > 0 ? (liquidationThresholdValue / debt) * 100 : 0;
   const label = `${percent >= 10 ? percent.toFixed(1) : percent.toFixed(2)}%`;
   if (percent >= 150) return { label, status: "Safe", percent };
-  if (percent >= 110) return { label, status: "Watch", percent };
-  return { label, status: "At Risk", percent };
+  if (percent >= 120) return { label, status: "Watch", percent };
+  if (percent >= 100) return { label, status: "Danger", percent };
+  return { label, status: "Liquidatable", percent };
 }
 
 function healthForShockPrice(status, shockPrice) {
@@ -275,10 +278,10 @@ function healthForShockPrice(status, shockPrice) {
   const risk = status?.risk || {};
   if (state.debt <= 0) return { label: "No debt", status: "Safe", percent: null };
   const debtPrice = numeric(risk.oracle?.debtPrice) || 1;
-  const collateralFactor = numeric(risk.policy?.collateralFactorBps) || 0;
+  const liquidationThreshold = numeric(risk.policy?.liquidationThresholdBps) || numeric(risk.policy?.collateralFactorBps) || 0;
   const haircut = numeric(risk.policy?.collateralHaircutBps) || 10_000;
   const collateralValue = state.collateral * shockPrice * (haircut / 10_000);
-  const permittedDebtValue = collateralValue * (collateralFactor / 10_000);
+  const permittedDebtValue = collateralValue * (liquidationThreshold / 10_000);
   const debtValue = state.debt * debtPrice;
   const healthBps = debtValue > 0 ? (permittedDebtValue / debtValue) * 10_000 : Number.MAX_SAFE_INTEGER;
   return healthFromBps(String(Math.floor(healthBps)));
@@ -304,8 +307,9 @@ function healthFromBps(rawValue) {
   const percent = Number(raw) / 100;
   if (!Number.isFinite(percent)) return { label: "-", status: "Waiting", percent: null };
   if (percent >= 150) return { label: `${percent.toFixed(1)}%`, status: "Safe", percent };
-  if (percent >= 110) return { label: `${percent.toFixed(1)}%`, status: "Watch", percent };
-  return { label: `${percent.toFixed(1)}%`, status: "At Risk", percent };
+  if (percent >= 120) return { label: `${percent.toFixed(1)}%`, status: "Watch", percent };
+  if (percent >= 100) return { label: `${percent.toFixed(1)}%`, status: "Danger", percent };
+  return { label: `${percent.toFixed(1)}%`, status: "Liquidatable", percent };
 }
 
 function bridgeProofAction(status) {
@@ -360,7 +364,7 @@ function workflowModel(status) {
   const voucherReady = state.voucher > 0;
   const collateralActive = state.collateral > 0;
   const debtActive = state.debt > 0;
-  const elevatedRisk = debtActive && (health.status === "At Risk" || health.status === "Watch");
+  const elevatedRisk = debtActive && ["Watch", "Danger", "Liquidatable"].includes(health.status);
   const locked = safetyLocked(status);
 
   const steps = {
@@ -440,7 +444,7 @@ function workflowModel(status) {
       step: "bridge",
       title: "Bridge in progress",
       status: "In progress",
-      summary: "Your collateral transfer is being verified. Continue once to make it usable for borrowing.",
+      summary: "Your collateral transfer is being checked. Continue once to make it usable for borrowing.",
       cta: { type: "action", action: bridgeProofAction(status), label: "Continue Bridge" },
       description: "Complete verification so the transferred collateral becomes available.",
       hint: "This may take more than one confirmation step depending on the current bridge state.",
@@ -603,7 +607,7 @@ function setRiskBadge(id, health) {
   node.textContent = health.status;
   node.classList.toggle("is-safe", health.status === "Safe");
   node.classList.toggle("is-watch", health.status === "Watch");
-  node.classList.toggle("is-risk", health.status === "At Risk");
+  node.classList.toggle("is-risk", health.status === "Danger" || health.status === "Liquidatable");
 }
 
 function setValidation(id, message = "", severity = "") {
@@ -648,6 +652,10 @@ function validateAmountAction(action, status = currentStatus) {
     if (state.collateral <= 0) return { ok: false, amount, message: "Activate collateral before borrowing." };
     if (amount > state.availableBorrow) return { ok: false, amount, message: "Amount exceeds available borrowing power." };
     if (amount > state.poolCash) return { ok: false, amount, message: "Amount exceeds available market liquidity." };
+    const projected = projectedHealth(state.liquidationThresholdValue, state.debt + amount);
+    if (projected.status === "Danger") {
+      return { ok: true, amount, message: "Borrow is allowed, but health factor will be close to liquidation.", severity: "warning" };
+    }
     return { ok: true, amount, message: "Borrow amount is within current risk limits." };
   }
 
@@ -669,6 +677,13 @@ function validateAmountAction(action, status = currentStatus) {
     if (state.collateral <= 0) return { ok: false, amount, message: "There is no deposited collateral to withdraw." };
     if (amount > state.collateral) return { ok: false, amount, message: "Amount exceeds deposited collateral." };
     if (amount > state.withdrawable) return { ok: false, amount, message: "Withdrawal would make the position unhealthy." };
+    const remainingCollateral = Math.max(0, state.collateral - amount);
+    const projectedThreshold =
+      state.collateral > 0 ? (state.liquidationThresholdValue * remainingCollateral) / state.collateral : 0;
+    const projected = projectedHealth(projectedThreshold, state.debt);
+    if (projected.status === "Danger") {
+      return { ok: true, amount, message: "Withdrawal is allowed, but health factor will be close to liquidation.", severity: "warning" };
+    }
     return { ok: true, amount, message: "Withdrawal keeps your account within current limits." };
   }
 
@@ -727,7 +742,8 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
 
   const borrowAmount = inputValue("borrowAmount");
   const projectedBorrowDebt = state.debt + borrowAmount;
-  const borrowHealth = borrowAmount > 0 ? projectedHealth(state.maxBorrow, projectedBorrowDebt) : { label: "-", status: "Waiting" };
+  const borrowHealth =
+    borrowAmount > 0 ? projectedHealth(state.liquidationThresholdValue, projectedBorrowDebt) : { label: "-", status: "Waiting" };
   setText("borrowDecisionAmount", formatAmount(borrowAmount, "bCASH"));
   setText("borrowProjectedDebt", formatAmount(projectedBorrowDebt, "bCASH"));
   setText("borrowProjectedAvailable", formatAmount(Math.max(0, state.maxBorrow - projectedBorrowDebt), "bCASH"));
@@ -736,7 +752,8 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
 
   const repayAmount = inputValue("repayAmount");
   const projectedRepayDebt = Math.max(0, state.debt - repayAmount);
-  const repayHealth = repayAmount > 0 ? projectedHealth(state.maxBorrow, projectedRepayDebt) : { label: "-", status: "Waiting" };
+  const repayHealth =
+    repayAmount > 0 ? projectedHealth(state.liquidationThresholdValue, projectedRepayDebt) : { label: "-", status: "Waiting" };
   const repayableNow = Math.min(state.debt, state.bankB);
   const repayShortfall = Math.max(0, state.debt - state.bankB);
   const needsDemoCash = state.deployed && state.debt > 0 && repayShortfall > 0.000001;
@@ -765,8 +782,10 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   const withdrawAmount = inputValue("withdrawAmount");
   const remainingCollateral = Math.max(0, state.collateral - withdrawAmount);
   const projectedWithdrawMax = state.collateral > 0 ? (state.maxBorrow * remainingCollateral) / state.collateral : 0;
+  const projectedWithdrawThreshold =
+    state.collateral > 0 ? (state.liquidationThresholdValue * remainingCollateral) / state.collateral : 0;
   const withdrawHealth =
-    withdrawAmount > 0 ? projectedHealth(projectedWithdrawMax, state.debt) : { label: "-", status: "Waiting" };
+    withdrawAmount > 0 ? projectedHealth(projectedWithdrawThreshold, state.debt) : { label: "-", status: "Waiting" };
   setText("withdrawDecisionAmount", formatAmount(withdrawAmount, "vA"));
   setText("withdrawProjectedCollateral", formatAmount(remainingCollateral, "vA"));
   setText("withdrawProjectedHealth", withdrawHealth.label);
@@ -815,7 +834,8 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   })) {
     const validation = validateAmountAction(action, status);
     const touched = document.getElementById(AMOUNT_ACTIONS[action]?.inputId)?.dataset.dirty === "true";
-    const unhealthyWithdrawal = action === "withdrawCollateral" && withdrawAmount > 0 && withdrawHealth.status === "At Risk";
+    const unhealthyWithdrawal =
+      action === "withdrawCollateral" && withdrawAmount > 0 && ["Danger", "Liquidatable"].includes(withdrawHealth.status);
     setValidation(
       field,
       validation.message || (unhealthyWithdrawal ? "Projected health is at risk after withdrawal." : ""),
@@ -917,7 +937,7 @@ const FACT_LABELS = {
   reversePacketId: "Reverse packet id",
   safetyState: "Light-client safety state",
   replayBlocked: "Replay protection",
-  timeoutAbsence: "Timeout absence proof",
+  timeoutAbsence: "Timeout absence model",
   misbehaviour: "Conflicting-header evidence",
 };
 
@@ -954,7 +974,7 @@ function actionTitle(action) {
     freezeClient: "Entered safety mode",
     recoverClient: "Recovered account safety",
     replayForward: "Tested duplicate protection",
-    verifyTimeoutAbsence: "Checked timeout protection",
+    verifyTimeoutAbsence: "Marked timeout visualization",
     fullFlow: "Completed cross-chain lending flow",
     deploySeed: "Prepared demo account",
     resetSeeded: "Reset account baseline",

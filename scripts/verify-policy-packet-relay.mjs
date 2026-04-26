@@ -100,6 +100,12 @@ function bytes32MappingSlot(key, slot) {
   return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["bytes32", "uint256"], [key, slot]));
 }
 
+function previewField(preview, key, index, fallback = 0n) {
+  const value = preview?.[key] ?? preview?.[index];
+  if (value == null) return fallback;
+  return typeof value === "bigint" ? value : BigInt(value);
+}
+
 function rlpWord(word) {
   const bytes = ethers.getBytes(word);
   let firstNonZero = 0;
@@ -362,6 +368,7 @@ async function main() {
     voucherBAddress,
     debtAssetBAddress,
     policyBAddress,
+    7_000,
     8_000,
   ]);
   const lendingPoolBAddress = await lendingPoolB.getAddress();
@@ -559,7 +566,7 @@ async function main() {
   await (await voucherB.approve(lendingPoolBAddress, 100n)).wait();
   await (await lendingPoolB.depositCollateral(100n)).wait();
   const maxBorrowBefore = await readView("maxBorrow", () => lendingPoolB.maxBorrow(destinationUser));
-  const borrowAmount = 140n;
+  const borrowAmount = 120n;
   await (await lendingPoolB.borrow(borrowAmount)).wait();
   const healthBeforeShock = await readView("healthFactorBps before shock", () =>
     lendingPoolB.healthFactorBps(destinationUser)
@@ -582,13 +589,15 @@ async function main() {
     lendingPoolB.maxLiquidationRepay(destinationUser)
   );
   const liquidationRepay = 40n;
-  const seizedCollateralPreview = await readView("previewLiquidation", () =>
+  const liquidationPreview = await readView("previewLiquidation", () =>
     lendingPoolB.previewLiquidation(destinationUser, liquidationRepay)
   );
-  await (await debtAssetB.mint(destinationLiquidator, liquidationRepay)).wait();
+  const actualLiquidationRepay = previewField(liquidationPreview, "actualRepayAmount", 1);
+  const seizedCollateralPreview = previewField(liquidationPreview, "seizedCollateral", 2);
+  await (await debtAssetB.mint(destinationLiquidator, actualLiquidationRepay)).wait();
   const lendingPoolForLiquidator = lendingPoolB.connect(destinationLiquidatorSigner);
   const debtForLiquidator = debtAssetB.connect(destinationLiquidatorSigner);
-  await (await debtForLiquidator.approve(lendingPoolBAddress, liquidationRepay)).wait();
+  await (await debtForLiquidator.approve(lendingPoolBAddress, actualLiquidationRepay)).wait();
   await (await lendingPoolForLiquidator.liquidate(destinationUser, liquidationRepay)).wait();
   const debtAfterLiquidation = await readView("debtBalance after liquidation", () =>
     lendingPoolB.debtBalance(destinationUser)
@@ -738,7 +747,8 @@ async function main() {
       healthAfterShockBps: healthAfterShock.toString(),
       liquidatableAfterShock,
       maxLiquidationRepay: maxLiquidationRepay.toString(),
-      liquidationRepaid: liquidationRepay.toString(),
+      liquidationRepaid: actualLiquidationRepay.toString(),
+      liquidationRequestedRepay: liquidationRepay.toString(),
       seizedCollateral: seizedCollateralPreview.toString(),
       debtAfterLiquidation: debtAfterLiquidation.toString(),
       collateralAfterLiquidation: collateralAfterLiquidation.toString(),
@@ -765,7 +775,7 @@ async function main() {
   console.log(`Opened proof-checked channel ${ethers.decodeBytes32String(SOURCE_CHANNEL_ID)} <-> ${ethers.decodeBytes32String(DESTINATION_CHANNEL_ID)}`);
   console.log(`Approved packet ${approvedPacketId} minted ${voucherBalanceApproved} voucher units on chain B`);
   console.log(
-    `Risk leg: deposited 100 voucher units, borrowed ${debtAfterBorrow} bCASH, shocked voucher price, liquidated ${liquidationRepay} debt for ${seizedCollateralPreview} voucher units`
+    `Risk leg: deposited 100 voucher units, borrowed ${debtAfterBorrow} bCASH, shocked voucher price, liquidated ${actualLiquidationRepay} debt for ${seizedCollateralPreview} voucher units`
   );
   console.log(`Denied packet ${deniedPacketId} reverted on chain B with: ${deniedReason}`);
   console.log(`Timed out denied packet on chain A and observed refund=${deniedRefundFlag}`);

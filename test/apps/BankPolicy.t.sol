@@ -11,6 +11,8 @@ import {PolicyControlledLendingPool} from "../../contracts/apps/PolicyControlled
 
 contract BankPolicyTest is Test {
     uint256 internal constant SOURCE_CHAIN_A = 41001;
+    uint256 internal constant COLLATERAL_FACTOR_BPS = 7_000;
+    uint256 internal constant LIQUIDATION_THRESHOLD_BPS = 8_000;
 
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
@@ -33,8 +35,14 @@ contract BankPolicyTest is Test {
 
         voucher = new PolicyControlledVoucherToken(address(this), address(policy), "Voucher", "vCAN");
         escrow = new PolicyControlledEscrowVault(address(this), address(canonicalAsset), address(policy));
-        lendingPool =
-            new PolicyControlledLendingPool(address(this), address(voucher), address(debtAsset), address(policy), 8_000);
+        lendingPool = new PolicyControlledLendingPool(
+            address(this),
+            address(voucher),
+            address(debtAsset),
+            address(policy),
+            COLLATERAL_FACTOR_BPS,
+            LIQUIDATION_THRESHOLD_BPS
+        );
 
         voucher.grantApp(address(this));
         voucher.bindCanonicalAsset(address(canonicalAsset));

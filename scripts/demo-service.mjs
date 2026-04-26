@@ -79,7 +79,7 @@ function operationLabel(action) {
     proveReverseUnlock: "Verify reverse packet proof",
     freezeClient: "Freeze light client",
     recoverClient: "Recover light client",
-    verifyTimeoutAbsence: "Verify timeout absence",
+    verifyTimeoutAbsence: "Mark timeout visualization",
   };
   return labels[action] || `demo action ${action || "unknown"}`;
 }

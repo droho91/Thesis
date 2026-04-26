@@ -215,7 +215,7 @@
             <div class="collateral-use-row collateral-use-row--focus">
               <div>
                 <strong>Available collateral</strong>
-                <span id="depositCollateralHint">Waiting for verified collateral.</span>
+                <span id="depositCollateralHint">Waiting for voucher collateral.</span>
               </div>
               <button class="button-primary" data-action="depositCollateral" type="button">Use as Collateral</button>
             </div>
@@ -566,6 +566,10 @@
                     <dd id="maxBorrow">-</dd>
                   </div>
                   <div>
+                    <dt>Liquidation threshold value</dt>
+                    <dd id="borrowerLiquidationThreshold">-</dd>
+                  </div>
+                  <div>
                     <dt>Debt shares</dt>
                     <dd id="borrowerDebtShares">-</dd>
                   </div>
@@ -675,12 +679,24 @@
                 <dd id="riskAvailableBorrow">-</dd>
               </div>
               <div>
+                <dt>Borrow capacity</dt>
+                <dd id="riskBorrowCapacity">-</dd>
+              </div>
+              <div>
+                <dt>Liquidation threshold value</dt>
+                <dd id="riskLiquidationThresholdValue">-</dd>
+              </div>
+              <div>
                 <dt>Health factor</dt>
                 <dd id="riskHealthFactor">-</dd>
               </div>
               <div>
                 <dt>Collateral factor / Max LTV</dt>
                 <dd id="riskCollateralFactor">-</dd>
+              </div>
+              <div>
+                <dt>Liquidation threshold</dt>
+                <dd id="riskLiquidationThreshold">-</dd>
               </div>
               <div>
                 <dt>Liquidation trigger</dt>
@@ -771,7 +787,11 @@
             <p class="validation-message">Liquidation Preview uses the current on-chain oracle price. Run Simulate Oracle Shock first to update executable liquidation values.</p>
             <dl class="metric-grid metric-grid--three">
               <div>
-                <dt>Repay amount</dt>
+                <dt>Requested repay</dt>
+                <dd id="riskPreviewRequestedRepay">-</dd>
+              </div>
+              <div>
+                <dt>Actual repay</dt>
                 <dd id="riskPreviewRepay">-</dd>
               </div>
               <div>
@@ -797,6 +817,10 @@
               <div>
                 <dt>Supplier loss</dt>
                 <dd id="riskPreviewSupplierLoss">-</dd>
+              </div>
+              <div>
+                <dt>Executable</dt>
+                <dd id="riskPreviewExecutable">-</dd>
               </div>
             </dl>
             <div class="transaction-panel">
@@ -991,7 +1015,7 @@
             <button class="button-secondary" data-action="updateForwardClient" type="button">Import Header on Bank B</button>
             <button class="button-run" data-action="proveForwardMint" type="button">Verify Packet Proof</button>
             <button class="button-danger" data-action="replayForward" type="button">Attempt Replay</button>
-            <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Proof Path</button>
+            <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Model</button>
             <button class="button-danger" data-action="freezeClient" type="button">Freeze Client</button>
             <button class="button-run" data-action="recoverClient" type="button">Recover Client</button>
           </div>
@@ -1017,7 +1041,7 @@
               <div><span>After</span><strong id="scenarioHealthyAfter">Debt - / health -</strong></div>
             </div>
             <dl>
-              <div><dt>Before</dt><dd>User has verified collateral and safe health.</dd></div>
+              <div><dt>Before</dt><dd>User has voucher collateral and safe health.</dd></div>
               <div><dt>Action</dt><dd>Borrow bCASH within available capacity.</dd></div>
               <div><dt>After</dt><dd>Debt increases and health factor decreases but remains above threshold.</dd></div>
               <div><dt>What this proves</dt><dd>Collateralized borrowing is risk-limited by policy and oracle valuation.</dd></div>
@@ -1095,16 +1119,16 @@
             </div>
             <div class="scenario-live">
               <div><span>Before</span><strong id="scenarioTimeoutBefore">Needs denied packet</strong></div>
-              <div><span>Action</span><strong id="scenarioTimeoutAction">Verify receipt absence</strong></div>
+              <div><span>Action</span><strong id="scenarioTimeoutAction">Show receipt absence model</strong></div>
               <div><span>After</span><strong id="scenarioTimeoutAfter">Timeout pending</strong></div>
             </div>
             <dl>
               <div><dt>Before</dt><dd>A policy-denied packet has no destination receipt.</dd></div>
-              <div><dt>Action</dt><dd>Run the timeout absence proof path from the script-backed flow.</dd></div>
+              <div><dt>Action</dt><dd>Show the timeout absence model in the UI; the full guided script executes the on-chain timeout path.</dd></div>
               <div><dt>After</dt><dd>Source chain records timeout and refund state when the full flow runs.</dd></div>
               <div><dt>What this proves</dt><dd>Timeouts rely on receipt absence under a trusted destination state root.</dd></div>
             </dl>
-            <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Proof Path</button>
+            <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Model</button>
           </article>
 
           <article class="product-card scenario-card">
@@ -1400,7 +1424,7 @@
                 <button class="button-danger" data-action="freezeClient" type="button">Submit Conflicting Header</button>
                 <button class="button-run" data-action="recoverClient" type="button">Recover Light Client</button>
                 <button class="button-danger" data-action="replayForward" type="button">Test Replay Protection</button>
-                <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Verify Timeout Absence</button>
+                <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Model</button>
               </div>
             </details>
           </article>

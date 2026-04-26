@@ -22,7 +22,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
     uint256 public constant BPS = 10_000;
     uint256 public constant WAD = 1e18;
     uint256 public constant SECONDS_PER_YEAR = 365 days;
-    uint256 public constant MAX_COLLATERAL_FACTOR_BPS = 9_500;
+    uint256 public constant MAX_COLLATERAL_FACTOR_BPS = BPS;
     uint256 public constant MAX_LIQUIDATION_BONUS_BPS = 5_000;
     uint256 public constant MAX_RESERVE_FACTOR_BPS = 5_000;
     uint256 public constant MAX_RATE_BPS = 100_000;
@@ -33,6 +33,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
     IAssetOracle public valuationOracle;
 
     uint256 public collateralFactorBps;
+    uint256 public liquidationThresholdBps;
     uint256 public collateralHaircutBps;
     uint256 public liquidationCloseFactorBps;
     uint256 public liquidationBonusBps;
@@ -58,6 +59,18 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
 
     error PolicyDenied(bytes32 policyCode);
 
+    struct LiquidationPreview {
+        uint256 requestedRepayAmount;
+        uint256 actualRepayAmount;
+        uint256 seizedCollateral;
+        uint256 remainingDebt;
+        uint256 remainingCollateral;
+        uint256 badDebt;
+        uint256 healthFactorBefore;
+        uint256 healthFactorAfter;
+        bool executable;
+    }
+
     event InterestAccrued(
         uint256 indexed timestamp,
         uint256 interestAccrued,
@@ -72,6 +85,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
     event Borrowed(address indexed user, uint256 amount, uint256 shares);
     event Repaid(address indexed payer, address indexed borrower, uint256 amount, uint256 shares);
     event CollateralFactorUpdated(uint256 oldFactorBps, uint256 newFactorBps);
+    event LiquidationThresholdUpdated(uint256 oldThresholdBps, uint256 newThresholdBps);
     event CollateralHaircutUpdated(uint256 oldHaircutBps, uint256 newHaircutBps);
     event LiquidationConfigUpdated(uint256 closeFactorBps, uint256 bonusBps);
     event ReserveFactorUpdated(uint256 oldReserveFactorBps, uint256 newReserveFactorBps);
@@ -84,7 +98,9 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         address indexed liquidator,
         uint256 repaidDebt,
         uint256 seizedCollateral,
-        uint256 badDebtWrittenOff
+        uint256 badDebt,
+        uint256 healthFactorBefore,
+        uint256 healthFactorAfter
     );
     event EmergencyPaused(address indexed account);
     event EmergencyUnpaused(address indexed account);
@@ -94,18 +110,20 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         address collateralToken_,
         address debtToken_,
         address policyEngine_,
-        uint256 collateralFactorBps_
+        uint256 collateralFactorBps_,
+        uint256 liquidationThresholdBps_
     ) {
         require(admin != address(0), "ADMIN_ZERO");
         require(collateralToken_ != address(0), "COLLATERAL_ZERO");
         require(debtToken_ != address(0), "DEBT_ZERO");
         require(policyEngine_ != address(0), "POLICY_ENGINE_ZERO");
-        _validateCollateralFactor(collateralFactorBps_);
+        _validateRiskThresholds(collateralFactorBps_, liquidationThresholdBps_);
 
         collateralToken = IERC20(collateralToken_);
         debtToken = IERC20(debtToken_);
         policyEngine = IBankPolicyEngine(policyEngine_);
         collateralFactorBps = collateralFactorBps_;
+        liquidationThresholdBps = liquidationThresholdBps_;
         collateralHaircutBps = BPS;
         liquidationCloseFactorBps = 5_000;
         liquidationBonusBps = 500;
@@ -134,10 +152,17 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
     }
 
     function setCollateralFactor(uint256 newFactorBps) external onlyRole(RISK_ADMIN_ROLE) {
-        _validateCollateralFactor(newFactorBps);
+        _validateRiskThresholds(newFactorBps, liquidationThresholdBps);
         uint256 oldFactor = collateralFactorBps;
         collateralFactorBps = newFactorBps;
         emit CollateralFactorUpdated(oldFactor, newFactorBps);
+    }
+
+    function setLiquidationThresholdBps(uint256 newThresholdBps) external onlyRole(RISK_ADMIN_ROLE) {
+        _validateRiskThresholds(collateralFactorBps, newThresholdBps);
+        uint256 oldThreshold = liquidationThresholdBps;
+        liquidationThresholdBps = newThresholdBps;
+        emit LiquidationThresholdUpdated(oldThreshold, newThresholdBps);
     }
 
     function setCollateralHaircut(uint256 newHaircutBps) external onlyRole(RISK_ADMIN_ROLE) {
@@ -291,32 +316,39 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         require(repayAmount > 0, "AMOUNT_ZERO");
         _accrueInterest();
 
-        uint256 currentDebt = debtOf(borrower);
-        require(currentDebt > 0, "NO_DEBT");
-        require(_healthFactorBps(borrower) < BPS, "POSITION_HEALTHY");
-        require(repayAmount <= _maxLiquidationRepay(currentDebt), "LIQUIDATION_CLOSE_FACTOR");
+        LiquidationPreview memory preview = _previewLiquidation(borrower, repayAmount);
+        require(preview.requestedRepayAmount > 0, "AMOUNT_ZERO");
+        require(preview.actualRepayAmount > 0, "NO_DEBT");
+        require(preview.executable, "POSITION_HEALTHY");
 
-        uint256 seizedCollateral = _liquidationSeizeAmount(repayAmount);
         uint256 borrowerCollateral = collateralBalance[borrower];
-        if (seizedCollateral > borrowerCollateral) {
-            seizedCollateral = borrowerCollateral;
-        }
-        require(seizedCollateral > 0, "SEIZE_ZERO");
 
-        (uint256 payment,) = _reduceDebtForPayment(borrower, repayAmount);
-        collateralBalance[borrower] = borrowerCollateral - seizedCollateral;
-        totalCollateral -= seizedCollateral;
+        (uint256 payment,) = _reduceDebtForPayment(borrower, preview.actualRepayAmount);
+        if (preview.seizedCollateral > 0) {
+            collateralBalance[borrower] = borrowerCollateral - preview.seizedCollateral;
+            totalCollateral -= preview.seizedCollateral;
+        }
 
         debtToken.safeTransferFrom(msg.sender, address(this), payment);
-        collateralToken.safeTransfer(msg.sender, seizedCollateral);
-        policyEngine.noteCollateralReleased(borrower, address(collateralToken), seizedCollateral);
+        if (preview.seizedCollateral > 0) {
+            collateralToken.safeTransfer(msg.sender, preview.seizedCollateral);
+            policyEngine.noteCollateralReleased(borrower, address(collateralToken), preview.seizedCollateral);
+        }
 
         uint256 badDebtWrittenOff;
         if (collateralBalance[borrower] == 0) {
             badDebtWrittenOff = _recognizeRemainingBadDebt(borrower);
         }
 
-        emit PositionLiquidated(borrower, msg.sender, payment, seizedCollateral, badDebtWrittenOff);
+        emit PositionLiquidated(
+            borrower,
+            msg.sender,
+            payment,
+            preview.seizedCollateral,
+            badDebtWrittenOff,
+            preview.healthFactorBefore,
+            _healthFactorE18(borrower)
+        );
     }
 
     function absorbBadDebt(address borrower) external onlyRole(LIQUIDATOR_ROLE) whenNotPaused nonReentrant returns (uint256 badDebtWrittenOff) {
@@ -359,21 +391,29 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         return _debtValue(debtOf(user));
     }
 
+    function liquidationThresholdValue(address user) external view returns (uint256) {
+        return _liquidationThresholdValue(collateralBalance[user]);
+    }
+
+    function healthFactorE18(address user) external view returns (uint256) {
+        return _healthFactorE18(user);
+    }
+
     function healthFactorBps(address user) external view returns (uint256) {
         return _healthFactorBps(user);
     }
 
     function isLiquidatable(address user) public view returns (bool) {
-        return debtOf(user) > 0 && _healthFactorBps(user) < BPS;
+        return debtOf(user) > 0 && _healthFactorE18(user) < WAD;
     }
 
     function maxLiquidationRepay(address user) external view returns (uint256) {
         return _maxLiquidationRepay(debtOf(user));
     }
 
-    function previewLiquidation(address, uint256 repayAmount) external view returns (uint256 seizedCollateral) {
-        require(repayAmount > 0, "AMOUNT_ZERO");
-        return _liquidationSeizeAmount(repayAmount);
+    function previewLiquidation(address borrower, uint256 repayAmount) external view returns (LiquidationPreview memory) {
+        require(borrower != address(0), "BORROWER_ZERO");
+        return _previewLiquidation(borrower, repayAmount);
     }
 
     function totalCash() public view returns (uint256) {
@@ -546,14 +586,54 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
     }
 
     function _healthFactorBps(address user) internal view returns (uint256) {
-        uint256 debt = debtOf(user);
-        if (debt == 0) return type(uint256).max;
+        uint256 health = _healthFactorE18(user);
+        if (health == type(uint256).max) return type(uint256).max;
+        return health / (WAD / BPS);
+    }
 
-        // Health factor is permitted debt value divided by current debt value; below 10_000 bps is liquidatable.
-        uint256 permittedDebtValue = _collateralValue(collateralBalance[user]) * collateralFactorBps / BPS;
-        uint256 currentDebtValue = _debtValue(debt);
+    function _healthFactorE18(address user) internal view returns (uint256) {
+        return _healthFactorE18For(collateralBalance[user], debtOf(user));
+    }
+
+    function _healthFactorE18For(uint256 collateralAmount, uint256 debtAmount) internal view returns (uint256) {
+        if (debtAmount == 0) return type(uint256).max;
+
+        uint256 thresholdDebtValue = _liquidationThresholdValue(collateralAmount);
+        uint256 currentDebtValue = _debtValue(debtAmount);
         if (currentDebtValue == 0) return type(uint256).max;
-        return permittedDebtValue * BPS / currentDebtValue;
+        return thresholdDebtValue * WAD / currentDebtValue;
+    }
+
+    function _previewLiquidation(address borrower, uint256 repayAmount) internal view returns (LiquidationPreview memory preview) {
+        uint256 debt = debtOf(borrower);
+        uint256 collateral = collateralBalance[borrower];
+        uint256 actualRepay = repayAmount;
+        uint256 maxRepay = _maxLiquidationRepay(debt);
+        if (actualRepay > debt) actualRepay = debt;
+        if (actualRepay > maxRepay) actualRepay = maxRepay;
+
+        uint256 seizedCollateral;
+        if (actualRepay > 0) {
+            seizedCollateral = _liquidationSeizeAmount(actualRepay);
+            if (seizedCollateral > collateral) seizedCollateral = collateral;
+        }
+
+        uint256 debtAfterRepay = debt > actualRepay ? debt - actualRepay : 0;
+        uint256 remainingCollateral = collateral > seizedCollateral ? collateral - seizedCollateral : 0;
+        uint256 badDebt = remainingCollateral == 0 ? debtAfterRepay : 0;
+        uint256 remainingDebt = badDebt > 0 ? 0 : debtAfterRepay;
+
+        preview = LiquidationPreview({
+            requestedRepayAmount: repayAmount,
+            actualRepayAmount: actualRepay,
+            seizedCollateral: seizedCollateral,
+            remainingDebt: remainingDebt,
+            remainingCollateral: remainingCollateral,
+            badDebt: badDebt,
+            healthFactorBefore: _healthFactorE18For(collateral, debt),
+            healthFactorAfter: _healthFactorE18For(remainingCollateral, remainingDebt),
+            executable: debt > 0 && actualRepay > 0 && _healthFactorE18For(collateral, debt) < WAD
+        });
     }
 
     function _maxLiquidationRepay(uint256 debt) internal view returns (uint256) {
@@ -575,6 +655,10 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         uint256 borrowValue = collateralValue_ * collateralFactorBps / BPS;
         uint256 debtPrice = _price(address(debtToken));
         return borrowValue * WAD / debtPrice;
+    }
+
+    function _liquidationThresholdValue(uint256 collateralAmount) internal view returns (uint256) {
+        return _collateralValue(collateralAmount) * liquidationThresholdBps / BPS;
     }
 
     function _collateralValue(uint256 collateralAmount) internal view returns (uint256) {
@@ -630,5 +714,11 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
 
     function _validateCollateralFactor(uint256 factorBps) internal pure {
         require(factorBps <= MAX_COLLATERAL_FACTOR_BPS, "BAD_COLLATERAL_FACTOR");
+    }
+
+    function _validateRiskThresholds(uint256 factorBps, uint256 thresholdBps) internal pure {
+        _validateCollateralFactor(factorBps);
+        require(thresholdBps <= BPS, "BAD_LIQUIDATION_THRESHOLD");
+        require(thresholdBps >= factorBps, "THRESHOLD_LT_FACTOR");
     }
 }

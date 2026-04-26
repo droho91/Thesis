@@ -79,9 +79,21 @@ const customShockHealth = healthFactorFor({
   collateralPrice: e18("0.3"),
   debtPrice: e18("1"),
   haircutBps: 9_000n,
-  collateralFactorBps: 8_000n,
+  collateralFactorBps: 7_000n,
+  liquidationThresholdBps: 8_000n,
 });
 assert.equal(customShockHealth.toString(), "2700", "custom 0.3 shock health preview should be 27%");
+
+const separatedRiskHealth = healthFactorFor({
+  collateral: e18("100"),
+  debt: e18("70"),
+  collateralPrice: e18("1"),
+  debtPrice: e18("1"),
+  haircutBps: 10_000n,
+  collateralFactorBps: 7_000n,
+  liquidationThresholdBps: 8_000n,
+});
+assert.equal(separatedRiskHealth.toString(), "11428", "health factor should use liquidation threshold, not borrow factor");
 
 const beforeLiquidation = afterLiquidationState({
   traceRisk: {},
@@ -167,12 +179,14 @@ assert.equal(afterLiquidation.debt, "40.0");
 assert.equal(afterLiquidation.collateral, "16.0");
 
 const policy = riskPolicySnapshot({
-  collateralFactorBps: 8_000n,
+  collateralFactorBps: 7_000n,
+  liquidationThresholdBps: 8_000n,
   collateralHaircutBps: 9_000n,
   liquidationCloseFactorBps: 5_000n,
   liquidationBonusBps: 500n,
 });
-assert.equal(policy.collateralFactorBps, "8000", "collateral factor should stay exposed as max LTV");
+assert.equal(policy.collateralFactorBps, "7000", "collateral factor should stay exposed as max LTV");
+assert.equal(policy.liquidationThresholdBps, "8000", "liquidation threshold should be exposed separately");
 assert.equal(policy.liquidationHealthFactorTriggerBps, "10000", "liquidation trigger should be HF < 100%");
 
 console.log("demo read-model checks passed");

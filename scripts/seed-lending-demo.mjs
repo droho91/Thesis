@@ -18,7 +18,8 @@ const ACCOUNT_BORROW_CAP = ethers.parseUnits(process.env.ACCOUNT_BORROW_CAP || "
 const INITIAL_VOUCHER_PRICE_E18 = ethers.parseUnits(process.env.INITIAL_VOUCHER_PRICE || "2", 18);
 const DEBT_PRICE_E18 = ethers.parseUnits(process.env.DEBT_PRICE || "1", 18);
 const MAX_ORACLE_STALENESS = BigInt(process.env.ORACLE_MAX_STALENESS_SECONDS || "604800");
-const COLLATERAL_FACTOR_BPS = BigInt(process.env.COLLATERAL_FACTOR_BPS || "8000");
+const COLLATERAL_FACTOR_BPS = BigInt(process.env.COLLATERAL_FACTOR_BPS || "7000");
+const LIQUIDATION_THRESHOLD_BPS = BigInt(process.env.LIQUIDATION_THRESHOLD_BPS || "8000");
 const COLLATERAL_HAIRCUT_BPS = BigInt(process.env.COLLATERAL_HAIRCUT_BPS || "9000");
 const LIQUIDATION_CLOSE_FACTOR_BPS = BigInt(process.env.LIQUIDATION_CLOSE_FACTOR_BPS || "5000");
 const LIQUIDATION_BONUS_BPS = BigInt(process.env.LIQUIDATION_BONUS_BPS || "500");
@@ -170,6 +171,9 @@ async function main() {
   await txStep("set debt oracle price", () => oracleB.setPrice(config.chains.B.debtToken, DEBT_PRICE_E18, txOptions()));
   await txStep("configure lending oracle", () => lendingPoolB.setValuationOracle(config.chains.B.oracle, txOptions()));
   await txStep("configure collateral factor", () => lendingPoolB.setCollateralFactor(COLLATERAL_FACTOR_BPS, txOptions()));
+  await txStep("configure liquidation threshold", () =>
+    lendingPoolB.setLiquidationThresholdBps(LIQUIDATION_THRESHOLD_BPS, txOptions())
+  );
   await txStep("configure collateral haircut", () =>
     lendingPoolB.setCollateralHaircut(COLLATERAL_HAIRCUT_BPS, txOptions())
   );
@@ -217,6 +221,7 @@ async function main() {
     debtPriceE18: DEBT_PRICE_E18.toString(),
     maxOracleStaleness: MAX_ORACLE_STALENESS.toString(),
     collateralFactorBps: COLLATERAL_FACTOR_BPS.toString(),
+    liquidationThresholdBps: LIQUIDATION_THRESHOLD_BPS.toString(),
     collateralHaircutBps: COLLATERAL_HAIRCUT_BPS.toString(),
     liquidationCloseFactorBps: LIQUIDATION_CLOSE_FACTOR_BPS.toString(),
     liquidationBonusBps: LIQUIDATION_BONUS_BPS.toString(),

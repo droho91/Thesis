@@ -48,7 +48,7 @@ const CHANNEL_STATE = Object.freeze({
 const FORWARD_AMOUNT = ethers.parseUnits(process.env.DEMO_FORWARD_AMOUNT || "100", 18);
 const DENIED_AMOUNT = ethers.parseUnits(process.env.DEMO_DENIED_AMOUNT || "40", 18);
 const BORROW_AMOUNT_CONFIGURED = process.env.DEMO_BORROW_AMOUNT != null;
-const BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW_AMOUNT || "140", 18);
+const BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW_AMOUNT || "120", 18);
 const REPAY_AMOUNT = process.env.DEMO_REPAY_AMOUNT ? ethers.parseUnits(process.env.DEMO_REPAY_AMOUNT, 18) : null;
 const WITHDRAW_AMOUNT = process.env.DEMO_WITHDRAW_AMOUNT ? ethers.parseUnits(process.env.DEMO_WITHDRAW_AMOUNT, 18) : null;
 const LIQUIDATION_REPAY_CONFIGURED = process.env.DEMO_LIQUIDATION_REPAY != null;
@@ -85,6 +85,12 @@ function stateName(states, value) {
 
 function units(value) {
   return ethers.formatUnits(value, 18);
+}
+
+function previewField(preview, key, index, fallback = 0n) {
+  const value = preview?.[key] ?? preview?.[index];
+  if (value == null) return fallback;
+  return typeof value === "bigint" ? value : BigInt(value);
 }
 
 function compact(value) {
@@ -495,6 +501,51 @@ async function ensureSeededConfig(config) {
   }
 }
 
+async function ensureDeploymentCode(config) {
+  const requiredContracts = [
+    ["A", "lightClient"],
+    ["A", "connectionKeeper"],
+    ["A", "channelKeeper"],
+    ["A", "packetHandler"],
+    ["A", "packetStore"],
+    ["A", "policyEngine"],
+    ["A", "canonicalToken"],
+    ["A", "escrowVault"],
+    ["A", "transferApp"],
+    ["B", "lightClient"],
+    ["B", "connectionKeeper"],
+    ["B", "channelKeeper"],
+    ["B", "packetHandler"],
+    ["B", "packetStore"],
+    ["B", "policyEngine"],
+    ["B", "voucherToken"],
+    ["B", "debtToken"],
+    ["B", "oracle"],
+    ["B", "lendingPool"],
+    ["B", "transferApp"],
+  ];
+  const providerByChain = {
+    A: providerForChain(config, "A"),
+    B: providerForChain(config, "B"),
+  };
+  const missingCode = [];
+  for (const [chainKey, field] of requiredContracts) {
+    const address = config.chains?.[chainKey]?.[field];
+    if (!address || !ethers.isAddress(address)) {
+      missingCode.push(`${chainKey}.${field}=missing`);
+      continue;
+    }
+    const code = await providerByChain[chainKey].getCode(address);
+    if (code === "0x") missingCode.push(`${chainKey}.${field}=${address}`);
+  }
+  if (missingCode.length > 0) {
+    throw new Error(
+      `Stale interchain lending deployment in ${RUNTIME_CONFIG_PATH}; configured contracts have no code on the current Besu chains: ` +
+        `${missingCode.join(", ")}. Run npm run deploy && npm run seed before npm run demo.`
+    );
+  }
+}
+
 async function txIfNeeded(label, isReady, send) {
   if (await isReady()) return;
   await txStep(label, send);
@@ -510,6 +561,7 @@ async function ensureRiskSeeded(config, ctx) {
   const debtAssetBorrowCap = BigInt(config.seed.debtAssetBorrowCap);
   const accountBorrowCap = BigInt(config.seed.accountBorrowCap);
   const collateralFactorBps = BigInt(config.seed.collateralFactorBps);
+  const liquidationThresholdBps = BigInt(config.seed.liquidationThresholdBps || "8000");
   const collateralHaircutBps = BigInt(config.seed.collateralHaircutBps);
   const liquidationCloseFactorBps = BigInt(config.seed.liquidationCloseFactorBps);
   const liquidationBonusBps = BigInt(config.seed.liquidationBonusBps);
@@ -595,6 +647,11 @@ async function ensureRiskSeeded(config, ctx) {
     "configure collateral factor",
     async () => (await ctx.B.lendingPoolAdmin.collateralFactorBps()) === collateralFactorBps,
     () => ctx.B.lendingPoolAdmin.setCollateralFactor(collateralFactorBps, txOptions())
+  );
+  await txIfNeeded(
+    "configure liquidation threshold",
+    async () => (await ctx.B.lendingPoolAdmin.liquidationThresholdBps()) === liquidationThresholdBps,
+    () => ctx.B.lendingPoolAdmin.setLiquidationThresholdBps(liquidationThresholdBps, txOptions())
   );
   await txIfNeeded(
     "configure collateral haircut",
@@ -1285,6 +1342,7 @@ async function prepareStepContext() {
   await waitForBesuRuntimeReady();
   const config = await loadRuntimeConfig();
   await ensureSeededConfig(config);
+  await ensureDeploymentCode(config);
   const ctx = await loadContext(config);
   return { config, ctx, sourceChainId: chainId(config, "A"), destinationChainId: chainId(config, "B") };
 }
@@ -1763,15 +1821,16 @@ export async function runDemoStep(action, options = {}) {
     await txStep("step shock voucher oracle price", () =>
       ctx.B.oracle.setPrice(config.chains.B.voucherToken, SHOCKED_VOUCHER_PRICE_E18, txOptions())
     );
-    const [healthAfterShock, liquidatableAfterShock, maxLiquidationRepay, previewSeized] = await Promise.all([
+    const [healthAfterShock, liquidatableAfterShock, maxLiquidationRepay, liquidationPreview] = await Promise.all([
       ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress),
       ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress),
       ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress),
       (async () => {
         const repay = await ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress);
-        return repay > 0n ? ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, repay) : 0n;
+        return ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, repay);
       })(),
     ]);
+    const previewSeized = previewField(liquidationPreview, "seizedCollateral", 2);
     return writeTracePatch(
       config,
       ctx,
@@ -1809,15 +1868,11 @@ export async function runDemoStep(action, options = {}) {
       ctx.B.lendingPoolAdmin.totalReserves(),
       ctx.B.lendingPoolAdmin.totalBadDebt(),
     ]);
-    const repayAmount = LIQUIDATION_REPAY_CONFIGURED ? LIQUIDATION_REPAY : maxLiquidationRepay;
+    const requestedRepayAmount = LIQUIDATION_REPAY_CONFIGURED ? LIQUIDATION_REPAY : maxLiquidationRepay;
+    const liquidationPreview = await ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, requestedRepayAmount);
+    const repayAmount = previewField(liquidationPreview, "actualRepayAmount", 1);
     if (repayAmount === 0n) throw new Error("No debt is available for liquidation.");
-    if (repayAmount > maxLiquidationRepay) {
-      throw new Error(
-        `LIQUIDATION_CLOSE_FACTOR: max repay is ${units(maxLiquidationRepay)} bCASH, requested ${units(repayAmount)}.`
-      );
-    }
-    const previewSeizedRaw = await ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, repayAmount);
-    const previewSeized = previewSeizedRaw > collateralBefore ? collateralBefore : previewSeizedRaw;
+    const previewSeized = previewField(liquidationPreview, "seizedCollateral", 2);
     const liquidatorBalance = await ctx.B.debtAdmin.balanceOf(ctx.liquidatorAddress);
     if (liquidatorBalance < repayAmount) {
       await txStep("step fund liquidator repay balance", () =>
@@ -1828,7 +1883,7 @@ export async function runDemoStep(action, options = {}) {
       ctx.B.debtLiquidator.approve(config.chains.B.lendingPool, repayAmount, txOptions())
     );
     const liquidationReceipt = await txStep("step liquidate unhealthy position", () =>
-      ctx.B.lendingPoolLiquidator.liquidate(ctx.destinationUserAddress, repayAmount, txOptions())
+      ctx.B.lendingPoolLiquidator.liquidate(ctx.destinationUserAddress, requestedRepayAmount, txOptions())
     );
     const [debtAfter, collateralAfter, reservesAfter, badDebtAfter, liquidatorVoucherBalance] = await Promise.all([
       ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress),
@@ -1847,6 +1902,7 @@ export async function runDemoStep(action, options = {}) {
       {
         risk: {
           liquidationRepaid: units(repayAmount),
+          liquidationRequestedRepay: units(requestedRepayAmount),
           liquidationTxHash: liquidationReceipt.hash,
           seizedCollateral: units(previewSeized),
           collateralBeforeLiquidation: units(collateralBefore),
@@ -2178,14 +2234,15 @@ export async function runDemoStep(action, options = {}) {
           timeoutAbsenceImplemented: true,
           timeoutAbsence: {
             kind: "receipt-absence-proof",
-            note: "Packet timeout verification proves packet receipt absence for timeout safety rather than a custom packet-state tree.",
+            status: "Visualization only",
+            note: "This UI action marks the timeout absence model; the full on-chain timeout execution is exercised by npm run demo.",
           },
         },
       },
       {
         phase: "receipt-absence-ready",
-        label: "Receipt absence proof path is available",
-        summary: "Packet timeout uses an EVM storage absence proof against the destination packet receipt slot.",
+        label: "Receipt absence model noted",
+        summary: "This UI-only marker explains the timeout absence proof path; run the full script to execute timeout on-chain.",
       }
     );
   }
@@ -2424,6 +2481,7 @@ async function main() {
   setPhase("load-config");
   const config = await loadRuntimeConfig();
   await ensureSeededConfig(config);
+  await ensureDeploymentCode(config);
   const sourceChainId = chainId(config, "A");
   const destinationChainId = chainId(config, "B");
 
@@ -2556,14 +2614,16 @@ async function main() {
   const healthAfterShock = await ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress);
   const liquidatableAfterShock = await ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress);
   const maxLiquidationRepay = await ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress);
-  const seizedCollateralPreview = await ctx.B.lendingPoolAdmin.previewLiquidation(
+  const liquidationPreview = await ctx.B.lendingPoolAdmin.previewLiquidation(
     ctx.destinationUserAddress,
     LIQUIDATION_REPAY
   );
+  const actualLiquidationRepay = previewField(liquidationPreview, "actualRepayAmount", 1);
+  const seizedCollateralPreview = previewField(liquidationPreview, "seizedCollateral", 2);
   const reservesBeforeLiquidation = await ctx.B.lendingPoolAdmin.totalReserves();
   const badDebtBeforeLiquidation = await ctx.B.lendingPoolAdmin.totalBadDebt();
   await txStep("approve liquidation repay", () =>
-    ctx.B.debtLiquidator.approve(config.chains.B.lendingPool, LIQUIDATION_REPAY, txOptions())
+    ctx.B.debtLiquidator.approve(config.chains.B.lendingPool, actualLiquidationRepay, txOptions())
   );
   const liquidationReceipt = await txStep("liquidate unhealthy position", () =>
     ctx.B.lendingPoolLiquidator.liquidate(ctx.destinationUserAddress, LIQUIDATION_REPAY, txOptions())
@@ -2574,7 +2634,7 @@ async function main() {
   const badDebtAfterLiquidation = await ctx.B.lendingPoolAdmin.totalBadDebt();
   const liquidatorVoucherBalance = await ctx.B.voucherAdmin.balanceOf(ctx.liquidatorAddress);
   const badDebtWrittenOff =
-    debtAfterBorrow > LIQUIDATION_REPAY + debtAfterLiquidation ? debtAfterBorrow - LIQUIDATION_REPAY - debtAfterLiquidation : 0n;
+    debtAfterBorrow > actualLiquidationRepay + debtAfterLiquidation ? debtAfterBorrow - actualLiquidationRepay - debtAfterLiquidation : 0n;
   const reservesUsed =
     reservesBeforeLiquidation > reservesAfterLiquidation ? reservesBeforeLiquidation - reservesAfterLiquidation : 0n;
   const supplierLoss =
@@ -2752,7 +2812,8 @@ async function main() {
       healthAfterShockBps: healthAfterShock.toString(),
       liquidatableAfterShock,
       maxLiquidationRepay: units(maxLiquidationRepay),
-      liquidationRepaid: units(LIQUIDATION_REPAY),
+      liquidationRepaid: units(actualLiquidationRepay),
+      liquidationRequestedRepay: units(LIQUIDATION_REPAY),
       liquidationTxHash: liquidationReceipt.hash,
       seizedCollateral: units(seizedCollateralPreview),
       collateralBeforeLiquidation: units(collateralAfterDeposit),
@@ -2820,7 +2881,7 @@ async function main() {
   console.log("=== Proof-checked banking flow ===");
   console.log(`Handshake: connection ${connectionHandshake.reused ? "reused" : "opened"}, channel ${channelHandshake.reused ? "reused" : "opened"}`);
   console.log(`[A->B] packet ${compact(approvedPacketId)} locked ${units(FORWARD_AMOUNT)} aBANK and minted voucher on Bank B`);
-  console.log(`[risk] deposited ${units(collateralAfterDeposit)} vA, borrowed ${units(debtAfterBorrow)} bCASH, liquidated ${units(LIQUIDATION_REPAY)} bCASH after price shock`);
+  console.log(`[risk] deposited ${units(collateralAfterDeposit)} vA, borrowed ${units(debtAfterBorrow)} bCASH, liquidated ${units(actualLiquidationRepay)} bCASH after price shock`);
   console.log(`[timeout] denied packet ${compact(deniedPacketId)} refunded=${deniedRefundFlag}`);
   console.log(`[ui] wrote demo trace to ${OUT_JSON_PATH}`);
 }

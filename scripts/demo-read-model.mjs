@@ -65,12 +65,14 @@ export function resolveShockPreviewPriceE18({
 
 export function riskPolicySnapshot({
   collateralFactorBps,
+  liquidationThresholdBps,
   collateralHaircutBps,
   liquidationCloseFactorBps,
   liquidationBonusBps,
 }) {
   return {
     collateralFactorBps: bps(collateralFactorBps),
+    liquidationThresholdBps: bps(liquidationThresholdBps ?? collateralFactorBps),
     collateralHaircutBps: bps(collateralHaircutBps),
     liquidationHealthFactorTriggerBps: BPS.toString(),
     liquidationCloseFactorBps: bps(liquidationCloseFactorBps),
@@ -160,40 +162,68 @@ function maxBorrowFor({ collateral, collateralPrice, debtPrice, haircutBps, coll
   return debtPrice === 0n ? 0n : borrowValue * WAD / debtPrice;
 }
 
-export function healthFactorFor({ collateral, debt, collateralPrice, debtPrice, haircutBps, collateralFactorBps }) {
+function liquidationThresholdValueOf(collateral, price, haircutBps, liquidationThresholdBps) {
+  return collateralValueOf(collateral, price, haircutBps) * liquidationThresholdBps / BPS;
+}
+
+export function healthFactorFor({
+  collateral,
+  debt,
+  collateralPrice,
+  debtPrice,
+  haircutBps,
+  liquidationThresholdBps,
+  collateralFactorBps,
+}) {
   if (debt === 0n) return (2n ** 256n) - 1n;
-  const permittedDebtValue = collateralValueOf(collateral, collateralPrice, haircutBps) * collateralFactorBps / BPS;
+  const thresholdBps = liquidationThresholdBps ?? collateralFactorBps;
+  const permittedDebtValue = liquidationThresholdValueOf(collateral, collateralPrice, haircutBps, thresholdBps);
   const currentDebtValue = debtValueOf(debt, debtPrice);
   if (currentDebtValue === 0n) return (2n ** 256n) - 1n;
   return permittedDebtValue * BPS / currentDebtValue;
 }
 
+function previewBigInt(preview, key, index, fallback = 0n) {
+  const value = preview?.[key] ?? preview?.[index];
+  if (value == null) return fallback;
+  return typeof value === "bigint" ? value : BigInt(value);
+}
+
+function previewBool(preview, key, index, fallback = false) {
+  const value = preview?.[key] ?? preview?.[index];
+  return value == null ? fallback : Boolean(value);
+}
+
 function derivedLiquidationPreview({
-  debt,
-  collateral,
-  repayAmount,
-  seizedCollateral,
+  contractPreview,
+  requestedRepayAmount,
   totalReserves,
   totalBadDebt,
 }) {
-  const repay = minBigInt(repayAmount, debt);
-  const seized = minBigInt(seizedCollateral, collateral);
-  const debtAfterRepay = safeSub(debt, repay);
-  const collateralAfterSeize = safeSub(collateral, seized);
-  const collateralExhausted = collateral > 0n && collateralAfterSeize === 0n;
-  const badDebtWrittenOff = collateralExhausted ? debtAfterRepay : 0n;
+  const requested = previewBigInt(contractPreview, "requestedRepayAmount", 0, requestedRepayAmount);
+  const actual = previewBigInt(contractPreview, "actualRepayAmount", 1);
+  const seized = previewBigInt(contractPreview, "seizedCollateral", 2);
+  const remainingDebt = previewBigInt(contractPreview, "remainingDebt", 3);
+  const remainingCollateral = previewBigInt(contractPreview, "remainingCollateral", 4);
+  const badDebtWrittenOff = previewBigInt(contractPreview, "badDebt", 5);
   const reservesUsed = minBigInt(badDebtWrittenOff, totalReserves);
   const supplierLoss = badDebtWrittenOff - reservesUsed;
   return {
-    repayAmount: units(repay),
+    requestedRepayAmount: units(requested),
+    actualRepayAmount: units(actual),
+    repayAmount: units(actual),
     seizedCollateral: units(seized),
-    remainingDebt: units(badDebtWrittenOff > 0n ? 0n : debtAfterRepay),
-    remainingCollateral: units(collateralAfterSeize),
+    remainingDebt: units(remainingDebt),
+    remainingCollateral: units(remainingCollateral),
+    badDebt: units(badDebtWrittenOff),
     badDebtWrittenOff: units(badDebtWrittenOff),
     reserveUsed: units(reservesUsed),
     supplierLoss: units(supplierLoss),
     totalBadDebtAfter: units(totalBadDebt + supplierLoss),
-    collateralExhausted,
+    healthFactorBeforeRaw: previewBigInt(contractPreview, "healthFactorBefore", 6).toString(),
+    healthFactorAfterRaw: previewBigInt(contractPreview, "healthFactorAfter", 7).toString(),
+    executable: previewBool(contractPreview, "executable", 8),
+    collateralExhausted: remainingCollateral === 0n,
   };
 }
 
@@ -545,6 +575,8 @@ async function readOnchainDemoStatus(health) {
     collateralValue,
     debtValue,
     collateralFactorBps,
+    liquidationThresholdBps,
+    liquidationThresholdValue,
     collateralHaircutBps,
     liquidationCloseFactorBps,
     liquidationBonusBps,
@@ -597,6 +629,8 @@ async function readOnchainDemoStatus(health) {
     safeView("collateralValue", () => lendingPool.collateralValue(destinationUser), 0n),
     safeView("debtValue", () => lendingPool.debtValue(destinationUser), 0n),
     lendingPool.collateralFactorBps(),
+    safeView("liquidationThresholdBps", () => lendingPool.liquidationThresholdBps(), 0n),
+    safeView("liquidationThresholdValue", () => lendingPool.liquidationThresholdValue(destinationUser), 0n),
     lendingPool.collateralHaircutBps(),
     lendingPool.liquidationCloseFactorBps(),
     lendingPool.liquidationBonusBps(),
@@ -606,9 +640,9 @@ async function readOnchainDemoStatus(health) {
       "previewLiquidation(max)",
       async () => {
         const repay = await lendingPool.maxLiquidationRepay(destinationUser);
-        return repay > 0n ? lendingPool.previewLiquidation(destinationUser, repay) : 0n;
+        return lendingPool.previewLiquidation(destinationUser, repay);
       },
-      0n
+      null
     ),
     oracle.assetPriceE18(cfg.chains.B.voucherToken),
     oracle.assetPriceUpdatedAt(cfg.chains.B.voucherToken),
@@ -649,6 +683,9 @@ async function readOnchainDemoStatus(health) {
   const voucherPriceAge = oracleAge(voucherPriceUpdatedAt);
   const debtPriceAge = oracleAge(debtPriceUpdatedAt);
   const oracleFresh = voucherPriceUpdatedAt > 0n && debtPriceUpdatedAt > 0n && voucherPriceAge <= maxStaleness && debtPriceAge <= maxStaleness;
+  const effectiveLiquidationThresholdBps = liquidationThresholdBps || collateralFactorBps;
+  const liveLiquidationThresholdValue =
+    liquidationThresholdValue || (collateralValue * effectiveLiquidationThresholdBps / BPS);
   const shockPreviewPriceE18 = resolveShockPreviewPriceE18({
     traceRisk: trace?.risk,
     currentCollateralPrice: voucherPrice,
@@ -668,19 +705,24 @@ async function readOnchainDemoStatus(health) {
     collateralPrice: shockPreviewPriceE18,
     debtPrice,
     haircutBps: collateralHaircutBps,
-    collateralFactorBps,
+    liquidationThresholdBps: effectiveLiquidationThresholdBps,
   });
+  const shockedLiquidationThresholdValue = liquidationThresholdValueOf(
+    poolCollateral,
+    shockPreviewPriceE18,
+    collateralHaircutBps,
+    effectiveLiquidationThresholdBps
+  );
   const liquidationPreview = derivedLiquidationPreview({
-    debt: poolDebt,
-    collateral: poolCollateral,
-    repayAmount: maxLiquidationRepay,
-    seizedCollateral: previewLiquidationRaw,
+    contractPreview: previewLiquidationRaw,
+    requestedRepayAmount: maxLiquidationRepay,
     totalReserves,
     totalBadDebt,
   });
   const misbehaviourTrace = trace?.misbehaviour || {};
   const deniedTimedOutLive = Boolean(deniedTimedOut || trace?.denied?.timedOut);
-  const forwardProofVerified = Boolean(forwardConsumed || trace?.forward?.receiveTxHash || voucherBalance > 0n || poolCollateral > 0n);
+  const forwardProofVerified = Boolean(forwardConsumed || trace?.forward?.receiveTxHash);
+  const forwardCollateralObserved = Boolean(forwardProofVerified || voucherBalance > 0n || poolCollateral > 0n);
   const traceRisk = trace?.risk || {};
   const afterLiquidation = afterLiquidationState({
     traceRisk,
@@ -733,6 +775,7 @@ async function readOnchainDemoStatus(health) {
       healthFactorBps: healthFactor.toString(),
       maxBorrow: units(maxBorrow),
       availableToBorrow: units(availableToBorrow),
+      liquidationThresholdValue: units(liveLiquidationThresholdValue),
       voucherPrice: units(voucherPrice),
       debtPrice: units(debtPrice),
       voucherPriceAgeSeconds: voucherPriceAge.toString(),
@@ -758,6 +801,7 @@ async function readOnchainDemoStatus(health) {
         borrower: destinationUser,
         collateral: units(poolCollateral),
         collateralValue: units(collateralValue),
+        liquidationThresholdValue: units(liveLiquidationThresholdValue),
         debt: units(poolDebt),
         debtValue: units(debtValue),
         maxBorrow: units(maxBorrow),
@@ -776,6 +820,7 @@ async function readOnchainDemoStatus(health) {
       },
       policy: riskPolicySnapshot({
         collateralFactorBps,
+        liquidationThresholdBps: effectiveLiquidationThresholdBps,
         collateralHaircutBps,
         liquidationCloseFactorBps,
         liquidationBonusBps,
@@ -786,16 +831,18 @@ async function readOnchainDemoStatus(health) {
         collateralValue: units(shockedCollateralValue),
         maxBorrow: units(shockedMaxBorrow),
         availableBorrow: units(safeSub(shockedMaxBorrow, poolDebt)),
+        liquidationThresholdValue: units(shockedLiquidationThresholdValue),
         healthFactorBps: shockedHealthFactor.toString(),
         liquidatable: poolDebt > 0n && shockedHealthFactor < BPS,
       },
       liquidationPreview: {
         ...liquidationPreview,
         repayAmountRaw: maxLiquidationRepay.toString(),
-        seizedCollateralRaw: minBigInt(previewLiquidationRaw, poolCollateral).toString(),
+        actualRepayAmountRaw: previewBigInt(previewLiquidationRaw, "actualRepayAmount", 1).toString(),
+        seizedCollateralRaw: previewBigInt(previewLiquidationRaw, "seizedCollateral", 2).toString(),
         closeFactorBps: liquidationCloseFactorBps.toString(),
         bonusBps: liquidationBonusBps.toString(),
-        executable: Boolean(isLiquidatable && maxLiquidationRepay > 0n),
+        executable: Boolean(liquidationPreview.executable),
       },
       afterLiquidation,
     },
@@ -822,7 +869,8 @@ async function readOnchainDemoStatus(health) {
       bOnA: trustedBOnASummary,
     },
     security: {
-      forwardConsumed,
+      forwardConsumed: Boolean(forwardConsumed || trace?.forward?.receiveTxHash),
+      forwardCollateralObserved,
       reverseConsumed: false,
       forwardAcknowledged,
       deniedTimedOut,
@@ -856,7 +904,7 @@ async function readOnchainDemoStatus(health) {
       timeoutStatus: deniedTimedOutLive
         ? "Timed out"
         : traceSecurity.timeoutAbsence || traceSecurity.nonMembership
-          ? "Receipt absence proof available"
+          ? "Visualization only"
           : "Pending",
       replayProtectionStatus: traceSecurity.replayBlocked || forwardConsumed ? "Protected" : "Pending",
       lightClientStatus: {

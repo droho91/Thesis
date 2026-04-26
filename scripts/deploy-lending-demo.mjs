@@ -21,6 +21,8 @@ const DESTINATION_CHANNEL_ID = ethers.encodeBytes32String(process.env.DESTINATIO
 const CHANNEL_VERSION = ethers.hexlify(ethers.toUtf8Bytes(process.env.CHANNEL_VERSION || "ics-004"));
 const CONNECTION_PREFIX = ethers.hexlify(ethers.toUtf8Bytes(process.env.CONNECTION_PREFIX || "ibc"));
 const ORDER_UNORDERED = 1;
+const DEFAULT_COLLATERAL_FACTOR_BPS = BigInt(process.env.COLLATERAL_FACTOR_BPS || "7000");
+const DEFAULT_LIQUIDATION_THRESHOLD_BPS = BigInt(process.env.LIQUIDATION_THRESHOLD_BPS || "8000");
 const DEPLOY_TX_GAS_LIMIT = BigInt(process.env.DEPLOY_TX_GAS_LIMIT || process.env.INTERCHAIN_TX_GAS_LIMIT || "10000000");
 const DEPLOY_TX_WAIT_TIMEOUT_MS = Number(process.env.DEPLOY_TX_WAIT_TIMEOUT_MS || process.env.TX_WAIT_TIMEOUT_MS || 120000);
 
@@ -176,7 +178,8 @@ async function deployBankB({ chainId, owner, artifacts, transport }) {
     await addressOf(voucherToken),
     await addressOf(debtToken),
     await addressOf(policyEngine),
-    8_000,
+    DEFAULT_COLLATERAL_FACTOR_BPS,
+    DEFAULT_LIQUIDATION_THRESHOLD_BPS,
   ]);
   const transferApp = await deployStep("Bank B transfer app", artifacts.transferApp, owner, [
     chainId,
