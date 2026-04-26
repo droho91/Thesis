@@ -7,6 +7,7 @@ const HANDSHAKE_TX_WAIT_TIMEOUT_MS = Number(
 );
 const HEADER_WAIT_TIMEOUT_MS = Number(process.env.HEADER_WAIT_TIMEOUT_MS || "120000");
 const HEADER_WAIT_INTERVAL_MS = Number(process.env.HEADER_WAIT_INTERVAL_MS || "2000");
+const HEADER_UPDATE_BATCH_SIZE = Math.max(1, Number(process.env.HEADER_UPDATE_BATCH_SIZE || "5"));
 
 function debugHandshake() {
   return process.env.DEBUG_HANDSHAKE === "true" || process.env.DEBUG_DEMO_FLOW === "true";
@@ -40,6 +41,35 @@ async function txStep(label, send) {
   return waitForTx(tx, label);
 }
 
+async function updateLightClientHeaders({ lightClient, updates, label }) {
+  if (updates.length === 0) return null;
+
+  let latest = null;
+  for (let i = 0; i < updates.length; i += HEADER_UPDATE_BATCH_SIZE) {
+    const chunk = updates.slice(i, i + HEADER_UPDATE_BATCH_SIZE);
+    latest = chunk[chunk.length - 1];
+
+    if (chunk.length === 1 || typeof lightClient.updateClientBatch !== "function") {
+      await txStep(`${label} to height ${latest.headerUpdate.height.toString()}`, () =>
+        lightClient.updateClient(latest.headerUpdate, latest.validatorSet, txOptions())
+      );
+      continue;
+    }
+
+    const firstHeight = chunk[0].headerUpdate.height;
+    const lastHeight = latest.headerUpdate.height;
+    await txStep(`${label} heights ${firstHeight.toString()}-${lastHeight.toString()}`, () =>
+      lightClient.updateClientBatch(
+        chunk.map((item) => item.headerUpdate),
+        chunk.map((item) => item.validatorSet),
+        txOptions()
+      )
+    );
+  }
+
+  return latest;
+}
+
 function trustedAnchorFrom(result) {
   return {
     sourceChainId: result.headerUpdate.sourceChainId,
@@ -54,7 +84,7 @@ function trustedAnchorFrom(result) {
 }
 
 function isVerifiableHeader(result) {
-  return result.headerUpdate.headerHash.toLowerCase() === result.derived.rawHeaderHash.toLowerCase();
+  return result.headerUpdate.headerHash.toLowerCase() === result.derived.blockHeaderHash.toLowerCase();
 }
 
 async function buildVerifiableBesuHeaderUpdate({
@@ -86,7 +116,7 @@ async function buildVerifiableBesuHeaderUpdate({
 
     lastMismatch =
       `height ${candidate.headerUpdate.height.toString()} rpcHash=${candidate.headerUpdate.headerHash} ` +
-      `sealHash=${candidate.derived.rawHeaderHash}`;
+      `blockHeaderHash=${candidate.derived.blockHeaderHash}`;
     if (debugHandshake()) {
       console.log(`[ibc handshake] waiting for verifiable Besu header after ${lastMismatch}`);
     }
@@ -95,6 +125,48 @@ async function buildVerifiableBesuHeaderUpdate({
 
   throw new Error(
     `[ibc handshake] timed out waiting for a verifiable Besu header at or after ${minHeight.toString()}` +
+      (lastMismatch ? `; last mismatch: ${lastMismatch}` : "")
+  );
+}
+
+async function buildVerifiableBesuHeaderAt({
+  provider,
+  height,
+  sourceChainId,
+  validatorEpoch,
+}) {
+  const targetHeight = BigInt(height);
+  const start = Date.now();
+  let lastMismatch = null;
+
+  while (Date.now() - start < HEADER_WAIT_TIMEOUT_MS) {
+    const latestHeight = BigInt(await provider.getBlockNumber());
+    if (latestHeight < targetHeight) {
+      await sleep(HEADER_WAIT_INTERVAL_MS);
+      continue;
+    }
+
+    const candidate = await buildBesuHeaderUpdate({
+      provider,
+      blockTag: ethers.toQuantity(targetHeight),
+      sourceChainId,
+      validatorEpoch,
+    });
+    if (isVerifiableHeader(candidate)) {
+      return candidate;
+    }
+
+    lastMismatch =
+      `height ${candidate.headerUpdate.height.toString()} rpcHash=${candidate.headerUpdate.headerHash} ` +
+      `blockHeaderHash=${candidate.derived.blockHeaderHash}`;
+    if (debugHandshake()) {
+      console.log(`[ibc handshake] waiting for verifiable Besu header at ${lastMismatch}`);
+    }
+    await sleep(HEADER_WAIT_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `[ibc handshake] timed out waiting for a verifiable Besu header at ${targetHeight.toString()}` +
       (lastMismatch ? `; last mismatch: ${lastMismatch}` : "")
   );
 }
@@ -172,26 +244,27 @@ export async function trustRemoteHeaderAt({
       return current;
     }
 
-    const target = await buildVerifiableBesuHeaderUpdate({
+    const target = await buildVerifiableBesuHeaderAt({
       provider,
-      minimumHeight: currentHeight + 1n,
+      height: currentHeight + 1n,
       sourceChainId,
       validatorEpoch,
     });
-    await txStep("update Besu light client", () =>
-      lightClient.updateClient(target.headerUpdate, target.validatorSet, txOptions())
-    );
+    await updateLightClientHeaders({
+      lightClient,
+      updates: [target],
+      label: "update Besu light client",
+    });
     return target;
   }
 
-  const target = await buildVerifiableBesuHeaderUpdate({
-    provider,
-    minimumHeight: height,
-    sourceChainId,
-    validatorEpoch,
-  });
-
   if (currentHeight === 0n) {
+    const target = await buildVerifiableBesuHeaderUpdate({
+      provider,
+      minimumHeight: height,
+      sourceChainId,
+      validatorEpoch,
+    });
     const anchorHeight = target.headerUpdate.height - 1n;
     if (anchorHeight === 0n) {
       throw new Error("Cannot initialize a Besu trust anchor from block zero.");
@@ -205,16 +278,44 @@ export async function trustRemoteHeaderAt({
     await txStep("initialize trust anchor", () =>
       lightClient.initializeTrustAnchor(sourceChainId, trustedAnchorFrom(anchor), anchor.validatorSet, txOptions())
     );
-    currentHeight = anchorHeight;
+    await updateLightClientHeaders({
+      lightClient,
+      updates: [target],
+      label: "update Besu light client",
+    });
+    return target;
   }
 
-  if (currentHeight < target.headerUpdate.height) {
-    await txStep("update Besu light client", () =>
-      lightClient.updateClient(target.headerUpdate, target.validatorSet, txOptions())
-    );
+  let trusted = null;
+  let pendingUpdates = [];
+  while (currentHeight < height) {
+    const nextHeight = currentHeight + 1n;
+    const next = await buildVerifiableBesuHeaderAt({
+      provider,
+      height: nextHeight,
+      sourceChainId,
+      validatorEpoch,
+    });
+    pendingUpdates.push(next);
+    if (pendingUpdates.length >= HEADER_UPDATE_BATCH_SIZE) {
+      trusted = await updateLightClientHeaders({
+        lightClient,
+        updates: pendingUpdates,
+        label: "update Besu light client",
+      });
+      pendingUpdates = [];
+    }
+    currentHeight = nextHeight;
+  }
+  if (pendingUpdates.length > 0) {
+    trusted = await updateLightClientHeaders({
+      lightClient,
+      updates: pendingUpdates,
+      label: "update Besu light client",
+    });
   }
 
-  return target;
+  return trusted;
 }
 
 async function buildConnectionCommitmentProof({

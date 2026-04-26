@@ -86,6 +86,7 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
         require(trustedAnchor.stateRoot != bytes32(0), "TRUST_STATE_ROOT_ZERO");
         require(trustedAnchor.timestamp != 0, "TRUST_TIMESTAMP_ZERO");
         require(validatorSet_.validators.length > 0, "VALIDATOR_SET_EMPTY");
+        require(validatorSet_.activationHeight <= trustedAnchor.height, "VALIDATOR_SET_NOT_ACTIVE");
 
         BesuLightClientTypes.MisbehaviourEvidence memory evidence = frozenEvidence[sourceChainId];
         require(evidence.evidenceHash != bytes32(0), "FROZEN_EVIDENCE_MISSING");
@@ -124,6 +125,7 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
         require(trustedAnchor.stateRoot != bytes32(0), "TRUST_STATE_ROOT_ZERO");
         require(trustedAnchor.timestamp != 0, "TRUST_TIMESTAMP_ZERO");
         require(validatorSet_.validators.length > 0, "VALIDATOR_SET_EMPTY");
+        require(validatorSet_.activationHeight <= trustedAnchor.height, "VALIDATOR_SET_NOT_ACTIVE");
 
         bytes32 validatorsHash = BesuQBFTExtraDataLib.validatorsHash(validatorSet_.validators);
         require(trustedAnchor.validatorsHash == validatorsHash, "VALIDATORS_HASH_MISMATCH");
@@ -147,23 +149,60 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
         BesuLightClientTypes.HeaderUpdate calldata update,
         BesuLightClientTypes.ValidatorSet calldata expectedValidatorSet
     ) external returns (bytes32 trustedHeaderHash) {
+        return _updateClient(update, expectedValidatorSet);
+    }
+
+    function updateClientBatch(
+        BesuLightClientTypes.HeaderUpdate[] calldata updates,
+        BesuLightClientTypes.ValidatorSet[] calldata expectedValidatorSets
+    ) external returns (bytes32 trustedHeaderHash) {
+        require(updates.length > 0, "HEADER_BATCH_EMPTY");
+        require(updates.length == expectedValidatorSets.length, "HEADER_BATCH_LENGTH_MISMATCH");
+
+        for (uint256 i = 0; i < updates.length; i++) {
+            trustedHeaderHash = _updateClient(updates[i], expectedValidatorSets[i]);
+            if (clientStatuses[updates[i].sourceChainId] != BesuLightClientTypes.ClientStatus.Active) {
+                return trustedHeaderHash;
+            }
+        }
+    }
+
+    function _updateClient(
+        BesuLightClientTypes.HeaderUpdate calldata update,
+        BesuLightClientTypes.ValidatorSet calldata expectedValidatorSet
+    ) internal returns (bytes32 trustedHeaderHash) {
         uint256 sourceChainId = update.sourceChainId;
         require(clientStatuses[sourceChainId] == BesuLightClientTypes.ClientStatus.Active, "CLIENT_NOT_ACTIVE");
         require(update.height > 0, "HEIGHT_ZERO");
         require(update.rawHeaderRlp.length > 0, "HEADER_RLP_EMPTY");
-        require(update.headerHash == keccak256(update.rawHeaderRlp), "HEADER_HASH_MISMATCH");
+        require(update.blockHeaderRlp.length > 0, "BLOCK_HEADER_RLP_EMPTY");
+        bytes32 sealHeaderHash = keccak256(update.rawHeaderRlp);
+        require(update.headerHash == keccak256(update.blockHeaderRlp), "HEADER_HASH_MISMATCH");
         require(expectedValidatorSet.validators.length > 0, "VALIDATOR_SET_EMPTY");
+        require(expectedValidatorSet.activationHeight <= update.height, "VALIDATOR_SET_NOT_ACTIVE");
 
-        BesuBlockHeaderLib.ParsedHeader memory parsedHeader = BesuBlockHeaderLib.parse(update.rawHeaderRlp);
-        require(parsedHeader.parentHash == update.parentHash, "HEADER_PARENT_FIELD_MISMATCH");
-        require(parsedHeader.stateRoot == update.stateRoot, "HEADER_STATE_ROOT_MISMATCH");
-        require(parsedHeader.number == update.height, "HEADER_HEIGHT_FIELD_MISMATCH");
+        BesuBlockHeaderLib.ParsedHeader memory sealHeader = BesuBlockHeaderLib.parse(update.rawHeaderRlp);
+        BesuBlockHeaderLib.ParsedHeader memory blockHeader = BesuBlockHeaderLib.parse(update.blockHeaderRlp);
+        require(blockHeader.parentHash == update.parentHash, "HEADER_PARENT_FIELD_MISMATCH");
+        require(blockHeader.stateRoot == update.stateRoot, "HEADER_STATE_ROOT_MISMATCH");
+        require(blockHeader.number == update.height, "HEADER_HEIGHT_FIELD_MISMATCH");
+        require(sealHeader.parentHash == blockHeader.parentHash, "SEAL_PARENT_FIELD_MISMATCH");
+        require(sealHeader.stateRoot == blockHeader.stateRoot, "SEAL_STATE_ROOT_MISMATCH");
+        require(sealHeader.number == blockHeader.number, "SEAL_HEIGHT_FIELD_MISMATCH");
+        require(sealHeader.timestamp == blockHeader.timestamp, "SEAL_TIMESTAMP_MISMATCH");
 
         BesuLightClientTypes.ParsedExtraData memory parsed = BesuQBFTExtraDataLib.parse(update.extraData);
-        BesuLightClientTypes.ParsedExtraData memory sealParsed = BesuQBFTExtraDataLib.parse(parsedHeader.extraData);
+        BesuLightClientTypes.ParsedExtraData memory sealParsed = BesuQBFTExtraDataLib.parse(sealHeader.extraData);
+        BesuLightClientTypes.ParsedExtraData memory blockHashParsed = BesuQBFTExtraDataLib.parse(blockHeader.extraData);
         _requireSealHeaderExtraDataMatches(parsed, sealParsed);
-        bytes32 validatorsHash = BesuQBFTExtraDataLib.validatorsHash(expectedValidatorSet.validators);
-        _verifyFinality(update, parsed, expectedValidatorSet);
+        _requireBlockHashHeaderExtraDataMatches(parsed, blockHashParsed);
+
+        BesuLightClientTypes.TrustedHeader storage latest =
+            trustedHeaders[sourceChainId][latestTrustedHeight[sourceChainId]];
+        require(latest.exists, "TRUST_ANCHOR_MISSING");
+
+        bytes32 validatorsHash = _requireTrustedValidatorSet(sourceChainId, expectedValidatorSet);
+        _verifyFinality(update, parsed, expectedValidatorSet, sealHeaderHash);
 
         trustedHeaderHash = update.headerHash;
         BesuLightClientTypes.TrustedHeader memory nextTrustedHeader = BesuLightClientTypes.TrustedHeader({
@@ -172,7 +211,7 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
             headerHash: trustedHeaderHash,
             parentHash: update.parentHash,
             stateRoot: update.stateRoot,
-            timestamp: parsedHeader.timestamp,
+            timestamp: blockHeader.timestamp,
             validatorsHash: validatorsHash,
             exists: true
         });
@@ -183,12 +222,9 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
             return trustedHeaderHash;
         }
 
-        BesuLightClientTypes.TrustedHeader storage latest = trustedHeaders[sourceChainId][latestTrustedHeight[sourceChainId]];
-        require(latest.exists, "TRUST_ANCHOR_MISSING");
         require(update.height > latest.height, "HEIGHT_NOT_FORWARD");
-        if (update.height == latest.height + 1) {
-            require(update.parentHash == latest.headerHash, "PARENT_HASH_MISMATCH");
-        }
+        require(update.height == latest.height + 1, "HEIGHT_NOT_ADJACENT");
+        require(update.parentHash == latest.headerHash, "PARENT_HASH_MISMATCH");
 
         trustedHeaders[sourceChainId][update.height] = nextTrustedHeader;
         latestTrustedHeight[sourceChainId] = update.height;
@@ -229,6 +265,22 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
         return validatorSets[sourceChainId][epoch];
     }
 
+    function _requireTrustedValidatorSet(
+        uint256 sourceChainId,
+        BesuLightClientTypes.ValidatorSet calldata expectedValidatorSet
+    ) internal view returns (bytes32 validatorsHash) {
+        BesuLightClientTypes.ValidatorSet storage current =
+            validatorSets[sourceChainId][latestValidatorEpoch[sourceChainId]];
+        require(current.validators.length > 0, "TRUSTED_VALIDATOR_SET_MISSING");
+        require(expectedValidatorSet.epoch == current.epoch, "UNSUPPORTED_VALIDATOR_SET_ROTATION");
+
+        validatorsHash = BesuQBFTExtraDataLib.validatorsHash(expectedValidatorSet.validators);
+        require(
+            validatorsHash == BesuQBFTExtraDataLib.validatorsHash(current.validators),
+            "CURRENT_VALIDATOR_SET_MISMATCH"
+        );
+    }
+
     function _requireSealHeaderExtraDataMatches(
         BesuLightClientTypes.ParsedExtraData memory parsed,
         BesuLightClientTypes.ParsedExtraData memory sealParsed
@@ -244,10 +296,26 @@ abstract contract BesuLightClientBase is AccessControl, IBesuLightClient {
         require(parsed.round == sealParsed.round, "SEAL_EXTRA_ROUND_MISMATCH");
     }
 
+    function _requireBlockHashHeaderExtraDataMatches(
+        BesuLightClientTypes.ParsedExtraData memory parsed,
+        BesuLightClientTypes.ParsedExtraData memory blockHashParsed
+    ) internal pure {
+        require(blockHashParsed.commitSeals.length == 0, "BLOCK_HASH_HEADER_HAS_COMMIT_SEALS");
+        require(parsed.vanity == blockHashParsed.vanity, "BLOCK_HASH_EXTRA_VANITY_MISMATCH");
+        require(
+            BesuQBFTExtraDataLib.validatorsHash(parsed.validators) ==
+                BesuQBFTExtraDataLib.validatorsHash(blockHashParsed.validators),
+            "BLOCK_HASH_EXTRA_VALIDATORS_MISMATCH"
+        );
+        require(keccak256(parsed.vote) == keccak256(blockHashParsed.vote), "BLOCK_HASH_EXTRA_VOTE_MISMATCH");
+        require(blockHashParsed.round == 0, "BLOCK_HASH_EXTRA_ROUND_NONZERO");
+    }
+
     function _verifyFinality(
         BesuLightClientTypes.HeaderUpdate calldata update,
         BesuLightClientTypes.ParsedExtraData memory parsed,
-        BesuLightClientTypes.ValidatorSet calldata expectedValidatorSet
+        BesuLightClientTypes.ValidatorSet calldata expectedValidatorSet,
+        bytes32 sealHeaderHash
     ) internal view virtual;
 
     function _freeze(

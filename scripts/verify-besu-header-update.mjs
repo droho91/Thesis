@@ -24,14 +24,15 @@ async function main() {
   });
 
   const { headerUpdate, parsedExtraData, validatorSet, derived } = result;
-  const recovered = parsedExtraData.commitSeals.map((seal) => ethers.recoverAddress(headerUpdate.headerHash, seal));
+  const recovered = parsedExtraData.commitSeals.map((seal) => ethers.recoverAddress(derived.rawHeaderHash, seal));
   const uniqueRecovered = unique(recovered);
   const expected = validatorSet.validators.map((value) => value.toLowerCase());
   const missing = uniqueRecovered.filter((value) => !expected.includes(value));
 
   console.log(`block height        ${headerUpdate.height}`);
   console.log(`block hash          ${headerUpdate.headerHash}`);
-  console.log(`derived hash        ${derived.rawHeaderHash}`);
+  console.log(`block header hash   ${derived.blockHeaderHash}`);
+  console.log(`seal header hash    ${derived.rawHeaderHash}`);
   console.log(`validators hash     ${derived.validatorsHash}`);
   console.log(`validators          ${validatorSet.validators.length}`);
   console.log(`minimum seals       ${minimumCommitSeals(validatorSet.validators.length)}`);
@@ -45,8 +46,8 @@ async function main() {
     return;
   }
 
-  if (headerUpdate.headerHash.toLowerCase() !== derived.rawHeaderHash.toLowerCase()) {
-    console.log("header hash mismatch between RPC block hash and Besu seal header hash");
+  if (headerUpdate.headerHash.toLowerCase() !== derived.blockHeaderHash.toLowerCase()) {
+    console.log("header hash mismatch between RPC block hash and canonical block header hash");
     process.exitCode = 1;
     return;
   }

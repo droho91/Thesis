@@ -8,16 +8,18 @@ import {BesuLightClientBase} from "./BesuLightClientBase.sol";
 
 /// @title BesuLightClient
 /// @notice Concrete Besu/QBFT light-client shell.
-/// @dev This version verifies the validator set committed in `extraData` and the commit seals that sign
-///      the Besu block hash directly. Validator-set transitions are still intentionally conservative and
-///      explicit; dynamic epoch derivation can evolve on top of this shell.
+/// @dev This version verifies adjacent Besu/QBFT headers under the validator set that is already trusted
+///      by the client. Commit seals are checked against the QBFT seal-header hash, while parent linkage
+///      uses the canonical block hash. Validator-set rotation is intentionally unsupported in the prototype
+///      until a transition proof signed by the currently trusted set is added.
 contract BesuLightClient is BesuLightClientBase {
     constructor(address admin) BesuLightClientBase(admin) {}
 
     function _verifyFinality(
         BesuLightClientTypes.HeaderUpdate calldata update,
         BesuLightClientTypes.ParsedExtraData memory parsed,
-        BesuLightClientTypes.ValidatorSet calldata expectedValidatorSet
+        BesuLightClientTypes.ValidatorSet calldata expectedValidatorSet,
+        bytes32 sealHeaderHash
     ) internal view override {
         require(parsed.validators.length == expectedValidatorSet.validators.length, "EXTRA_DATA_VALIDATOR_COUNT");
         require(
@@ -32,7 +34,7 @@ contract BesuLightClient is BesuLightClientBase {
         address[] memory recovered = new address[](parsed.commitSeals.length);
         uint256 uniqueRecovered;
         for (uint256 i = 0; i < parsed.commitSeals.length; i++) {
-            address signer = _recoverCommitSeal(update.headerHash, parsed.commitSeals[i]);
+            address signer = _recoverCommitSeal(sealHeaderHash, parsed.commitSeals[i]);
             require(_contains(expectedValidatorSet.validators, signer), "COMMIT_SEAL_SIGNER_UNKNOWN");
             require(!_contains(recovered, signer, uniqueRecovered), "COMMIT_SEAL_DUPLICATE_SIGNER");
             recovered[uniqueRecovered] = signer;

@@ -14,6 +14,10 @@ contract BesuLightClientTest is Test {
     uint256 internal validatorKey1 = 102;
     uint256 internal validatorKey2 = 103;
     uint256 internal validatorKey3 = 104;
+    uint256 internal attackerKey0 = 201;
+    uint256 internal attackerKey1 = 202;
+    uint256 internal attackerKey2 = 203;
+    uint256 internal attackerKey3 = 204;
     uint256 internal unknownKey = 999;
 
     BesuLightClient internal client;
@@ -63,16 +67,56 @@ contract BesuLightClientTest is Test {
         client.updateClient(update, _validatorSet(2));
     }
 
-    function testUpdateClientAcceptsSkipWithValidCommitSeals() public {
+    function testUpdateClientBatchAcceptsAdjacentHeaders() public {
+        BesuLightClientTypes.HeaderUpdate memory update2 =
+            _headerUpdate(2, keccak256("anchor-header"), keccak256("state-root-2"), validators, _signerKeys3());
+        BesuLightClientTypes.HeaderUpdate memory update3 =
+            _headerUpdate(3, update2.headerHash, keccak256("state-root-3"), validators, _signerKeys3());
+
+        BesuLightClientTypes.HeaderUpdate[] memory updates = new BesuLightClientTypes.HeaderUpdate[](2);
+        updates[0] = update2;
+        updates[1] = update3;
+        BesuLightClientTypes.ValidatorSet[] memory validatorSets_ = new BesuLightClientTypes.ValidatorSet[](2);
+        validatorSets_[0] = _validatorSet(2);
+        validatorSets_[1] = _validatorSet(3);
+
+        bytes32 trustedHeaderHash = client.updateClientBatch(updates, validatorSets_);
+
+        assertEq(trustedHeaderHash, update3.headerHash);
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 2), update2.stateRoot);
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 3), update3.stateRoot);
+        assertEq(client.latestTrustedHeight(SOURCE_CHAIN_ID), 3);
+    }
+
+    function testUpdateClientBatchRejectsHeightGapAtomically() public {
+        BesuLightClientTypes.HeaderUpdate memory update2 =
+            _headerUpdate(2, keccak256("anchor-header"), keccak256("state-root-2"), validators, _signerKeys3());
+        BesuLightClientTypes.HeaderUpdate memory update4 =
+            _headerUpdate(4, update2.headerHash, keccak256("state-root-4"), validators, _signerKeys3());
+
+        BesuLightClientTypes.HeaderUpdate[] memory updates = new BesuLightClientTypes.HeaderUpdate[](2);
+        updates[0] = update2;
+        updates[1] = update4;
+        BesuLightClientTypes.ValidatorSet[] memory validatorSets_ = new BesuLightClientTypes.ValidatorSet[](2);
+        validatorSets_[0] = _validatorSet(2);
+        validatorSets_[1] = _validatorSet(4);
+
+        vm.expectRevert(bytes("HEIGHT_NOT_ADJACENT"));
+        client.updateClientBatch(updates, validatorSets_);
+
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 2), bytes32(0));
+        assertEq(client.latestTrustedHeight(SOURCE_CHAIN_ID), 1);
+    }
+
+    function testUpdateClientRejectsSkipWithValidCommitSeals() public {
         BesuLightClientTypes.HeaderUpdate memory update =
             _headerUpdate(10, keccak256("non-adjacent-parent"), keccak256("state-root-10"), validators, _signerKeys3());
 
-        bytes32 trustedHeaderHash = client.updateClient(update, _validatorSet(10));
+        vm.expectRevert(bytes("HEIGHT_NOT_ADJACENT"));
+        client.updateClient(update, _validatorSet(10));
 
-        assertEq(trustedHeaderHash, update.headerHash);
-        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 10), update.stateRoot);
-        assertEq(client.trustedTimestamp(SOURCE_CHAIN_ID, 10), 1_700_000_010);
-        assertEq(client.latestTrustedHeight(SOURCE_CHAIN_ID), 10);
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 10), bytes32(0));
+        assertEq(client.latestTrustedHeight(SOURCE_CHAIN_ID), 1);
     }
 
     function testUpdateClientFreezesOnConflictingTrustedHeight() public {
@@ -168,15 +212,67 @@ contract BesuLightClientTest is Test {
     }
 
     function testUpdateClientRejectsUntrustedStaleHeight() public {
-        BesuLightClientTypes.HeaderUpdate memory latestUpdate =
-            _headerUpdate(10, keccak256("non-adjacent-parent"), keccak256("state-root-10"), validators, _signerKeys3());
-        client.updateClient(latestUpdate, _validatorSet(10));
-
-        BesuLightClientTypes.HeaderUpdate memory staleUpdate =
-            _headerUpdate(5, keccak256("stale-parent"), keccak256("state-root-5"), validators, _signerKeys3());
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(2, keccak256("anchor-header"), keccak256("state-root-2"), validators, _signerKeys3());
+        client.updateClient(update, _validatorSet(2));
 
         vm.expectRevert(bytes("HEIGHT_NOT_FORWARD"));
-        client.updateClient(staleUpdate, _validatorSet(5));
+        client.updateClient(update, _validatorSet(2));
+    }
+
+    function testUpdateClientRejectsSelfCertifiedValidatorSet() public {
+        address[] memory attackerValidators = _attackerValidators();
+        BesuLightClientTypes.HeaderUpdate memory update = _headerUpdate(
+            2,
+            keccak256("anchor-header"),
+            keccak256("self-certified-state-root"),
+            attackerValidators,
+            _attackerSignerKeys3()
+        );
+
+        vm.expectRevert(bytes("UNSUPPORTED_VALIDATOR_SET_ROTATION"));
+        client.updateClient(update, _validatorSetFrom(2, 2, attackerValidators));
+    }
+
+    function testUpdateClientRejectsValidatorSetMismatchAtTrustedEpoch() public {
+        address[] memory attackerValidators = _attackerValidators();
+        BesuLightClientTypes.HeaderUpdate memory update = _headerUpdate(
+            2,
+            keccak256("anchor-header"),
+            keccak256("same-epoch-attacker-root"),
+            attackerValidators,
+            _attackerSignerKeys3()
+        );
+
+        vm.expectRevert(bytes("CURRENT_VALIDATOR_SET_MISMATCH"));
+        client.updateClient(update, _validatorSetFrom(EPOCH, 2, attackerValidators));
+    }
+
+    function testUpdateClientRejectsValidatorRotationWithoutTrustedTransition() public {
+        address[] memory rotatedValidators = _attackerValidators();
+        BesuLightClientTypes.HeaderUpdate memory update = _headerUpdate(
+            2,
+            keccak256("anchor-header"),
+            keccak256("rotation-root"),
+            rotatedValidators,
+            _attackerSignerKeys3()
+        );
+
+        vm.expectRevert(bytes("UNSUPPORTED_VALIDATOR_SET_ROTATION"));
+        client.updateClient(update, _validatorSetFrom(EPOCH + 1, 2, rotatedValidators));
+    }
+
+    function testMaliciousStateRootUnderSelfCertifiedValidatorSetIsNotTrusted() public {
+        address[] memory attackerValidators = _attackerValidators();
+        bytes32 maliciousRoot = keccak256("malicious-state-root");
+        BesuLightClientTypes.HeaderUpdate memory update =
+            _headerUpdate(2, keccak256("anchor-header"), maliciousRoot, attackerValidators, _attackerSignerKeys3());
+
+        vm.expectRevert(bytes("UNSUPPORTED_VALIDATOR_SET_ROTATION"));
+        client.updateClient(update, _validatorSetFrom(EPOCH + 1, 2, attackerValidators));
+
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 2), bytes32(0));
+        assertEq(client.latestTrustedHeight(SOURCE_CHAIN_ID), 1);
     }
 
     function testUpdateClientRejectsWrongStateRootField() public {
@@ -246,11 +342,36 @@ contract BesuLightClientTest is Test {
         validatorSet_.validators = validators;
     }
 
+    function _validatorSetFrom(uint256 epoch, uint256 activationHeight, address[] memory validatorAddresses)
+        internal
+        pure
+        returns (BesuLightClientTypes.ValidatorSet memory validatorSet_)
+    {
+        validatorSet_.epoch = epoch;
+        validatorSet_.activationHeight = activationHeight;
+        validatorSet_.validators = validatorAddresses;
+    }
+
     function _signerKeys3() internal view returns (uint256[] memory signerKeys) {
         signerKeys = new uint256[](3);
         signerKeys[0] = validatorKey0;
         signerKeys[1] = validatorKey1;
         signerKeys[2] = validatorKey2;
+    }
+
+    function _attackerValidators() internal view returns (address[] memory attackerValidators) {
+        attackerValidators = new address[](4);
+        attackerValidators[0] = vm.addr(attackerKey0);
+        attackerValidators[1] = vm.addr(attackerKey1);
+        attackerValidators[2] = vm.addr(attackerKey2);
+        attackerValidators[3] = vm.addr(attackerKey3);
+    }
+
+    function _attackerSignerKeys3() internal view returns (uint256[] memory signerKeys) {
+        signerKeys = new uint256[](3);
+        signerKeys[0] = attackerKey0;
+        signerKeys[1] = attackerKey1;
+        signerKeys[2] = attackerKey2;
     }
 
     function _headerUpdate(
@@ -270,12 +391,15 @@ contract BesuLightClientTest is Test {
         }
 
         bytes memory fullExtraData = _qbftExtraData(extraValidators, commitSeals);
+        bytes memory blockHeaderRlp = sealHeaderRlp;
+        bytes32 blockHash = keccak256(blockHeaderRlp);
 
         update = BesuLightClientTypes.HeaderUpdate({
             sourceChainId: SOURCE_CHAIN_ID,
             height: height,
             rawHeaderRlp: sealHeaderRlp,
-            headerHash: sealHash,
+            blockHeaderRlp: blockHeaderRlp,
+            headerHash: blockHash,
             parentHash: parentHash,
             stateRoot: stateRoot,
             extraData: fullExtraData

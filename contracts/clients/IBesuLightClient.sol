@@ -27,6 +27,11 @@ interface IBesuLightClient {
         BesuLightClientTypes.ValidatorSet calldata expectedValidatorSet
     ) external returns (bytes32 trustedHeaderHash);
 
+    function updateClientBatch(
+        BesuLightClientTypes.HeaderUpdate[] calldata updates,
+        BesuLightClientTypes.ValidatorSet[] calldata expectedValidatorSets
+    ) external returns (bytes32 trustedHeaderHash);
+
     function trustedStateRoot(uint256 sourceChainId, uint256 height) external view returns (bytes32);
 
     function trustedTimestamp(uint256 sourceChainId, uint256 height) external view returns (uint256);

@@ -63,6 +63,13 @@ contract MockBesuLightClient is IBesuLightClient {
         return bytes32(0);
     }
 
+    function updateClientBatch(
+        BesuLightClientTypes.HeaderUpdate[] calldata,
+        BesuLightClientTypes.ValidatorSet[] calldata
+    ) external pure returns (bytes32) {
+        return bytes32(0);
+    }
+
     function trustedStateRoot(uint256 sourceChainId, uint256 height) external view returns (bytes32) {
         return roots[sourceChainId][height];
     }

@@ -60,6 +60,19 @@ contract PacketReceiveTest is PacketHandlerFixture {
         handlerB.recvPacketFromStorageProof(packet, leafProof, pathProof);
     }
 
+    function testRecvPacketFromStorageProofRejectsUntrustedStateRoot() public {
+        IBCPacketLib.Packet memory packet = _packet();
+        address packetStore = address(0xA11CE);
+        BuiltPacketStorageProof memory built = _buildPacketStorageProof(packetStore, packet);
+        handlerB.setTrustedPacketStore(CHAIN_A, packetStore);
+
+        (IBCEVMTypes.StorageProof memory leafProof, IBCEVMTypes.StorageProof memory pathProof) =
+            _packetProofs(packet, packetStore, TRUSTED_HEIGHT_A, built);
+
+        vm.expectRevert(bytes("INVALID_PACKET_STORAGE_PROOF"));
+        handlerB.recvPacketFromStorageProof(packet, leafProof, pathProof);
+    }
+
     function testRecvPacketFromStorageProofRejectsFrozenClient() public {
         IBCPacketLib.Packet memory packet = _packet();
         address packetStore = address(0xA11CE);

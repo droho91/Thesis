@@ -77,6 +77,14 @@ export function blockForSealHash(block) {
   };
 }
 
+export function blockForBlockHash(block) {
+  const parsed = parseQbftExtraData(block.extraData);
+  return {
+    ...block,
+    extraData: ethers.encodeRlp([parsed.vanity, parsed.validators, [], "0x", []]),
+  };
+}
+
 function chainFolder(chainKey) {
   if (chainKey === "A" || chainKey === "chainA") return "chainA";
   if (chainKey === "B" || chainKey === "chainB") return "chainB";
@@ -119,6 +127,7 @@ export async function buildBesuHeaderUpdate({
 
   const sealBlock = blockForSealHash(block);
   const rawHeaderRlp = encodeBlockHeaderRlp(sealBlock);
+  const blockHeaderRlp = encodeBlockHeaderRlp(blockForBlockHash(block));
   const parsedExtraData = parseQbftExtraData(block.extraData);
   const validatorSet = await qbftValidatorsByBlock(provider, blockTag);
 
@@ -127,6 +136,7 @@ export async function buildBesuHeaderUpdate({
       sourceChainId,
       height: BigInt(block.number),
       rawHeaderRlp,
+      blockHeaderRlp,
       headerHash: block.hash,
       parentHash: block.parentHash,
       stateRoot: block.stateRoot,
@@ -140,6 +150,7 @@ export async function buildBesuHeaderUpdate({
     parsedExtraData,
     derived: {
       rawHeaderHash: ethers.keccak256(rawHeaderRlp),
+      blockHeaderHash: ethers.keccak256(blockHeaderRlp),
       validatorsHash: validatorsHash(validatorSet),
     },
     block,
@@ -179,19 +190,26 @@ export async function buildConflictingBesuHeaderUpdate({
     extraData: ethers.encodeRlp([vanity, validatorsRaw, voteRaw, roundRaw, []]),
   };
   const rawHeaderRlp = encodeBlockHeaderRlp(sealHeader);
-  const headerHash = ethers.keccak256(rawHeaderRlp);
+  const sealHash = ethers.keccak256(rawHeaderRlp);
   const commitSeals = await qbftCommitSealsForHeaderHash({
     chainKey,
     validators: base.validatorSet.validators,
-    headerHash,
+    headerHash: sealHash,
   });
   const fullExtraData = ethers.encodeRlp([vanity, validatorsRaw, voteRaw, roundRaw, commitSeals]);
+  const blockHeaderRlp = encodeBlockHeaderRlp({
+    ...base.block,
+    stateRoot: syntheticStateRoot,
+    extraData: ethers.encodeRlp([vanity, validatorsRaw, voteRaw, "0x", []]),
+  });
+  const headerHash = ethers.keccak256(blockHeaderRlp);
 
   return {
     headerUpdate: {
       sourceChainId,
       height: base.headerUpdate.height,
       rawHeaderRlp,
+      blockHeaderRlp,
       headerHash,
       parentHash: base.headerUpdate.parentHash,
       stateRoot: syntheticStateRoot,
@@ -200,7 +218,8 @@ export async function buildConflictingBesuHeaderUpdate({
     validatorSet: base.validatorSet,
     parsedExtraData: parseQbftExtraData(fullExtraData),
     derived: {
-      rawHeaderHash: headerHash,
+      rawHeaderHash: sealHash,
+      blockHeaderHash: headerHash,
       validatorsHash: base.derived.validatorsHash,
     },
     block: {

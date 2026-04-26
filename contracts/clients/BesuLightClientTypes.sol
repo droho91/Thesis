@@ -16,10 +16,13 @@ library BesuLightClientTypes {
     struct HeaderUpdate {
         uint256 sourceChainId;
         uint256 height;
-        /// @notice Besu/QBFT seal header RLP. This is the canonical block-hash preimage in Besu QBFT:
+        /// @notice Besu/QBFT seal header RLP. This is the commit-seal signing preimage:
         ///         it is identical to the block header except commit seals are empty in extraData.
         bytes rawHeaderRlp;
-        /// @notice Besu QBFT block hash, i.e. keccak256(rawHeaderRlp). Child headers reference this.
+        /// @notice Besu/QBFT block-hash header RLP. It uses empty commit seals and round zero; its hash is
+        ///         the canonical block hash used by child parentHash fields.
+        bytes blockHeaderRlp;
+        /// @notice Canonical Besu QBFT block hash. Child headers reference this value.
         bytes32 headerHash;
         bytes32 parentHash;
         bytes32 stateRoot;
