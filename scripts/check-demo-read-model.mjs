@@ -12,15 +12,19 @@ import {
 
 const e18 = (value) => ethers.parseUnits(value, 18);
 
-function actionBlock(source, action) {
-  const start = source.indexOf(`if (action === "${action}")`);
-  assert.notEqual(start, -1, `${action} action block should exist`);
-  const next = source.indexOf("\n  if (action ===", start + 1);
+function functionBlock(source, name) {
+  const start = source.indexOf(`export async function ${name}`);
+  assert.notEqual(start, -1, `${name} function block should exist`);
+  const next = source.indexOf("\nexport async function", start + 1);
   return source.slice(start, next === -1 ? source.length : next);
 }
 
 const demoRunner = await readFile(resolve(process.cwd(), "scripts", "run-lending-demo.mjs"), "utf8");
-const repayBlock = actionBlock(demoRunner, "repay");
+const lendingActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "lending-actions.mjs"), "utf8");
+const timeoutActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "timeout-actions.mjs"), "utf8");
+const borrowerScenario = await readFile(resolve(process.cwd(), "scripts", "demo", "scenarios", "borrower-closeout.mjs"), "utf8");
+
+const repayBlock = functionBlock(lendingActions, "repayStep");
 assert.match(repayBlock, /debtBeforeRepay/, "repay should record debtBeforeRepay");
 assert.match(repayBlock, /debtAfterRepay/, "repay should record debtAfterRepay");
 assert.match(repayBlock, /repayAmount/, "repay should record repayAmount");
@@ -29,7 +33,7 @@ assert.doesNotMatch(repayBlock, /debtAfterLiquidation/, "repay must not write de
 assert.doesNotMatch(repayBlock, /collateralAfterLiquidation/, "repay must not write collateralAfterLiquidation");
 assert.doesNotMatch(repayBlock, /badDebtWrittenOff|reservesUsed|supplierLoss/, "repay must not write liquidation loss fields");
 
-const withdrawBlock = actionBlock(demoRunner, "withdrawCollateral");
+const withdrawBlock = functionBlock(lendingActions, "withdrawCollateralStep");
 assert.match(withdrawBlock, /collateralBeforeWithdrawal/, "withdraw should record collateralBeforeWithdrawal");
 assert.match(withdrawBlock, /collateralAfterWithdrawal/, "withdraw should record collateralAfterWithdrawal");
 assert.match(withdrawBlock, /withdrawAmount/, "withdraw should record withdrawAmount");
@@ -38,10 +42,10 @@ assert.doesNotMatch(withdrawBlock, /debtAfterLiquidation/, "withdraw must not wr
 assert.doesNotMatch(withdrawBlock, /collateralAfterLiquidation/, "withdraw must not write collateralAfterLiquidation");
 assert.doesNotMatch(withdrawBlock, /badDebtWrittenOff|reservesUsed|supplierLoss/, "withdraw must not write liquidation loss fields");
 
-const timeoutRefundBlock = actionBlock(demoRunner, "executeTimeoutRefund");
+const timeoutRefundBlock = functionBlock(timeoutActions, "executeTimeoutRefundStep");
 assert.match(timeoutRefundBlock, /executeTimeoutRefundAction/, "timeout refund action should use the shared on-chain timeout helper");
 assert.match(timeoutRefundBlock, /timeout-refunded/, "timeout refund action should record the timeout-refunded phase");
-assert.match(demoRunner, /async function executeTimeoutRefundAction/, "demo runner should extract timeout execution into a reusable helper");
+assert.match(timeoutActions, /export async function executeTimeoutRefundAction/, "timeout execution should live in a reusable helper");
 
 const demoHtml = await readFile(resolve(process.cwd(), "demo", "index.html"), "utf8");
 const proofInspectorHeadings = demoHtml.match(/<h2>Proof inspector<\/h2>/g) || [];
@@ -52,7 +56,7 @@ assert.match(demoHtml, /data-action="executeTimeoutRefund"/, "UI should expose t
 assert.doesNotMatch(demoHtml, /data-action="verifyTimeoutAbsence"/, "UI should not expose the legacy timeout marker");
 assert.doesNotMatch(demoHtml, /Show Timeout/, "UI timeout CTA should execute the refund instead of showing an explanation-only model");
 
-assert.match(demoRunner, /runBorrowerCloseoutScenario/, "demo runner should include a borrower closeout lifecycle");
+assert.match(borrowerScenario, /runBorrowerCloseoutScenario/, "demo modules should include a borrower closeout lifecycle");
 assert.match(demoRunner, /--scenario/, "demo runner should support explicit scenario selection");
 
 const traceShock = resolveShockPreviewPriceE18({

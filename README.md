@@ -38,7 +38,7 @@ Operational contracts include emergency pause controls for packet send/receive, 
 | --- | --- | --- |
 | Packet execution proof | Verified on-chain | The packet handler checks storage proof data against the configured light-client/proof-verifier boundary. |
 | Packet receipt replay protection | Verified on-chain | Packet receipts prevent the same packet proof from executing twice. |
-| Timeout absence path | Script-assisted / visualization | Full timeout execution is covered by scripts; the browser button can also mark the timeout model for explanation. |
+| Timeout absence path | Script-assisted, on-chain verified | The UI action and full demo submit a receipt absence proof; Bank A verifies the proof and records timeout/refund state on-chain. |
 | Manual oracle update | Prototype assumption | Prices are set by governed demo operators and checked for freshness, not sourced from a decentralized oracle. |
 | Policy allowlist and caps | Verified on-chain | `BankPolicyEngine` enforces account, asset, route, and exposure controls. |
 | Borrow capacity | Verified on-chain | The lending pool uses collateral value and `collateralFactorBps`. |

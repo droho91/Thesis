@@ -117,5 +117,5 @@ If you regenerate or restart a fresh Besu network, run `npm run deploy` and `npm
 - Manual governed oracle for demo purposes.
 - Role-gated liquidator in a permissioned banking-chain prototype.
 - Local Besu runtime and scripted demo accounts.
-- Some timeout/refund details are script-driven and visible in the UI after running the full terminal flow.
+- Timeout/refund proof construction remains script-assisted, while both the UI action and full terminal flow submit the proof to contracts for on-chain verification.
 - The contracts and UI are thesis-grade prototypes, not audited production systems.
