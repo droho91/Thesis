@@ -1214,7 +1214,7 @@ const FACT_LABELS = {
   settlementUnlocked: "Seized-voucher settlement",
   safetyState: "Light-client safety state",
   replayBlocked: "Replay protection",
-  timeoutAbsence: "Timeout absence model",
+  timeoutAbsence: "Receipt absence timeout proof",
   timeoutRefund: "Timeout refund",
   misbehaviour: "Conflicting-header evidence",
 };
@@ -1254,7 +1254,7 @@ function actionTitle(action) {
     recoverClient: "Recovered account safety",
     replayForward: "Tested duplicate protection",
     executeTimeoutRefund: "Executed timeout refund",
-    verifyTimeoutAbsence: "Marked timeout visualization",
+    verifyTimeoutAbsence: "Marked legacy timeout explanation",
     fullFlow: "Completed risk/liquidation lifecycle",
     borrowerCloseout: "Completed borrower closeout lifecycle",
     deploySeed: "Prepared demo account",

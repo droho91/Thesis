@@ -2647,15 +2647,17 @@ export async function runDemoStep(action, options = {}) {
           timeoutAbsenceImplemented: true,
           timeoutAbsence: {
             kind: "receipt-absence-proof",
-            status: "Visualization only",
-            note: "This UI action marks the timeout absence model; the full on-chain timeout execution is exercised by npm run demo.",
+            status: "Legacy/debug marker",
+            note:
+              "Legacy/debug marker only. The main timeout path is executeTimeoutRefund, which submits a receipt absence proof and records timeout/refund state on-chain.",
           },
         },
       },
       {
-        phase: "receipt-absence-ready",
-        label: "Receipt absence model noted",
-        summary: "This UI-only marker explains the timeout absence proof path; run the full script to execute timeout on-chain.",
+        phase: "legacy-timeout-marker",
+        label: "Legacy timeout explanation marker",
+        summary:
+          "Legacy/debug marker only; use executeTimeoutRefund for the script-assisted, on-chain verified timeout refund path.",
       }
     );
   }

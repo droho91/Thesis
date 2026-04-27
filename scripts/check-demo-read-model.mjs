@@ -49,8 +49,8 @@ assert.equal(proofInspectorHeadings.length, 1, "Proof inspector heading should a
 assert.match(demoHtml, /data-workflow-step="return"/, "borrower workflow should expose an explicit return/settle step");
 assert.match(demoHtml, /data-workflow-panel="return redeem"/, "redeem panel should be reachable from the return/settle step");
 assert.match(demoHtml, /data-action="executeTimeoutRefund"/, "UI should expose the real timeout refund action");
-assert.doesNotMatch(demoHtml, /data-action="verifyTimeoutAbsence"/, "UI should not prioritize the visualization-only timeout marker");
-assert.doesNotMatch(demoHtml, /Show Timeout Model/, "UI timeout CTA should execute the refund instead of showing a model");
+assert.doesNotMatch(demoHtml, /data-action="verifyTimeoutAbsence"/, "UI should not expose the legacy timeout marker");
+assert.doesNotMatch(demoHtml, /Show Timeout/, "UI timeout CTA should execute the refund instead of showing an explanation-only model");
 
 assert.match(demoRunner, /runBorrowerCloseoutScenario/, "demo runner should include a borrower closeout lifecycle");
 assert.match(demoRunner, /--scenario/, "demo runner should support explicit scenario selection");

@@ -38,12 +38,12 @@ It is not a production public bridge, not a decentralized oracle network, not au
 
 - Local Besu/QBFT network generation and lifecycle orchestration.
 - Header/proof collection from local RPC endpoints.
+- Execute Timeout Refund builds and relays the receipt absence proof; the contract verifies the proof and records timeout/refund state on-chain.
 - Guided demo sequencing and report generation.
 - Some scenario setup and status snapshots used for thesis demonstration.
 
 ### Visualization only
 
-- UI-only timeout model marker triggered by **Show Timeout Model**.
 - Scenario cards before the required packet/debt/proof state exists.
 - Local status summaries that explain state but do not replace contract verification.
 

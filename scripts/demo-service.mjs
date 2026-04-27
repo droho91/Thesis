@@ -82,7 +82,7 @@ function operationLabel(action) {
     freezeClient: "Freeze light client",
     recoverClient: "Recover light client",
     executeTimeoutRefund: "Execute Timeout Refund",
-    verifyTimeoutAbsence: "Mark timeout visualization",
+    verifyTimeoutAbsence: "Legacy timeout explanation marker",
   };
   return labels[action] || `demo action ${action || "unknown"}`;
 }

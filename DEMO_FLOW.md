@@ -65,7 +65,7 @@ The collateral factor / max LTV is different from the liquidation threshold. The
 | Liquidation health factor | Verified on-chain | The pool computes health from collateral value, debt, and `liquidationThresholdBps`. |
 | Liquidation preview | Verified on-chain | The pool returns borrower-specific requested repay, actual repay, collateral seizure, remaining state, bad debt, and executable status. |
 | Manual oracle update | Prototype assumption | The oracle is governed/manual in this prototype and has freshness checks. |
-| Timeout model button | Visualization only | The UI explains receipt absence; the full script exercises the on-chain timeout path. |
+| Execute Timeout Refund | Script-assisted, on-chain verified | The script builds and relays the receipt absence proof; the Bank A packet handler verifies it and records timeout/refund state on-chain. |
 | Demo orchestration | Script-assisted | Scripts collect headers/proofs, sequence transactions, and save reports in the local Besu/QBFT environment. |
 
 ## Proof inspector flow
@@ -86,7 +86,7 @@ Open **Scenarios** for defense-ready flows:
 - Repay and Withdraw Scenario: uses existing repayment and withdrawal actions.
 - Price Shock and Liquidation Scenario: uses the Risk Admin oracle shock and liquidation actions.
 - Replay Attack Rejection Scenario: submits an already received packet proof and expects rejection.
-- Timeout Refund Scenario: the UI shows the timeout absence model; the full refund path is exercised by `npm run demo`.
+- Timeout Refund Scenario: the UI action executes the receipt absence proof path; scripts build/relay the proof and the contract records timeout/refund state on-chain.
 - Light Client Freeze and Recovery Scenario: submits conflicting-header evidence and then recovers the client.
 
 Scenario cards show live snapshots where available. If the necessary packet, debt, proof, or client state does not exist yet, the UI labels that scenario as “Needs previous step” or “Script-backed” instead of pretending the flow has already run.
