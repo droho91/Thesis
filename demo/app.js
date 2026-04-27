@@ -101,6 +101,7 @@ function isTechnicalAction(action) {
     "freezeClient",
     "recoverClient",
     "replayForward",
+    "executeTimeoutRefund",
     "verifyTimeoutAbsence",
   ].includes(action);
 }
@@ -1176,6 +1177,9 @@ function snapshotStatus(status) {
       ? `blocked${status.security?.replayProofHeight ? ` @ ${status.security.replayProofHeight}` : ""}`
       : "pending",
     timeoutAbsence: timeoutAbsence ? `seq ${timeoutAbsence.absentSequence || "-"}` : null,
+    timeoutRefund: timeoutAbsence?.refundObserved
+      ? `refunded ${timeoutAbsence.packetId ? timeoutAbsence.packetId.slice(0, 10) : ""}`
+      : null,
     misbehaviour: misbehaviour.frozen
       ? `frozen ${misbehaviour.height || "-"}`
       : misbehaviour.recovered
@@ -1211,6 +1215,7 @@ const FACT_LABELS = {
   safetyState: "Light-client safety state",
   replayBlocked: "Replay protection",
   timeoutAbsence: "Timeout absence model",
+  timeoutRefund: "Timeout refund",
   misbehaviour: "Conflicting-header evidence",
 };
 
@@ -1248,6 +1253,7 @@ function actionTitle(action) {
     freezeClient: "Entered safety mode",
     recoverClient: "Recovered account safety",
     replayForward: "Tested duplicate protection",
+    executeTimeoutRefund: "Executed timeout refund",
     verifyTimeoutAbsence: "Marked timeout visualization",
     fullFlow: "Completed risk/liquidation lifecycle",
     borrowerCloseout: "Completed borrower closeout lifecycle",

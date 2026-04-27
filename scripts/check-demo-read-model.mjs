@@ -38,11 +38,19 @@ assert.doesNotMatch(withdrawBlock, /debtAfterLiquidation/, "withdraw must not wr
 assert.doesNotMatch(withdrawBlock, /collateralAfterLiquidation/, "withdraw must not write collateralAfterLiquidation");
 assert.doesNotMatch(withdrawBlock, /badDebtWrittenOff|reservesUsed|supplierLoss/, "withdraw must not write liquidation loss fields");
 
+const timeoutRefundBlock = actionBlock(demoRunner, "executeTimeoutRefund");
+assert.match(timeoutRefundBlock, /executeTimeoutRefundAction/, "timeout refund action should use the shared on-chain timeout helper");
+assert.match(timeoutRefundBlock, /timeout-refunded/, "timeout refund action should record the timeout-refunded phase");
+assert.match(demoRunner, /async function executeTimeoutRefundAction/, "demo runner should extract timeout execution into a reusable helper");
+
 const demoHtml = await readFile(resolve(process.cwd(), "demo", "index.html"), "utf8");
 const proofInspectorHeadings = demoHtml.match(/<h2>Proof inspector<\/h2>/g) || [];
 assert.equal(proofInspectorHeadings.length, 1, "Proof inspector heading should appear exactly once");
 assert.match(demoHtml, /data-workflow-step="return"/, "borrower workflow should expose an explicit return/settle step");
 assert.match(demoHtml, /data-workflow-panel="return redeem"/, "redeem panel should be reachable from the return/settle step");
+assert.match(demoHtml, /data-action="executeTimeoutRefund"/, "UI should expose the real timeout refund action");
+assert.doesNotMatch(demoHtml, /data-action="verifyTimeoutAbsence"/, "UI should not prioritize the visualization-only timeout marker");
+assert.doesNotMatch(demoHtml, /Show Timeout Model/, "UI timeout CTA should execute the refund instead of showing a model");
 
 assert.match(demoRunner, /runBorrowerCloseoutScenario/, "demo runner should include a borrower closeout lifecycle");
 assert.match(demoRunner, /--scenario/, "demo runner should support explicit scenario selection");

@@ -931,7 +931,7 @@ async function readOnchainDemoStatus(health) {
       timeoutStatus: deniedTimedOutLive
         ? "Timed out"
         : traceSecurity.timeoutAbsence || traceSecurity.nonMembership
-          ? "Visualization only"
+          ? traceSecurity.timeoutAbsence?.status || traceSecurity.nonMembership?.status || "Receipt absence ready"
           : "Pending",
       replayProtectionStatus: traceSecurity.replayBlocked || forwardConsumed ? "Protected" : "Pending",
       lightClientStatus: {
@@ -951,6 +951,9 @@ async function readOnchainDemoStatus(health) {
       lifecycleStatus: packetLifecycleStatus,
       deniedPacketId: trace?.denied?.packetId || null,
       timeoutStorageKey: trace?.timeout?.receiptStorageKey || traceSecurity.timeoutAbsence?.receiptSlot || null,
+      timeoutTxHash: trace?.denied?.timeoutTxHash || traceSecurity.timeoutAbsence?.timeoutTxHash || null,
+      timeoutRefundObserved: Boolean(trace?.denied?.refundObserved || traceSecurity.timeoutAbsence?.refundObserved),
+      timeoutTimedOut: Boolean(deniedTimedOutLive || traceSecurity.timeoutAbsence?.timedOut),
       replayProofHeight: traceSecurity.replayProofHeight || null,
     },
     trace,

@@ -534,6 +534,7 @@ function renderProofInspector(status) {
   setText("proofRecoveryStatus", proof.recoveryStatus || "-");
   setText("proofDeniedPacketId", compact(proof.deniedPacketId));
   setText("proofTimeoutKey", compact(proof.timeoutStorageKey));
+  setText("proofTimeoutTx", compact(proof.timeoutTxHash));
 }
 
 function renderScenarioState(status) {
@@ -593,8 +594,14 @@ function renderScenarioState(status) {
     "scenarioTimeoutBefore",
     proof.deniedPacketId ? `Denied ${compact(proof.deniedPacketId)}` : "Needs denied packet from script"
   );
-  setText("scenarioTimeoutAction", proof.timeoutStorageKey ? `Proof key ${compact(proof.timeoutStorageKey)}` : "Visualization only");
-  setText("scenarioTimeoutAfter", proof.timeoutStatus || "Timeout pending");
+  setText(
+    "scenarioTimeoutAction",
+    proof.timeoutStorageKey ? `Proof key ${compact(proof.timeoutStorageKey)}` : "Execute receipt absence proof"
+  );
+  setText(
+    "scenarioTimeoutAfter",
+    proof.timeoutRefundObserved ? `Refund observed${proof.timeoutTxHash ? ` / ${compact(proof.timeoutTxHash)}` : ""}` : proof.timeoutStatus || "Timeout pending"
+  );
   setText("scenarioFreezeBefore", proof.lightClientStatus ? `Client ${proof.lightClientStatus.bankAOnBankB || "-"}` : "Light client status -");
   setText("scenarioFreezeAction", proof.freezeEvidence?.evidenceHash ? `Evidence ${compact(proof.freezeEvidence.evidenceHash)}` : "Submit conflict / recover");
   setText("scenarioFreezeAfter", proof.recoveryStatus || "Recovery status -");
@@ -745,7 +752,9 @@ export function renderStatus(status) {
   setText(
     "timeoutAbsenceState",
     timeoutAbsence
-      ? `seq ${timeoutAbsence.absentSequence || "-"}`
+      ? timeoutAbsence.refundObserved
+        ? `refunded ${compact(timeoutAbsence.packetId)}`
+        : `packet ${compact(timeoutAbsence.packetId || timeoutAbsence.absentSequence)}`
       : security.timeoutAbsenceImplemented || security.nonMembershipImplemented
         ? "ready"
         : "-"

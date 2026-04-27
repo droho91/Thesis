@@ -984,7 +984,7 @@
           <div class="trust-boundary trust-boundary--panel" aria-label="Proof inspector trust boundary">
             <span class="trust-badge trust-badge--chain" title="Packet receipt, acknowledgement, replay rejection, and proof verification are enforced by contracts.">On-chain verified</span>
             <span class="trust-badge trust-badge--script" title="Headers and storage proofs are generated and relayed by local scripts.">Script-assisted</span>
-            <span class="trust-badge trust-badge--visual" title="Some timeout and architecture explanations are inspection views, not standalone transactions.">Visualization only</span>
+            <span class="trust-badge trust-badge--visual" title="Architecture diagrams and static explanations are inspection views, not standalone transactions.">Visualization only</span>
           </div>
           <div class="proof-flow" aria-label="Proof flow">
             <span>Bank A / Source Chain</span>
@@ -1077,13 +1077,17 @@
               <dt>Timeout proof key</dt>
               <dd id="proofTimeoutKey">-</dd>
             </div>
+            <div>
+              <dt>Timeout tx</dt>
+              <dd id="proofTimeoutTx">-</dd>
+            </div>
           </dl>
           <div class="action-buttons action-buttons--compact proof-actions">
             <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Fetch Source Header</button>
             <button class="button-secondary" data-action="updateForwardClient" type="button">Import Header on Bank B</button>
             <button class="button-run" data-action="proveForwardMint" type="button">Verify Packet Proof</button>
             <button class="button-danger" data-action="replayForward" type="button">Attempt Replay</button>
-            <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Model</button>
+            <button class="button-run" data-action="executeTimeoutRefund" type="button">Execute Timeout Refund</button>
             <button class="button-danger" data-action="freezeClient" type="button">Freeze Client</button>
             <button class="button-run" data-action="recoverClient" type="button">Recover Client</button>
           </div>
@@ -1195,21 +1199,21 @@
               <span class="status-chip" id="scenarioTimeoutStatus">Script-backed</span>
             </div>
             <div class="trust-boundary">
-              <span class="trust-badge trust-badge--visual">Visualization only</span>
               <span class="trust-badge trust-badge--script">Script-assisted</span>
+              <span class="trust-badge trust-badge--chain">On-chain verified</span>
             </div>
             <div class="scenario-live">
               <div><span>Before</span><strong id="scenarioTimeoutBefore">Needs denied packet</strong></div>
-              <div><span>Action</span><strong id="scenarioTimeoutAction">Show receipt absence model</strong></div>
+              <div><span>Action</span><strong id="scenarioTimeoutAction">Execute receipt absence proof</strong></div>
               <div><span>After</span><strong id="scenarioTimeoutAfter">Timeout pending</strong></div>
             </div>
             <dl>
               <div><dt>Before</dt><dd>A policy-denied packet has no destination receipt.</dd></div>
-              <div><dt>Action</dt><dd>Show the timeout absence model in the UI; the full guided script executes the on-chain timeout path.</dd></div>
+              <div><dt>Action</dt><dd>Submit a receipt absence proof to execute the on-chain timeout refund path.</dd></div>
               <div><dt>After</dt><dd>Source chain records timeout and refund state when the full flow runs.</dd></div>
               <div><dt>What this proves</dt><dd>Timeouts rely on receipt absence under a trusted destination state root.</dd></div>
             </dl>
-            <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Model</button>
+            <button class="button-run" data-action="executeTimeoutRefund" type="button">Execute Timeout Refund</button>
           </article>
 
           <article class="product-card scenario-card">
@@ -1506,7 +1510,7 @@
                 <button class="button-danger" data-action="freezeClient" type="button">Submit Conflicting Header</button>
                 <button class="button-run" data-action="recoverClient" type="button">Recover Light Client</button>
                 <button class="button-danger" data-action="replayForward" type="button">Test Replay Protection</button>
-                <button class="button-secondary" data-action="verifyTimeoutAbsence" type="button">Show Timeout Model</button>
+                <button class="button-run" data-action="executeTimeoutRefund" type="button">Execute Timeout Refund</button>
               </div>
             </details>
           </article>
