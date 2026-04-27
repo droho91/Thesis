@@ -294,6 +294,9 @@ a.button-secondary {
 }
 
 .nav-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -381,6 +384,48 @@ a.button-secondary {
   color: var(--green-dark);
   border-color: rgba(16, 185, 129, 0.24);
   background: rgba(16, 185, 129, 0.1);
+}
+
+.trust-boundary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.trust-boundary--panel {
+  margin-top: 0;
+}
+
+.trust-badge {
+  min-height: 26px;
+  padding: 4px 9px;
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.trust-badge--chain {
+  color: var(--green-dark);
+  border-color: rgba(16, 185, 129, 0.26);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.trust-badge--script {
+  color: var(--blue);
+  border-color: rgba(29, 78, 216, 0.22);
+  background: rgba(29, 78, 216, 0.08);
+}
+
+.trust-badge--visual {
+  color: #7c3aed;
+  border-color: rgba(124, 58, 237, 0.22);
+  background: rgba(124, 58, 237, 0.08);
+}
+
+.trust-badge--assumption {
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.1);
 }
 
 .product-hero-content {
@@ -548,7 +593,7 @@ h3 {
 
 .journey-steps {
   display: grid;
-  grid-template-columns: minmax(240px, 1.25fr) repeat(4, minmax(150px, 1fr));
+  grid-template-columns: minmax(220px, 1.2fr) repeat(5, minmax(132px, 1fr));
   gap: 12px;
   margin-top: 16px;
 }

@@ -4,8 +4,10 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {BankToken} from "../../contracts/apps/BankToken.sol";
 import {BankPolicyEngine} from "../../contracts/apps/BankPolicyEngine.sol";
+import {ManualAssetOracle} from "../../contracts/apps/ManualAssetOracle.sol";
 import {PolicyControlledVoucherToken} from "../../contracts/apps/PolicyControlledVoucherToken.sol";
 import {PolicyControlledEscrowVault} from "../../contracts/apps/PolicyControlledEscrowVault.sol";
+import {PolicyControlledLendingPool} from "../../contracts/apps/PolicyControlledLendingPool.sol";
 import {PolicyControlledTransferApp} from "../../contracts/apps/PolicyControlledTransferApp.sol";
 import {IBCPacketStore} from "../../contracts/core/IBCPacketStore.sol";
 import {IBCPacketLib} from "../../contracts/core/IBCPacketLib.sol";
@@ -16,6 +18,8 @@ contract PolicyTransferAppTest is Test {
 
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
+    address internal liquidator = address(0x119D8);
+    address internal outsider = address(0xBAD);
     address internal packetHandlerA = address(0x1001);
     address internal packetHandlerB = address(0x1002);
 
@@ -65,11 +69,13 @@ contract PolicyTransferAppTest is Test {
 
         policyA.setAccountAllowed(alice, true);
         policyA.setAccountAllowed(bob, true);
+        policyA.setAccountAllowed(liquidator, true);
         policyA.setSourceChainAllowed(CHAIN_B, true);
         policyA.setUnlockAssetAllowed(address(canonicalAsset), true);
 
         policyB.setAccountAllowed(alice, true);
         policyB.setAccountAllowed(bob, true);
+        policyB.setAccountAllowed(liquidator, true);
         policyB.setSourceChainAllowed(CHAIN_A, true);
         policyB.setMintAssetAllowed(address(canonicalAsset), true);
     }
@@ -197,6 +203,136 @@ contract PolicyTransferAppTest is Test {
         appB.burnAndRelease(CHAIN_A, alice, 10 ether, 70, 0);
     }
 
+    function testAuthorizedLiquidatorCanRedeemSeizedVoucher() public {
+        _lockCanonicalOnA(alice, 80 ether);
+        _mintVoucherOnB(liquidator, 60 ether, bytes32(uint256(41)));
+        appB.grantRole(appB.SETTLEMENT_OPERATOR_ROLE(), liquidator);
+
+        vm.prank(liquidator);
+        bytes32 packetId = appB.settleSeizedVoucher(CHAIN_A, liquidator, 30 ether, 70, 0);
+
+        IBCPacketLib.Packet memory packet = _burnPacket(1, liquidator, liquidator, 30 ether);
+        assertEq(packetId, IBCPacketLib.packetId(packet));
+        assertEq(packetStoreB.packetIdAt(1), packetId);
+        assertEq(voucherB.balanceOf(liquidator), 30 ether);
+        assertEq(policyB.voucherExposureOutstanding(address(canonicalAsset)), 30 ether);
+
+        vm.prank(packetHandlerA);
+        appA.onRecvPacket(packet, packetId);
+
+        assertEq(canonicalAsset.balanceOf(liquidator), 30 ether);
+        assertEq(escrowA.totalEscrowed(), 50 ether);
+    }
+
+    function testUnauthorizedLiquidatorCannotRedeemSeizedVoucher() public {
+        policyB.setAccountAllowed(outsider, true);
+        _mintVoucherOnB(outsider, 20 ether, bytes32(uint256(42)));
+
+        vm.expectRevert();
+        vm.prank(outsider);
+        appB.settleSeizedVoucher(CHAIN_A, outsider, 20 ether, 70, 0);
+    }
+
+    function testRedeemSeizedVoucherRespectsPolicy() public {
+        _lockCanonicalOnA(alice, 80 ether);
+        _mintVoucherOnB(liquidator, 40 ether, bytes32(uint256(43)));
+        appB.grantRole(appB.SETTLEMENT_OPERATOR_ROLE(), liquidator);
+
+        vm.prank(liquidator);
+        bytes32 packetId = appB.settleSeizedVoucher(CHAIN_A, liquidator, 20 ether, 70, 0);
+
+        policyA.setAccountAllowed(liquidator, false);
+        IBCPacketLib.Packet memory packet = _burnPacket(1, liquidator, liquidator, 20 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PolicyControlledEscrowVault.PolicyDenied.selector, policyA.POLICY_ACCOUNT_NOT_ALLOWED()
+            )
+        );
+        vm.prank(packetHandlerA);
+        appA.onRecvPacket(packet, packetId);
+    }
+
+    function testRedeemSeizedVoucherCannotExceedLiquidatorBalance() public {
+        _mintVoucherOnB(liquidator, 10 ether, bytes32(uint256(44)));
+        appB.grantRole(appB.SETTLEMENT_OPERATOR_ROLE(), liquidator);
+
+        vm.expectRevert();
+        vm.prank(liquidator);
+        appB.settleSeizedVoucher(CHAIN_A, liquidator, 10 ether + 1, 70, 0);
+    }
+
+    function testReplayOfSettlementPacketIsRejected() public {
+        _lockCanonicalOnA(alice, 80 ether);
+        _mintVoucherOnB(liquidator, 50 ether, bytes32(uint256(45)));
+        appB.grantRole(appB.SETTLEMENT_OPERATOR_ROLE(), liquidator);
+
+        vm.prank(liquidator);
+        bytes32 packetId = appB.settleSeizedVoucher(CHAIN_A, liquidator, 25 ether, 70, 0);
+
+        IBCPacketLib.Packet memory packet = _burnPacket(1, liquidator, liquidator, 25 ether);
+        vm.prank(packetHandlerA);
+        appA.onRecvPacket(packet, packetId);
+
+        vm.expectRevert(bytes("UNLOCK_PACKET_PROCESSED"));
+        vm.prank(packetHandlerA);
+        appA.onRecvPacket(packet, packetId);
+    }
+
+    function testLiquidationPlusRedeemSettlementAccountingRemainsConsistent() public {
+        BankToken debtAsset = new BankToken("Debt", "DEBT");
+        ManualAssetOracle oracle = new ManualAssetOracle(address(this));
+        PolicyControlledLendingPool lendingPool = new PolicyControlledLendingPool(
+            address(this), address(voucherB), address(debtAsset), address(policyB), 7_000, 8_000
+        );
+        policyB.grantRole(policyB.POLICY_APP_ROLE(), address(lendingPool));
+        policyB.setCollateralAssetAllowed(address(voucherB), true);
+        policyB.setDebtAssetAllowed(address(debtAsset), true);
+        policyB.setAccountBorrowCap(alice, 500 ether);
+        policyB.setDebtAssetBorrowCap(address(debtAsset), 1_000 ether);
+        oracle.setPrice(address(voucherB), 1 ether);
+        oracle.setPrice(address(debtAsset), 1 ether);
+        lendingPool.setValuationOracle(address(oracle));
+        lendingPool.grantRole(lendingPool.LIQUIDATOR_ROLE(), liquidator);
+
+        debtAsset.mint(address(this), 1_000 ether);
+        debtAsset.approve(address(lendingPool), 1_000 ether);
+        lendingPool.depositLiquidity(1_000 ether);
+        _lockCanonicalOnA(alice, 100 ether);
+        _mintVoucherOnB(alice, 100 ether, bytes32(uint256(46)));
+
+        vm.startPrank(alice);
+        voucherB.approve(address(lendingPool), 100 ether);
+        lendingPool.depositCollateral(100 ether);
+        lendingPool.borrow(70 ether);
+        vm.stopPrank();
+
+        oracle.setPrice(address(voucherB), 0.5 ether);
+        debtAsset.mint(liquidator, 35 ether);
+        vm.startPrank(liquidator);
+        debtAsset.approve(address(lendingPool), 35 ether);
+        lendingPool.liquidate(alice, 40 ether);
+        vm.stopPrank();
+
+        uint256 seized = voucherB.balanceOf(liquidator);
+        assertEq(seized, 73.5 ether);
+        assertEq(lendingPool.collateralBalance(alice), 26.5 ether);
+
+        appB.grantRole(appB.SETTLEMENT_OPERATOR_ROLE(), liquidator);
+        vm.prank(liquidator);
+        bytes32 settlementPacketId = appB.settleSeizedVoucher(CHAIN_A, liquidator, seized, 70, 0);
+
+        IBCPacketLib.Packet memory settlementPacket = _burnPacket(1, liquidator, liquidator, seized);
+        vm.prank(packetHandlerA);
+        appA.onRecvPacket(settlementPacket, settlementPacketId);
+
+        assertEq(voucherB.balanceOf(liquidator), 0);
+        assertEq(canonicalAsset.balanceOf(liquidator), seized);
+        assertEq(escrowA.totalEscrowed(), 26.5 ether);
+        assertEq(policyB.voucherExposureOutstanding(address(canonicalAsset)), 26.5 ether);
+        assertEq(policyB.collateralOutstanding(address(voucherB)), 26.5 ether);
+        assertEq(lendingPool.debtBalance(alice), 35 ether);
+    }
+
     function testTimeoutOnBurnUnlockRestoresVoucher() public {
         _mintVoucherOnB(alice, 60 ether, bytes32(uint256(21)));
 
@@ -306,6 +442,14 @@ contract PolicyTransferAppTest is Test {
         IBCPacketLib.Packet memory packet = _forwardPacket(99, alice, beneficiary, amount);
         vm.prank(packetHandlerB);
         appB.onRecvPacket(packet, packetId);
+    }
+
+    function _lockCanonicalOnA(address account, uint256 amount) internal {
+        canonicalAsset.mint(account, amount);
+        vm.startPrank(account);
+        canonicalAsset.approve(address(escrowA), amount);
+        appA.sendTransfer(CHAIN_B, bob, amount, 50, 0);
+        vm.stopPrank();
     }
 
     function _forwardPacket(uint256 sequence, address sender, address recipient, uint256 amount)

@@ -56,6 +56,8 @@ const LIQUIDATION_REPAY = ethers.parseUnits(process.env.DEMO_LIQUIDATION_REPAY |
 const SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits(process.env.DEMO_SHOCKED_VOUCHER_PRICE || "0.5", 18);
 const DEMO_TX_GAS_LIMIT = BigInt(process.env.DEMO_TX_GAS_LIMIT || "8000000");
 const DEMO_TX_WAIT_TIMEOUT_MS = Number(process.env.DEMO_TX_WAIT_TIMEOUT_MS || process.env.TX_WAIT_TIMEOUT_MS || 120000);
+const DEMO_REPAY_BUFFER_BPS = BigInt(process.env.DEMO_REPAY_BUFFER_BPS || "1");
+const DEMO_REPAY_MIN_BUFFER = ethers.parseUnits(process.env.DEMO_REPAY_MIN_BUFFER || "0.01", 18);
 
 let CURRENT_PHASE = "bootstrap";
 
@@ -85,6 +87,16 @@ function stateName(states, value) {
 
 function units(value) {
   return ethers.formatUnits(value, 18);
+}
+
+function repayCloseBuffer(amount) {
+  if (amount <= 0n) return 0n;
+  const proportional = amount * DEMO_REPAY_BUFFER_BPS / 10_000n;
+  return proportional > DEMO_REPAY_MIN_BUFFER ? proportional : DEMO_REPAY_MIN_BUFFER;
+}
+
+function repayCloseTarget(amount) {
+  return amount + repayCloseBuffer(amount);
 }
 
 function previewField(preview, key, index, fallback = 0n) {
@@ -447,6 +459,7 @@ async function loadContext(config) {
   const sourceUser = await signerForChain(config, "A", Number(config.participants?.sourceUserIndex ?? 1));
   const destinationUser = await signerForChain(config, "B", Number(config.participants?.destinationUserIndex ?? 1));
   const liquidator = await signerForChain(config, "B", Number(config.participants?.liquidatorIndex ?? 2));
+  const sourceLiquidator = await signerForChain(config, "A", Number(config.participants?.liquidatorIndex ?? 2));
 
   return {
     artifacts,
@@ -455,9 +468,11 @@ async function loadContext(config) {
     adminA,
     adminB,
     sourceUser,
+    sourceLiquidator,
     destinationUser,
     liquidator,
     sourceUserAddress: await sourceUser.getAddress(),
+    sourceLiquidatorAddress: config.participants?.sourceLiquidator || await sourceLiquidator.getAddress(),
     destinationUserAddress: await destinationUser.getAddress(),
     liquidatorAddress: await liquidator.getAddress(),
     A: {
@@ -488,6 +503,7 @@ async function loadContext(config) {
       lendingPoolAdmin: contract(config.chains.B.lendingPool, artifacts.lendingPool, adminB),
       lendingPoolLiquidator: contract(config.chains.B.lendingPool, artifacts.lendingPool, liquidator),
       transferAppAdmin: contract(config.chains.B.transferApp, artifacts.transferApp, adminB),
+      transferAppLiquidator: contract(config.chains.B.transferApp, artifacts.transferApp, liquidator),
     },
   };
 }
@@ -532,10 +548,16 @@ async function ensureDeploymentCode(config) {
   for (const [chainKey, field] of requiredContracts) {
     const address = config.chains?.[chainKey]?.[field];
     if (!address || !ethers.isAddress(address)) {
-      missingCode.push(`${chainKey}.${field}=missing`);
+      missingCode.push(`${chainKey}.${field}=${address ?? "missing"}`);
       continue;
     }
-    const code = await providerByChain[chainKey].getCode(address);
+    let code;
+    try {
+      code = await providerByChain[chainKey].getCode(ethers.getAddress(address), "latest");
+    } catch (error) {
+      missingCode.push(`${chainKey}.${field}=${address} (${error.shortMessage || error.message})`);
+      continue;
+    }
     if (code === "0x") missingCode.push(`${chainKey}.${field}=${address}`);
   }
   if (missingCode.length > 0) {
@@ -553,6 +575,7 @@ async function txIfNeeded(label, isReady, send) {
 
 async function ensureRiskSeeded(config, ctx) {
   const sourceChainId = chainId(config, "A");
+  const destinationChainId = chainId(config, "B");
   const initialVoucherPrice = BigInt(config.seed.initialVoucherPriceE18);
   const debtPrice = BigInt(config.seed.debtPriceE18);
   const maxOracleStaleness = BigInt(config.seed.maxOracleStaleness || "604800");
@@ -576,6 +599,22 @@ async function ensureRiskSeeded(config, ctx) {
     ]);
     return price === expectedPrice && now >= updatedAt && now - updatedAt <= maxOracleStaleness;
   };
+
+  await txIfNeeded(
+    "allow origin liquidator recipient on Bank A",
+    () => ctx.A.policy.accountAllowed(ctx.sourceLiquidatorAddress),
+    () => ctx.A.policy.setAccountAllowed(ctx.sourceLiquidatorAddress, true, txOptions())
+  );
+  await txIfNeeded(
+    "allow Bank B source chain on Bank A",
+    () => ctx.A.policy.sourceChainAllowed(destinationChainId),
+    () => ctx.A.policy.setSourceChainAllowed(destinationChainId, true, txOptions())
+  );
+  await txIfNeeded(
+    "allow canonical unlock asset on Bank A",
+    () => ctx.A.policy.unlockAssetAllowed(config.chains.A.canonicalToken),
+    () => ctx.A.policy.setUnlockAssetAllowed(config.chains.A.canonicalToken, true, txOptions())
+  );
 
   await txIfNeeded(
     "allow destination user",
@@ -669,6 +708,12 @@ async function ensureRiskSeeded(config, ctx) {
     "grant liquidator role",
     async () => ctx.B.lendingPoolAdmin.hasRole(await ctx.B.lendingPoolAdmin.LIQUIDATOR_ROLE(), ctx.liquidatorAddress),
     async () => ctx.B.lendingPoolAdmin.grantRole(await ctx.B.lendingPoolAdmin.LIQUIDATOR_ROLE(), ctx.liquidatorAddress, txOptions())
+  );
+  await txIfNeeded(
+    "grant seized-voucher settlement role",
+    async () => ctx.B.transferAppAdmin.hasRole(await ctx.B.transferAppAdmin.SETTLEMENT_OPERATOR_ROLE(), ctx.liquidatorAddress),
+    async () =>
+      ctx.B.transferAppAdmin.grantRole(await ctx.B.transferAppAdmin.SETTLEMENT_OPERATOR_ROLE(), ctx.liquidatorAddress, txOptions())
   );
   const suppliedLiquidity = await ctx.B.lendingPoolAdmin.liquidityBalanceOf(config.chains.B.admin);
   if (suppliedLiquidity < poolLiquidity) {
@@ -1286,6 +1331,7 @@ function baseTrace(config, ctx) {
     },
     participants: {
       sourceUser: ctx.sourceUserAddress,
+      sourceLiquidator: ctx.sourceLiquidatorAddress,
       destinationUser: ctx.destinationUserAddress,
       liquidator: ctx.liquidatorAddress,
     },
@@ -1389,25 +1435,29 @@ async function ensureReversePacket(config, ctx, sourceChainId, destinationChainI
   const trace = await readExistingTrace();
   if (trace.reverse?.packetId && trace.reverse?.sequence && trace.reverse?.commitHeight) {
     const amount = amountFromTrace(trace.reverse, FORWARD_AMOUNT);
+    const sender = trace.reverse.sender || ctx.destinationUserAddress;
+    const recipient = trace.reverse.recipient || ctx.sourceUserAddress;
     return {
       trace,
       sequence: BigInt(trace.reverse.sequence),
       commitHeight: BigInt(trace.reverse.commitHeight),
       amount,
       packetId: trace.reverse.packetId,
+      sender,
+      recipient,
       packet: reversePacket({
         sequence: BigInt(trace.reverse.sequence),
         sourceChainId: destinationChainId,
         destinationChainId: sourceChainId,
         config,
-        sender: ctx.destinationUserAddress,
-        recipient: ctx.sourceUserAddress,
+        sender,
+        recipient,
         amount,
       }),
     };
   }
 
-  throw new Error("No reverse packet exists yet. Burn a free voucher first.");
+  throw new Error("No reverse packet exists yet. Burn a voucher or settle seized voucher first.");
 }
 
 async function trustForwardHeader(config, ctx, sourceChainId, commitHeight) {
@@ -1526,7 +1576,15 @@ export async function runDemoStep(action, options = {}) {
   await requireDemoSafetyModeAllows(action, ctx, sourceChainId);
 
   if (action === "fullFlow") {
-    return main();
+    return runRiskScenario();
+  }
+
+  if (action === "riskLifecycle") {
+    return runRiskScenario();
+  }
+
+  if (action === "borrowerCloseout") {
+    return runBorrowerCloseoutScenario();
   }
 
   if (action === "openRoute") {
@@ -1927,22 +1985,103 @@ export async function runDemoStep(action, options = {}) {
     );
   }
 
+  if (action === "settleSeizedVoucher") {
+    setPhase("step-settle-seized-voucher");
+    await requireOpenHandshake(config, ctx);
+    await ensureRiskSeeded(config, ctx);
+
+    const liquidatorVoucherBalance = await ctx.B.voucherAdmin.balanceOf(ctx.liquidatorAddress);
+    if (liquidatorVoucherBalance === 0n) {
+      throw new Error("The authorized liquidator has no seized voucher balance. Run Execute Liquidation first.");
+    }
+
+    const sequence = asBigInt(await ctx.B.packetStore.nextSequence());
+    const receipt = await txStep("step settle seized voucher", () =>
+      ctx.B.transferAppLiquidator.settleSeizedVoucher(
+        sourceChainId,
+        ctx.sourceLiquidatorAddress,
+        liquidatorVoucherBalance,
+        0,
+        0,
+        txOptions()
+      )
+    );
+    const commitHeight = BigInt(receipt.blockNumber);
+    const packet = reversePacket({
+      sequence,
+      sourceChainId: destinationChainId,
+      destinationChainId: sourceChainId,
+      config,
+      sender: ctx.liquidatorAddress,
+      recipient: ctx.sourceLiquidatorAddress,
+      amount: liquidatorVoucherBalance,
+    });
+    const packetIdValue = await ctx.B.packetStore.packetIdAt(sequence);
+
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        reverse: {
+          operation: "Authorized liquidator seized-voucher settlement -> Bank A escrow unlock",
+          sequence: sequence.toString(),
+          sender: ctx.liquidatorAddress,
+          recipient: ctx.sourceLiquidatorAddress,
+          amount: units(liquidatorVoucherBalance),
+          amountRaw: liquidatorVoucherBalance.toString(),
+          packetId: packetIdValue,
+          packetLeaf: packetLeaf(packet),
+          packetPath: packetPath(packet),
+          sourceTxHash: receipt.hash,
+          commitHeight: commitHeight.toString(),
+          settlementMode: "authorized-liquidator",
+        },
+        liquidatorSettlement: {
+          operation: "Authorized liquidator settles seized voucher through reverse bridge route",
+          amount: units(liquidatorVoucherBalance),
+          amountRaw: liquidatorVoucherBalance.toString(),
+          liquidator: ctx.liquidatorAddress,
+          recipient: ctx.sourceLiquidatorAddress,
+          burnTxHash: receipt.hash,
+          packetId: packetIdValue,
+          commitHeight: commitHeight.toString(),
+        },
+      },
+      {
+        phase: "seized-voucher-settlement-committed",
+        label: "Committed seized-voucher settlement packet",
+        summary:
+          `Authorized liquidator burned ${units(liquidatorVoucherBalance)} vA and wrote reverse packet ` +
+          `${compact(packetIdValue)} for Bank A settlement.`,
+      }
+    );
+  }
+
   if (action === "repay") {
     setPhase("step-repay");
     const debt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
     let repayAmount = 0n;
+    let requestedRepayAmount = 0n;
+    let actualPayment = 0n;
+    let closeBuffer = 0n;
     let repayTxHash = null;
     if (debt > 0n) {
-      repayAmount = REPAY_AMOUNT ?? debt;
-      if (repayAmount > debt) {
+      requestedRepayAmount = REPAY_AMOUNT ?? debt;
+      closeBuffer = repayCloseBuffer(debt);
+      const closeDebt = REPAY_AMOUNT == null || requestedRepayAmount >= debt || debt - requestedRepayAmount <= closeBuffer;
+      repayAmount = closeDebt ? debt + closeBuffer : requestedRepayAmount;
+      if (!closeDebt && repayAmount > debt) {
         throw new Error(`REPAY_LIMIT: outstanding debt is ${units(debt)} bCASH, requested ${units(repayAmount)}.`);
       }
       const debtBalance = await ctx.B.debtAdmin.balanceOf(ctx.destinationUserAddress);
-      if (debtBalance < repayAmount) throw new Error("Destination user does not have enough bCASH to repay the requested amount.");
+      const requiredBalance = closeDebt ? debt : repayAmount;
+      if (debtBalance < requiredBalance) throw new Error("Destination user does not have enough bCASH to repay the requested amount.");
       const debtUser = ctx.B.debtAdmin.connect(ctx.destinationUser);
       await txStep("step approve debt repayment", () => debtUser.approve(config.chains.B.lendingPool, repayAmount, txOptions()));
       const repayReceipt = await txStep("step repay debt", () => ctx.B.lendingPoolUser.repay(repayAmount, txOptions()));
       repayTxHash = repayReceipt.hash;
+      const debtBalanceAfter = await ctx.B.debtAdmin.balanceOf(ctx.destinationUserAddress);
+      actualPayment = debtBalance > debtBalanceAfter ? debtBalance - debtBalanceAfter : 0n;
     }
     const remainingDebt = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
     return writeTracePatch(
@@ -1952,7 +2091,9 @@ export async function runDemoStep(action, options = {}) {
         risk: {
           repaid: REPAY_AMOUNT != null || remainingDebt === 0n,
           debtBeforeRepay: units(debt),
-          repayAmount: units(repayAmount),
+          repayRequestedAmount: units(requestedRepayAmount),
+          repayCloseBuffer: units(closeBuffer),
+          repayAmount: units(actualPayment),
           debtAfterRepay: units(remainingDebt),
           repayTxHash,
         },
@@ -1972,9 +2113,10 @@ export async function runDemoStep(action, options = {}) {
       throw new Error("There is no active debt to fund for repayment.");
     }
     const debtBalance = await ctx.B.debtAdmin.balanceOf(ctx.destinationUserAddress);
-    if (debtBalance < debt) {
+    const targetBalance = repayCloseTarget(debt);
+    if (debtBalance < targetBalance) {
       await txStep("step mint demo repayment cash", () =>
-        ctx.B.debtAdmin.mint(ctx.destinationUserAddress, debt - debtBalance, txOptions())
+        ctx.B.debtAdmin.mint(ctx.destinationUserAddress, targetBalance - debtBalance, txOptions())
       );
     }
     const updatedBalance = await ctx.B.debtAdmin.balanceOf(ctx.destinationUserAddress);
@@ -1983,14 +2125,18 @@ export async function runDemoStep(action, options = {}) {
       ctx,
       {
         risk: {
+          demoRepayCashTarget: units(targetBalance),
+          demoRepayCashBuffer: units(targetBalance - debt),
           demoRepayCashFunded: units(updatedBalance),
-          demoRepayCashShortfall: units(updatedBalance >= debt ? 0n : debt - updatedBalance),
+          demoRepayCashShortfall: units(updatedBalance >= targetBalance ? 0n : targetBalance - updatedBalance),
         },
       },
       {
         phase: "repay-cash-funded",
         label: "Added demo bCASH for repayment",
-        summary: `Demo account now has ${units(updatedBalance)} bCASH available for repayment.`,
+        summary:
+          `Demo account now has ${units(updatedBalance)} bCASH available for repayment, ` +
+          `including a ${units(targetBalance - debt)} bCASH close-debt buffer.`,
       }
     );
   }
@@ -2070,6 +2216,8 @@ export async function runDemoStep(action, options = {}) {
         reverse: {
           operation: "Bank B voucher burn -> Bank A escrow unlock",
           sequence: sequence.toString(),
+          sender: ctx.destinationUserAddress,
+          recipient: ctx.sourceUserAddress,
           amount: units(burnAmount),
           amountRaw: burnAmount.toString(),
           packetId: packetIdValue,
@@ -2158,7 +2306,10 @@ export async function runDemoStep(action, options = {}) {
     } catch (error) {
       if (!isKnownReplay(error)) throw error;
     }
-    const finalSourceBalance = await ctx.A.canonicalTokenAdmin.balanceOf(ctx.sourceUserAddress);
+    const [finalSourceBalance, finalRecipientBalance] = await Promise.all([
+      ctx.A.canonicalTokenAdmin.balanceOf(ctx.sourceUserAddress),
+      ctx.A.canonicalTokenAdmin.balanceOf(reverse.recipient),
+    ]);
     const finalEscrowed = await ctx.A.escrow.totalEscrowed();
     return writeTracePatch(
       config,
@@ -2172,14 +2323,24 @@ export async function runDemoStep(action, options = {}) {
           trustedHeaderHash: proofAnchor.headerHash,
           trustedStateRoot: proofAnchor.stateRoot,
           finalSourceBalance: units(finalSourceBalance),
+          finalRecipientBalance: units(finalRecipientBalance),
           finalEscrowed: units(finalEscrowed),
           proofMode: "storage",
         },
+        ...(reverse.trace?.liquidatorSettlement
+          ? {
+            liquidatorSettlement: {
+              unlockTxHash: recvReceipt?.hash,
+              finalRecipientBalance: units(finalRecipientBalance),
+              finalEscrowed: units(finalEscrowed),
+            },
+          }
+          : {}),
       },
       {
         phase: "reverse-proven",
         label: "Executed reverse packet storage proof",
-        summary: `Bank A verified packet ${compact(reverse.packetId)} and unlocked escrow.`,
+        summary: `Bank A verified packet ${compact(reverse.packetId)} and unlocked escrow for ${compact(reverse.recipient)}.`,
       }
     );
   }
@@ -2469,7 +2630,95 @@ export async function runDemoStep(action, options = {}) {
   throw new Error(`Unknown demo action: ${action}`);
 }
 
-async function main() {
+async function runBorrowerCloseoutScenario() {
+  setPhase("borrower-closeout-prepare");
+  const prepared = await prepareStepContext();
+  const { config, ctx } = prepared;
+  const steps = [
+    "openRoute",
+    "lock",
+    "finalizeForwardHeader",
+    "updateForwardClient",
+    "proveForwardMint",
+    "depositCollateral",
+    "borrow",
+    "topUpRepayCash",
+    "repay",
+    "withdrawCollateral",
+    "burn",
+    "finalizeReverseHeader",
+    "updateReverseClient",
+    "proveReverseUnlock",
+  ];
+
+  let trace = null;
+  for (const step of steps) {
+    try {
+      trace = await runDemoStep(step, { prepared });
+    } catch (error) {
+      error.message = `Borrower closeout scenario failed at ${step}: ${error.message}`;
+      throw error;
+    }
+  }
+
+  setPhase("borrower-closeout-final-state");
+  const [remainingDebt, remainingCollateral, userVoucher, sourceBalance, escrowed] = await Promise.all([
+    ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress),
+    ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress),
+    ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress),
+    ctx.A.canonicalTokenAdmin.balanceOf(ctx.sourceUserAddress),
+    ctx.A.escrow.totalEscrowed(),
+  ]);
+
+  trace = await writeTracePatch(
+    config,
+    ctx,
+    {
+      scenario: {
+        mode: "borrower-closeout",
+        description:
+          "Borrower lifecycle: bridge collateral, borrow, repay, withdraw voucher collateral, burn voucher, and unlock origin collateral.",
+        completed: remainingDebt === 0n && remainingCollateral === 0n,
+      },
+      risk: {
+        completed: remainingDebt === 0n && remainingCollateral === 0n,
+        debtAfterRepay: units(remainingDebt),
+        collateralAfterWithdrawal: units(remainingCollateral),
+      },
+      reverse: {
+        finalSourceBalance: units(sourceBalance),
+        finalEscrowed: units(escrowed),
+      },
+    },
+    {
+      phase: "borrower-closeout-complete",
+      label: "Completed borrower closeout lifecycle",
+      summary:
+        `Borrower repaid debt, withdrew collateral, burned ${trace?.reverse?.amount || units(userVoucher)} vA, ` +
+        "and completed the reverse proof for Bank A unlock.",
+    }
+  );
+
+  config.status = {
+    ...(config.status || {}),
+    proofCheckedHandshakeOpened: true,
+    lastDemoRunAt: trace.generatedAt,
+    lastDemoScenario: "borrower-closeout",
+  };
+  config.latestTrace = {
+    json: OUT_JSON_PATH,
+    js: OUT_JS_PATH,
+  };
+  await saveRuntimeConfig(config);
+
+  console.log("=== Borrower closeout flow ===");
+  console.log(`[borrower] debt=${units(remainingDebt)} bCASH, deposited collateral=${units(remainingCollateral)} vA`);
+  console.log(`[reverse] packet ${compact(trace.reverse?.packetId)} unlocked source balance ${units(sourceBalance)} aBANK`);
+  console.log(`[ui] wrote demo trace to ${OUT_JSON_PATH}`);
+  return trace;
+}
+
+async function runRiskScenario() {
   const runtime = normalizeRuntime();
   if (!runtime.besuFirst) {
     throw new Error("run-lending-demo.mjs is a Besu-first entrypoint.");
@@ -2640,6 +2889,59 @@ async function main() {
   const supplierLoss =
     badDebtAfterLiquidation > badDebtBeforeLiquidation ? badDebtAfterLiquidation - badDebtBeforeLiquidation : 0n;
 
+  setPhase("settle-liquidator-voucher");
+  if (liquidatorVoucherBalance === 0n) {
+    throw new Error("Liquidation completed without seized voucher collateral, so settlement cannot be demonstrated.");
+  }
+  const settlementSequence = asBigInt(await ctx.B.packetStore.nextSequence());
+  const settlementBurnReceipt = await txStep("settle seized voucher", () =>
+    ctx.B.transferAppLiquidator.settleSeizedVoucher(
+      sourceChainId,
+      ctx.sourceLiquidatorAddress,
+      liquidatorVoucherBalance,
+      0,
+      0,
+      txOptions()
+    )
+  );
+  const settlementCommitHeight = BigInt(settlementBurnReceipt.blockNumber);
+  const settlementPacket = reversePacket({
+    sequence: settlementSequence,
+    sourceChainId: destinationChainId,
+    destinationChainId: sourceChainId,
+    config,
+    sender: ctx.liquidatorAddress,
+    recipient: ctx.sourceLiquidatorAddress,
+    amount: liquidatorVoucherBalance,
+  });
+  const settlementPacketId = await ctx.B.packetStore.packetIdAt(settlementSequence);
+  const settlementHeader = await trustRemoteHeaderAt({
+    lightClient: ctx.A.lightClient,
+    provider: ctx.providerB,
+    sourceChainId: destinationChainId,
+    targetHeight: settlementCommitHeight,
+    validatorEpoch: 1n,
+  });
+  const settlementProofHeight = settlementHeader.headerUpdate.height;
+  const settlementProofs = await buildPacketProofs({
+    provider: ctx.providerB,
+    packetStoreAddress: config.chains.B.packetStore,
+    packet: settlementPacket,
+    sourceChainId: destinationChainId,
+    trustedHeight: settlementProofHeight,
+    stateRoot: settlementHeader.headerUpdate.stateRoot,
+  });
+  const settlementRecvReceipt = await txStep("receive seized-voucher settlement packet", () =>
+    ctx.A.packetHandler.recvPacketFromStorageProof(
+      settlementPacket,
+      settlementProofs.leafProof,
+      settlementProofs.pathProof,
+      txOptions()
+    )
+  );
+  const liquidatorOriginBalanceAfterSettlement = await ctx.A.canonicalTokenAdmin.balanceOf(ctx.sourceLiquidatorAddress);
+  const escrowAfterSettlement = await ctx.A.escrow.totalEscrowed();
+
   setPhase("send-denied-packet");
   await txStep("block destination user", () =>
     ctx.B.policy.setAccountAllowed(ctx.destinationUserAddress, false, txOptions())
@@ -2744,6 +3046,12 @@ async function main() {
     runtime: config.runtime,
     architecture:
       "Besu light-client header imports, EVM storage-proof packet relay, and policy-controlled cross-chain lending.",
+    scenario: {
+      mode: "risk-liquidation",
+      description:
+        "Risk lifecycle: bridge collateral, borrow, shock oracle price, liquidate, settle seized voucher, and demonstrate timeout refund.",
+      completed: true,
+    },
     chains: {
       A: {
         chainId: sourceChainId.toString(),
@@ -2768,6 +3076,7 @@ async function main() {
     },
     participants: {
       sourceUser: ctx.sourceUserAddress,
+      sourceLiquidator: ctx.sourceLiquidatorAddress,
       destinationUser: ctx.destinationUserAddress,
       liquidator: ctx.liquidatorAddress,
     },
@@ -2829,6 +3138,42 @@ async function main() {
       poolLiquidity: units(poolLiquidity),
       destinationDebtTokenBalance: units(destinationDebtBalance),
     },
+    reverse: {
+      operation: "Authorized liquidator seized-voucher settlement -> Bank A escrow unlock",
+      sequence: settlementSequence.toString(),
+      sender: ctx.liquidatorAddress,
+      recipient: ctx.sourceLiquidatorAddress,
+      amount: units(liquidatorVoucherBalance),
+      amountRaw: liquidatorVoucherBalance.toString(),
+      packetId: settlementPacketId,
+      packetLeaf: packetLeaf(settlementPacket),
+      packetPath: packetPath(settlementPacket),
+      packetLeafSlot: settlementProofs.leafSlot,
+      packetPathSlot: settlementProofs.pathSlot,
+      sourceTxHash: settlementBurnReceipt.hash,
+      receiveTxHash: settlementRecvReceipt.hash,
+      commitHeight: settlementCommitHeight.toString(),
+      trustedHeight: settlementProofHeight.toString(),
+      trustedHeaderHash: settlementHeader.headerUpdate.headerHash,
+      trustedStateRoot: settlementHeader.headerUpdate.stateRoot,
+      finalRecipientBalance: units(liquidatorOriginBalanceAfterSettlement),
+      finalEscrowed: units(escrowAfterSettlement),
+      proofMode: "storage",
+      settlementMode: "authorized-liquidator",
+    },
+    liquidatorSettlement: {
+      operation: "Authorized liquidator settles seized voucher through reverse bridge route",
+      amount: units(liquidatorVoucherBalance),
+      amountRaw: liquidatorVoucherBalance.toString(),
+      liquidator: ctx.liquidatorAddress,
+      recipient: ctx.sourceLiquidatorAddress,
+      burnTxHash: settlementBurnReceipt.hash,
+      unlockTxHash: settlementRecvReceipt.hash,
+      packetId: settlementPacketId,
+      commitHeight: settlementCommitHeight.toString(),
+      finalRecipientBalance: units(liquidatorOriginBalanceAfterSettlement),
+      finalEscrowed: units(escrowAfterSettlement),
+    },
     denied: {
       operation: "Policy denial on Bank B plus timeout refund on Bank A",
       sequence: deniedSequence.toString(),
@@ -2860,7 +3205,7 @@ async function main() {
       phase: "complete",
       label: "Completed storage-proof cross-chain lending flow",
       summary:
-        "Opened/reused the IBC connection and channel, verified the packet with Besu storage proofs, ran lending valuation and liquidation, then verified timeout absence for a denied packet.",
+        "Opened/reused the IBC connection and channel, verified packet proofs, ran lending valuation, liquidation, seized-voucher settlement, and timeout absence for a denied packet.",
     },
   };
 
@@ -2871,6 +3216,7 @@ async function main() {
     ...(config.status || {}),
     proofCheckedHandshakeOpened: true,
     lastDemoRunAt: trace.generatedAt,
+    lastDemoScenario: "risk-liquidation",
   };
   config.latestTrace = {
     json: OUT_JSON_PATH,
@@ -2882,13 +3228,27 @@ async function main() {
   console.log(`Handshake: connection ${connectionHandshake.reused ? "reused" : "opened"}, channel ${channelHandshake.reused ? "reused" : "opened"}`);
   console.log(`[A->B] packet ${compact(approvedPacketId)} locked ${units(FORWARD_AMOUNT)} aBANK and minted voucher on Bank B`);
   console.log(`[risk] deposited ${units(collateralAfterDeposit)} vA, borrowed ${units(debtAfterBorrow)} bCASH, liquidated ${units(actualLiquidationRepay)} bCASH after price shock`);
+  console.log(`[settlement] liquidator burned ${units(liquidatorVoucherBalance)} vA and unlocked origin collateral with packet ${compact(settlementPacketId)}`);
   console.log(`[timeout] denied packet ${compact(deniedPacketId)} refunded=${deniedRefundFlag}`);
   console.log(`[ui] wrote demo trace to ${OUT_JSON_PATH}`);
 }
 
+function argValue(name) {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : null;
+}
+
+function scenarioEntrypoint(scenario) {
+  const normalized = String(scenario || "risk").toLowerCase();
+  if (["borrower", "borrower-closeout", "closeout"].includes(normalized)) return runBorrowerCloseoutScenario;
+  if (["risk", "risk-liquidation", "liquidation"].includes(normalized)) return runRiskScenario;
+  throw new Error(`Unknown demo scenario: ${scenario}. Expected risk or borrower.`);
+}
+
 const stepArgIndex = process.argv.indexOf("--step");
 const stepArg = stepArgIndex >= 0 ? process.argv[stepArgIndex + 1] : null;
-const entrypoint = stepArg ? () => runDemoStep(stepArg) : main;
+const scenarioArg = argValue("--scenario") || process.env.DEMO_SCENARIO || "risk";
+const entrypoint = stepArg ? () => runDemoStep(stepArg) : () => scenarioEntrypoint(scenarioArg)();
 
 entrypoint()
   .then(() => {

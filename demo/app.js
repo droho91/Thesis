@@ -35,6 +35,9 @@ const FOCUS_MODE_STORAGE_KEY = "interchain-lending-focus-mode";
 const PORTAL_STORAGE_KEY = "interchain-lending-active-portal";
 const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Recovering"];
 const SAFETY_MODE_ACTIONS = new Set(["recoverClient", "topUpRepayCash", "simulatePriceShock", "executeLiquidation"]);
+const REPAY_CLOSE_BUFFER_BPS = 1;
+const REPAY_CLOSE_MIN_BUFFER = 0.01;
+const POSITION_EPSILON = 0.000001;
 const AMOUNT_ACTIONS = {
   lock: { inputId: "bridgeAmount", unit: "aBANK" },
   borrow: { inputId: "borrowAmount", unit: "bCASH" },
@@ -56,6 +59,7 @@ const ACTION_CARD_BY_ACTION = {
   topUpRepayCash: "loan",
   simulatePriceShock: "loan",
   executeLiquidation: "loan",
+  settleSeizedVoucher: "redeem",
   burn: "redeem",
   finalizeReverseHeader: "redeem",
   updateReverseClient: "redeem",
@@ -152,8 +156,18 @@ function numeric(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function positive(value) {
+  return numeric(value) > POSITION_EPSILON;
+}
+
 function clamp(value, min = 0, max = Number.POSITIVE_INFINITY) {
   return Math.min(max, Math.max(min, value));
+}
+
+function repayCloseBuffer(amount) {
+  const number = numeric(amount);
+  if (number <= 0) return 0;
+  return Math.max((number * REPAY_CLOSE_BUFFER_BPS) / 10_000, REPAY_CLOSE_MIN_BUFFER);
 }
 
 function formatAmount(value, unit = "", options = {}) {
@@ -189,8 +203,9 @@ function setActiveActionCard(cardName, { pinned = false } = {}) {
 
 function suggestActionCard(status) {
   const state = financialState(status);
+  const lifecycle = lifecycleState(status);
   const reverse = status?.trace?.reverse || {};
-  if (reverse.commitHeight || reverse.packetId || reverse.receiveTxHash) return "redeem";
+  if (lifecycle.returnStarted || lifecycle.freeVoucher || reverse.commitHeight || reverse.packetId || reverse.receiveTxHash) return "redeem";
   if (state.voucher > 0 || state.collateral > 0 || state.debt > 0 || state.bankB > 0) return "loan";
   return "bridge";
 }
@@ -323,6 +338,19 @@ function bridgeProofAction(status) {
   return trustReady ? "proveForwardMint" : "updateForwardClient";
 }
 
+function reverseProofAction(status) {
+  const reverse = status?.trace?.reverse || {};
+  const progress = status?.progress || {};
+  if (!reverse.packetId && !reverse.commitHeight) return "burn";
+  if (reverse.receiveTxHash || status?.security?.reverseConsumed) return null;
+  if (!reverse.finalizedHeight && !reverse.trustedHeight) return "finalizeReverseHeader";
+  const trustReady =
+    Boolean(reverse.trustedHeight) ||
+    heightAtLeast(progress.trustedBOnA, reverse.commitHeight) ||
+    heightAtLeast(reverse.trustedHeight, reverse.commitHeight);
+  return trustReady ? "proveReverseUnlock" : "updateReverseClient";
+}
+
 function routeReady(status) {
   const trace = status?.trace || {};
   return Boolean(
@@ -333,6 +361,74 @@ function routeReady(status) {
       trace.forward?.packetId ||
       numeric(status?.progress?.packetSequenceA) > 0
   );
+}
+
+function lifecycleState(status) {
+  const state = financialState(status);
+  const trace = status?.trace || {};
+  const lending = trace.lending || {};
+  const traceRisk = trace.risk || {};
+  const reverse = trace.reverse || {};
+  const settlement = status?.risk?.settlement || {};
+  const afterLiquidation = status?.risk?.afterLiquidation || {};
+  const freeVoucher = positive(state.voucher);
+  const activeCollateral = positive(state.collateral);
+  const activeDebt = positive(state.debt);
+  const debtWasOpened = Boolean(
+    lending.borrowed ||
+      traceRisk.borrowed ||
+      traceRisk.debtBeforeRepay ||
+      traceRisk.repayTxHash ||
+      traceRisk.repaid ||
+      traceRisk.liquidationTxHash ||
+      traceRisk.debtBeforeLiquidation ||
+      activeDebt
+  );
+  const collateralWasDeposited = Boolean(
+    lending.collateralDeposited ||
+      traceRisk.collateralDeposited ||
+      traceRisk.collateralBeforeWithdrawal ||
+      traceRisk.withdrawTxHash ||
+      activeCollateral ||
+      debtWasOpened
+  );
+  const borrowerCollateralWithdrawn = Boolean(
+    lending.collateralWithdrawn ||
+      traceRisk.collateralWithdrawn ||
+      traceRisk.withdrawTxHash ||
+      (debtWasOpened && collateralWasDeposited && !activeCollateral)
+  );
+  const settlementTrace = trace.liquidatorSettlement || {};
+  const reverseStarted = Boolean(reverse.packetId || reverse.commitHeight || reverse.sourceTxHash);
+  const settlementStarted = Boolean(
+    settlement.started ||
+      settlementTrace.packetId ||
+      settlementTrace.burnTxHash ||
+      reverse.settlementMode === "authorized-liquidator"
+  );
+  const settlementUnlocked = Boolean(settlement.unlocked || settlementTrace.unlockTxHash);
+  const borrowerReverseStarted = reverseStarted && !settlementStarted;
+  const borrowerReverseComplete = Boolean(borrowerReverseStarted && (reverse.receiveTxHash || status?.security?.reverseConsumed));
+  const liquidationExecuted = Boolean(afterLiquidation.executed || traceRisk.liquidationTxHash || lending.liquidated);
+  const settlementVoucher = positive(settlement.seizedVoucherBalance || status?.balances?.liquidatorVoucher);
+
+  return {
+    debtWasOpened,
+    collateralWasDeposited,
+    borrowerCollateralWithdrawn,
+    activeDebt,
+    activeCollateral,
+    freeVoucher,
+    reverseStarted,
+    borrowerReverseStarted,
+    borrowerReverseComplete,
+    liquidationExecuted,
+    settlementStarted,
+    settlementUnlocked,
+    settlementVoucher,
+    returnStarted: borrowerReverseStarted || settlementStarted,
+    returnComplete: borrowerReverseComplete || settlementUnlocked,
+  };
 }
 
 function setWorkflowStepStatus(id, state, text) {
@@ -352,6 +448,7 @@ function setWorkflowStepStatus(id, state, text) {
 
 function workflowModel(status) {
   const state = financialState(status);
+  const lifecycle = lifecycleState(status);
   const forward = status?.trace?.forward || {};
   const health = healthFromStatus(status);
   const deployed = state.deployed;
@@ -360,12 +457,15 @@ function workflowModel(status) {
     Boolean(forward.commitHeight || forward.packetId || forward.receiveTxHash) ||
     state.voucher > 0 ||
     state.collateral > 0 ||
-    state.debt > 0;
+    state.debt > 0 ||
+    lifecycle.returnStarted ||
+    lifecycle.liquidationExecuted;
   const voucherReady = state.voucher > 0;
-  const collateralActive = state.collateral > 0;
-  const debtActive = state.debt > 0;
+  const collateralActive = lifecycle.activeCollateral;
+  const debtActive = lifecycle.activeDebt;
   const elevatedRisk = debtActive && ["Watch", "Danger", "Liquidatable"].includes(health.status);
   const locked = safetyLocked(status);
+  const reverseAction = reverseProofAction(status);
 
   const steps = {
     connect: { complete: deployed, unlocked: true, label: deployed ? "Ready" : "Prepare account" },
@@ -375,19 +475,47 @@ function workflowModel(status) {
       label: voucherReady || collateralActive || debtActive ? "Complete" : bridgeStarted ? "In progress" : "Ready",
     },
     activate: {
-      complete: collateralActive || debtActive,
-      unlocked: voucherReady || collateralActive || debtActive,
-      label: collateralActive || debtActive ? "Active" : voucherReady ? "Ready" : "Locked",
+      complete: lifecycle.collateralWasDeposited || lifecycle.returnStarted || lifecycle.liquidationExecuted,
+      unlocked: voucherReady || collateralActive || debtActive || lifecycle.returnStarted,
+      label: lifecycle.collateralWasDeposited || lifecycle.returnStarted ? "Active" : voucherReady ? "Ready" : "Locked",
     },
     borrow: {
-      complete: debtActive,
-      unlocked: collateralActive || debtActive,
-      label: debtActive ? "Debt active" : collateralActive ? "Ready" : "Locked",
+      complete: lifecycle.debtWasOpened || lifecycle.liquidationExecuted,
+      unlocked: collateralActive || debtActive || lifecycle.debtWasOpened,
+      label: lifecycle.debtWasOpened ? "Used" : collateralActive ? "Ready" : "Locked",
     },
     manage: {
-      complete: false,
-      unlocked: debtActive,
-      label: debtActive ? (elevatedRisk ? "Needs attention" : "Active") : "Locked",
+      complete: lifecycle.borrowerCollateralWithdrawn || lifecycle.liquidationExecuted,
+      unlocked: debtActive || (lifecycle.debtWasOpened && collateralActive) || lifecycle.liquidationExecuted,
+      label: debtActive
+        ? elevatedRisk
+          ? "Needs attention"
+          : "Active"
+        : lifecycle.borrowerCollateralWithdrawn
+          ? "Withdrawn"
+          : lifecycle.debtWasOpened && collateralActive
+            ? "Ready"
+            : lifecycle.liquidationExecuted
+              ? "Risk path"
+              : "Locked",
+    },
+    return: {
+      complete: lifecycle.returnComplete,
+      unlocked:
+        lifecycle.freeVoucher ||
+        lifecycle.returnStarted ||
+        lifecycle.settlementVoucher ||
+        lifecycle.liquidationExecuted ||
+        lifecycle.borrowerCollateralWithdrawn,
+      label: lifecycle.returnComplete
+        ? "Complete"
+        : lifecycle.returnStarted
+          ? "Proof pending"
+          : lifecycle.settlementVoucher
+            ? "Settle"
+            : lifecycle.freeVoucher
+              ? "Ready"
+              : "Locked",
     },
   };
 
@@ -414,6 +542,46 @@ function workflowModel(status) {
       cta: { type: "action", action: "recoverClient", label: "Recover Account" },
       description: "Resolve the safety state before making position changes.",
       hint: "Collateral and borrowing actions are paused while recovery is active.",
+      steps,
+      risk: "risk",
+    };
+  }
+
+  if (lifecycle.liquidationExecuted) {
+    if (lifecycle.settlementVoucher && !lifecycle.settlementStarted) {
+      return {
+        step: "return",
+        title: "Settle seized collateral",
+        status: "Liquidation executed",
+        summary: "The authorized liquidator now holds seized voucher collateral. Settle it through the reverse bridge route.",
+        cta: { type: "action", action: "settleSeizedVoucher", label: "Settle Seized Voucher" },
+        description: "Burn the seized voucher and commit a settlement packet for the origin collateral.",
+        hint: `${formatAmount(status?.risk?.settlement?.seizedVoucherBalance || status?.balances?.liquidatorVoucher, "vA")} held by the authorized liquidator.`,
+        steps,
+        risk: "risk",
+      };
+    }
+    if (lifecycle.settlementStarted && !lifecycle.settlementUnlocked) {
+      return {
+        step: "return",
+        title: "Complete liquidator settlement",
+        status: "Proof pending",
+        summary: "The settlement packet exists on Bank B. Complete the reverse proof so Bank A releases origin collateral.",
+        cta: { type: "action", action: reverseAction || "proveReverseUnlock", label: "Complete Settlement" },
+        description: "Import the needed Bank B header if necessary, then verify the reverse packet proof.",
+        hint: "This remains script-assisted for proof generation, while the contracts verify packet execution.",
+        steps,
+        risk: "risk",
+      };
+    }
+    return {
+      step: "return",
+      title: "Risk settlement complete",
+      status: lifecycle.settlementUnlocked ? "Settled" : "Liquidation path",
+      summary: "The liquidation branch has reached settlement. Use Risk Admin to inspect remaining debt, bad debt, reserves, and origin unlock status.",
+      cta: { type: "portal", portal: "risk", label: "Review Risk Admin" },
+      description: "Review the liquidation accounting and seized-voucher settlement evidence.",
+      hint: lifecycle.settlementUnlocked ? "Origin collateral for the liquidator has been unlocked on Bank A." : "No seized voucher is waiting for settlement.",
       steps,
       risk: "risk",
     };
@@ -467,6 +635,62 @@ function workflowModel(status) {
     };
   }
 
+  if (lifecycle.debtWasOpened && !debtActive && collateralActive) {
+    return {
+      step: "manage",
+      title: "Withdraw collateral",
+      status: "Debt closed",
+      summary: "Debt is closed. The next borrower-side step is to withdraw voucher collateral from the lending pool.",
+      cta: { type: "action", action: "withdrawCollateral", label: "Withdraw Collateral" },
+      description: "Release deposited voucher collateral back to your Bank B wallet before returning it to Bank A.",
+      hint: `${formatAmount(state.withdrawable, "vA")} currently withdrawable.`,
+      steps,
+      risk: "safe",
+    };
+  }
+
+  if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher && !lifecycle.borrowerReverseStarted) {
+    return {
+      step: "return",
+      title: "Return collateral to Bank A",
+      status: "Ready",
+      summary: "Your voucher collateral is back in the Bank B wallet. Burn it and commit a reverse packet for source-bank unlock.",
+      cta: { type: "action", action: "burn", label: "Return Collateral" },
+      description: "Burn voucher collateral on Bank B and create the reverse settlement packet.",
+      hint: `${formatAmount(state.voucher, "vA")} free voucher available to return.`,
+      steps,
+      risk: "safe",
+    };
+  }
+
+  if (lifecycle.borrowerReverseStarted && !lifecycle.borrowerReverseComplete) {
+    return {
+      step: "return",
+      title: "Complete collateral release",
+      status: "Proof pending",
+      summary: "The reverse packet has been committed. Complete proof verification so Bank A unlocks the origin collateral.",
+      cta: { type: "action", action: reverseAction || "proveReverseUnlock", label: "Complete Release" },
+      description: "Import the needed Bank B header if necessary, then verify the reverse packet proof.",
+      hint: "Header relay and proof generation are script-assisted; unlock execution is contract-verified.",
+      steps,
+      risk: "safe",
+    };
+  }
+
+  if (lifecycle.borrowerReverseComplete) {
+    return {
+      step: "return",
+      title: "Collateral returned",
+      status: "Complete",
+      summary: "The borrower closeout path is complete: debt repaid, collateral withdrawn, voucher burned, and origin collateral unlocked.",
+      cta: { type: "portal", portal: "technical", label: "Review Proof" },
+      description: "Inspect the proof and packet evidence behind the completed return path.",
+      hint: "The account can start another borrow cycle, but the guided closeout lifecycle is complete.",
+      steps,
+      risk: "safe",
+    };
+  }
+
   if (collateralActive && !debtActive) {
     return {
       step: "borrow",
@@ -505,7 +729,7 @@ function actionAllowedByWorkflow(action, model) {
   if (!action) return true;
   if (model.cta?.action === action) return true;
   if (isTechnicalAction(action)) return true;
-  return action === "fullFlow" || action === "burn" || action === "proveReverseUnlock";
+  return action === "fullFlow" || action === "burn" || action === "settleSeizedVoucher" || action === "proveReverseUnlock";
 }
 
 function syncWorkflowUi(status = currentStatus) {
@@ -568,6 +792,11 @@ function syncWorkflowUi(status = currentStatus) {
     model.step === "manage" ? "active" : model.steps.manage.unlocked ? "" : "locked",
     model.steps.manage.label
   );
+  setWorkflowStepStatus(
+    "workflowStepReturn",
+    model.steps.return.complete ? "done" : model.step === "return" ? "active" : model.steps.return.unlocked ? "" : "locked",
+    model.steps.return.label
+  );
 
   workflowPanels.forEach((panel) => {
     const panels = String(panel.dataset.workflowPanel || "").split(/\s+/);
@@ -597,8 +826,20 @@ function syncWorkflowUi(status = currentStatus) {
   }
 
   deploySeedButton?.toggleAttribute("hidden", true);
-  if (model.step === "manage" && currentLoanTab === "borrow") setLoanTab(model.risk === "risk" ? "repay" : "repay");
-  setActiveActionCard(selectedStep === "activate" ? "activate" : selectedStep === "manage" || selectedStep === "borrow" ? "loan" : selectedStep);
+  if (!reviewingPastStep && model.cta?.action && LOAN_TAB_BY_ACTION[model.cta.action]) {
+    setLoanTab(LOAN_TAB_BY_ACTION[model.cta.action]);
+  } else if (model.step === "manage" && currentLoanTab === "borrow") {
+    setLoanTab("repay");
+  }
+  setActiveActionCard(
+    selectedStep === "activate"
+      ? "activate"
+      : selectedStep === "manage" || selectedStep === "borrow"
+        ? "loan"
+        : selectedStep === "return"
+          ? "redeem"
+          : selectedStep
+  );
 }
 
 function setRiskBadge(id, health) {
@@ -661,9 +902,13 @@ function validateAmountAction(action, status = currentStatus) {
 
   if (action === "repay") {
     if (state.debt <= 0) return { ok: false, amount, message: "There is no outstanding debt to repay." };
+    if (amount <= 0) return { ok: false, amount, message: "Enter an amount greater than zero." };
     if (amount > state.debt) return { ok: false, amount, message: "Amount is greater than outstanding debt." };
-    if (amount > state.bankB) {
-      const shortfall = Math.max(0, amount - state.bankB);
+    const closeBuffer = repayCloseBuffer(state.debt);
+    const closeDebt = state.debt - amount <= closeBuffer;
+    const requiredBalance = closeDebt ? state.debt : amount;
+    if (requiredBalance > state.bankB) {
+      const shortfall = Math.max(0, requiredBalance - state.bankB);
       return {
         ok: false,
         amount,
@@ -703,6 +948,19 @@ function updateAmountActionAvailability(status) {
         ? ""
         : validation.message
       : "Safety mode is active. Recover the light client before running interchain actions.";
+  }
+  const settlement = status?.risk?.settlement || {};
+  const settlementVoucher = numeric(settlement.seizedVoucherBalance);
+  for (const button of actionButtons.filter((node) => node.dataset.action === "settleSeizedVoucher")) {
+    const allowed = !locked && settlementVoucher > 0 && !settlement.started;
+    button.disabled = !allowed;
+    button.title = locked
+      ? "Safety mode is active. Recover the light client before settling seized collateral."
+      : settlement.started
+        ? "Settlement packet already exists. Complete the settlement proof."
+        : settlementVoucher > 0
+          ? ""
+          : "Run liquidation first so the authorized liquidator receives voucher collateral.";
   }
 }
 
@@ -755,7 +1013,8 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   const repayHealth =
     repayAmount > 0 ? projectedHealth(state.liquidationThresholdValue, projectedRepayDebt) : { label: "-", status: "Waiting" };
   const repayableNow = Math.min(state.debt, state.bankB);
-  const repayShortfall = Math.max(0, state.debt - state.bankB);
+  const repayFundingTarget = state.debt > 0 ? state.debt + repayCloseBuffer(state.debt) : 0;
+  const repayShortfall = Math.max(0, repayFundingTarget - state.bankB);
   const needsDemoCash = state.deployed && state.debt > 0 && repayShortfall > 0.000001;
   setText("repayDemoCashBalance", status?.deployed ? formatAmount(state.bankB, "bCASH") : "-");
   setText("repayableNow", status?.deployed ? formatAmount(repayableNow, "bCASH") : "-");
@@ -767,13 +1026,15 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
       : state.debt <= 0
         ? "No active debt is open, so repayment is not needed."
         : needsDemoCash
-          ? `Demo account is short by ${formatAmount(repayShortfall, "bCASH")}. Add demo bCASH to close the debt cleanly.`
-          : "The demo account has enough bCASH for the selected repayment flow."
+          ? `Demo account is short by ${formatAmount(repayShortfall, "bCASH")}. Add demo bCASH plus a small interest buffer to close the debt cleanly.`
+          : "The demo account has enough bCASH plus a small interest buffer for the selected repayment flow."
   );
   if (topUpRepayCashButton) {
     topUpRepayCashButton.hidden = !needsDemoCash;
     topUpRepayCashButton.disabled = document.body.classList.contains("is-busy");
-    topUpRepayCashButton.title = needsDemoCash ? `Adds ${formatAmount(repayShortfall, "bCASH")} for demo repayment.` : "";
+    topUpRepayCashButton.title = needsDemoCash
+      ? `Adds ${formatAmount(repayShortfall, "bCASH")} for demo repayment, including a close-debt buffer.`
+      : "";
   }
   setText("repayDecisionAmount", formatAmount(repayAmount, "bCASH"));
   setText("repayProjectedDebt", formatAmount(projectedRepayDebt, "bCASH"));
@@ -803,6 +1064,8 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   const liquidationAmount = inputValue("liquidationRepayAmount");
   setText("liquidationMaxRepayInline", status?.deployed ? formatAmount(risk.liquidationPreview?.repayAmount, "bCASH") : "-");
   const liquidationExecuted = Boolean(risk.afterLiquidation?.executed);
+  const settlement = risk.settlement || {};
+  const settlementStarted = Boolean(settlement.started);
   const liquidatableAfterSelectedShock = shockedHealth.percent != null && shockedHealth.percent < 100;
   setText(
     "scenarioHealthyBefore",
@@ -819,9 +1082,11 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   setText("scenarioLiquidationAction", `Shock to ${formatAmount(shockPrice, "bCASH/vA")}; repay ${formatAmount(liquidationAmount, "bCASH")}`);
   setText(
     "scenarioLiquidationAfter",
-    liquidationExecuted
-      ? `Debt ${formatAmount(risk.afterLiquidation?.debt, "bCASH")} / collateral ${formatAmount(risk.afterLiquidation?.collateral, "vA")}`
-      : `Health ${shockedHealth.label}; liquidatable ${liquidatableAfterSelectedShock || risk.shockPreview?.liquidatable ? "yes" : "no"}`
+    settlementStarted
+      ? `Settlement ${settlement.unlocked ? "unlocked" : "pending"} / ${formatAmount(settlement.seizedVoucherBalance, "vA")} vA`
+      : liquidationExecuted
+        ? `Debt ${formatAmount(risk.afterLiquidation?.debt, "bCASH")} / collateral ${formatAmount(risk.afterLiquidation?.collateral, "vA")}`
+        : `Health ${shockedHealth.label}; liquidatable ${liquidatableAfterSelectedShock || risk.shockPreview?.liquidatable ? "yes" : "no"}`
   );
 
   for (const [action, field] of Object.entries({
@@ -883,6 +1148,8 @@ function snapshotStatus(status) {
     headerHeightA: status.progress?.headerHeightA,
     trustedAOnB: status.progress?.trustedAOnB,
     voucherBalance: status.balances?.voucher,
+    liquidatorVoucher: status.balances?.liquidatorVoucher,
+    liquidatorOrigin: status.balances?.liquidatorOrigin,
     bankBBalance: status.balances?.bankB,
     poolCollateral: status.balances?.poolCollateral,
     poolDebt: status.balances?.poolDebt,
@@ -898,6 +1165,8 @@ function snapshotStatus(status) {
     trustedBOnA: status.progress?.trustedBOnA,
     forwardPacketId: status.trace?.forward?.packetId,
     reversePacketId: status.trace?.reverse?.packetId,
+    settlementPacketId: status.risk?.settlement?.packetId,
+    settlementUnlocked: status.risk?.settlement?.unlocked ? "unlocked" : status.risk?.settlement?.started ? "pending proof" : null,
     safetyState: status.security?.frozen
       ? "Frozen"
       : status.security?.recovering
@@ -920,6 +1189,8 @@ const FACT_LABELS = {
   headerHeightA: "Bank A header height",
   trustedAOnB: "Bank B imported Bank A header",
   voucherBalance: "Voucher balance",
+  liquidatorVoucher: "Liquidator voucher balance",
+  liquidatorOrigin: "Liquidator origin balance",
   bankBBalance: "Demo account bCASH",
   poolCollateral: "Pool collateral",
   poolDebt: "Pool debt",
@@ -935,6 +1206,8 @@ const FACT_LABELS = {
   trustedBOnA: "Bank A imported Bank B header",
   forwardPacketId: "Forward packet id",
   reversePacketId: "Reverse packet id",
+  settlementPacketId: "Settlement packet id",
+  settlementUnlocked: "Seized-voucher settlement",
   safetyState: "Light-client safety state",
   replayBlocked: "Replay protection",
   timeoutAbsence: "Timeout absence model",
@@ -967,6 +1240,7 @@ function actionTitle(action) {
     withdrawCollateral: "Withdrew collateral",
     simulatePriceShock: "Simulated oracle shock",
     executeLiquidation: "Executed liquidation",
+    settleSeizedVoucher: "Started seized-voucher settlement",
     burn: "Started collateral return",
     finalizeReverseHeader: "Checked return confirmation",
     updateReverseClient: "Confirmed collateral return",
@@ -975,7 +1249,8 @@ function actionTitle(action) {
     recoverClient: "Recovered account safety",
     replayForward: "Tested duplicate protection",
     verifyTimeoutAbsence: "Marked timeout visualization",
-    fullFlow: "Completed cross-chain lending flow",
+    fullFlow: "Completed risk/liquidation lifecycle",
+    borrowerCloseout: "Completed borrower closeout lifecycle",
     deploySeed: "Prepared demo account",
     resetSeeded: "Reset account baseline",
     refresh: "Refreshed account state",
@@ -1180,6 +1455,10 @@ async function runPrimaryWorkflowAction() {
     syncWorkflowUi(currentStatus);
     return;
   }
+  if (currentWorkflowAction?.type === "portal") {
+    setActivePortal(currentWorkflowAction.portal);
+    return;
+  }
   if (currentWorkflowAction?.type === "deploySeed") {
     await runDeploySeed();
     return;
@@ -1240,7 +1519,8 @@ loanTabButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setLoanTab(button.dataset.loanTab);
     setActiveActionCard("loan", { pinned: true });
-    selectedWorkflowStep = financialState(currentStatus).debt > 0 ? "manage" : "borrow";
+    const lifecycle = lifecycleState(currentStatus);
+    selectedWorkflowStep = lifecycle.debtWasOpened || button.dataset.loanTab !== "borrow" ? "manage" : "borrow";
     syncWorkflowUi(currentStatus);
   });
 });

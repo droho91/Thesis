@@ -18,7 +18,13 @@
             </div>
             <div class="nav-meta">
               <div class="nav-badges">
-                <span class="trust-badge" id="operatorMode">Light-client verified</span>
+                <span class="trust-badge trust-badge--chain" id="operatorMode">Light-client verified</span>
+                <span
+                  class="trust-badge trust-badge--assumption"
+                  title="Controlled prototype assumptions: static validator set, governed oracle, authorized liquidator, and admin recovery."
+                >
+                  Prototype assumption
+                </span>
                 <span class="status-pill" id="deploymentStatus">Checking system</span>
               </div>
               <div class="nav-actions">
@@ -129,6 +135,13 @@
                 <small id="workflowStepManage">Locked</small>
               </div>
             </button>
+            <button class="journey-step" data-workflow-step="return" type="button">
+              <span class="journey-step-number">6</span>
+              <div>
+                <strong>Return / Settle</strong>
+                <small id="workflowStepReturn">Locked</small>
+              </div>
+            </button>
           </div>
         </div>
       </section>
@@ -158,6 +171,10 @@
                 <span class="action-index">Bridge</span>
                 <h3>Bridge Collateral</h3>
                 <p>Move source-bank collateral into this lending account.</p>
+                <div class="trust-boundary" aria-label="Bridge trust boundary">
+                  <span class="trust-badge trust-badge--chain" title="The lock and packet receipt are submitted to contracts.">On-chain verified</span>
+                  <span class="trust-badge trust-badge--script" title="The local demo controller relays headers and storage proofs.">Script-assisted</span>
+                </div>
               </div>
               <span class="soft-status" data-panel-status="bridge">Ready</span>
             </div>
@@ -209,6 +226,9 @@
                 <span class="action-index">Deposit</span>
                 <h3>Activate Collateral</h3>
                 <p>Use your available collateral so it can support borrowing.</p>
+                <div class="trust-boundary" aria-label="Deposit trust boundary">
+                  <span class="trust-badge trust-badge--chain" title="The lending pool and policy engine enforce this action on-chain.">On-chain verified</span>
+                </div>
               </div>
               <span class="soft-status" data-panel-status="activate">Waiting</span>
             </div>
@@ -227,6 +247,9 @@
                 <span class="action-index">Loan</span>
                 <h3>Borrow and Manage</h3>
                 <p>Borrow within your limit, repay debt, or reduce risk from one place.</p>
+                <div class="trust-boundary" aria-label="Loan trust boundary">
+                  <span class="trust-badge trust-badge--chain" title="Borrow, repay, and collateral withdrawal are contract-enforced.">On-chain verified</span>
+                </div>
               </div>
               <span class="soft-status" data-panel-status="loan">Waiting</span>
             </div>
@@ -383,6 +406,10 @@
                     </div>
                     <div class="repay-funding-action">
                       <p id="repayFundingCopy">The demo account balance will appear here before repayment.</p>
+                      <div class="trust-boundary">
+                        <span class="trust-badge trust-badge--chain" title="The demo bCASH top-up is an on-chain admin mint.">On-chain verified</span>
+                        <span class="trust-badge trust-badge--assumption" title="This simulates the borrower reacquiring cash outside the lending pool.">Prototype assumption</span>
+                      </div>
                       <button class="button-primary-soft" id="topUpRepayCashButton" type="button" hidden>Get demo bCASH</button>
                     </div>
                   </div>
@@ -463,12 +490,16 @@
             </div>
           </article>
 
-          <article class="product-card action-card action-card--compact workflow-panel" data-action-card="redeem" data-workflow-panel="redeem">
+          <article class="product-card action-card action-card--compact workflow-panel" data-action-card="redeem" data-workflow-panel="return redeem">
             <div class="action-card-head">
               <div>
                 <span class="action-index">Redeem</span>
                 <h3>Return Collateral</h3>
                 <p>Close the wrapped position and return collateral to the source account.</p>
+                <div class="trust-boundary" aria-label="Redeem trust boundary">
+                  <span class="trust-badge trust-badge--chain" title="Voucher burn and source unlock are contract actions.">On-chain verified</span>
+                  <span class="trust-badge trust-badge--script" title="The local demo controller relays the reverse packet proof.">Script-assisted</span>
+                </div>
               </div>
               <span class="soft-status">Optional</span>
             </div>
@@ -745,6 +776,10 @@
               <div>
                 <p class="eyebrow">Oracle Shock</p>
                 <h3>Price drop simulation</h3>
+                <div class="trust-boundary" aria-label="Oracle trust boundary">
+                  <span class="trust-badge trust-badge--chain" title="The demo oracle update is an on-chain transaction.">On-chain verified</span>
+                  <span class="trust-badge trust-badge--assumption" title="The oracle is governed/manual in this prototype.">Prototype assumption</span>
+                </div>
               </div>
               <span class="risk-chip" id="riskShockBadge">Waiting</span>
             </div>
@@ -782,6 +817,10 @@
               <div>
                 <p class="eyebrow">Liquidation Preview</p>
                 <h3>What the liquidator can do</h3>
+                <div class="trust-boundary" aria-label="Liquidation trust boundary">
+                  <span class="trust-badge trust-badge--chain" title="Liquidation is executed by the lending pool contract.">On-chain verified</span>
+                  <span class="trust-badge trust-badge--assumption" title="Liquidation is restricted to an authorized operator in this prototype.">Prototype assumption</span>
+                </div>
               </div>
             </div>
             <p class="validation-message">Liquidation Preview uses the current on-chain oracle price. Run Simulate Oracle Shock first to update executable liquidation values.</p>
@@ -862,7 +901,11 @@
             <div class="panel-head">
               <div>
                 <p class="eyebrow">After Liquidation</p>
-                <h3>Recorded pool impact</h3>
+                <h3>Settlement path</h3>
+                <div class="trust-boundary" aria-label="Settlement trust boundary">
+                  <span class="trust-badge trust-badge--chain" title="Voucher burn and escrow unlock are contract-verifiable steps.">On-chain verified</span>
+                  <span class="trust-badge trust-badge--script" title="Header/proof relay is orchestrated by the local demo script.">Script-assisted</span>
+                </div>
               </div>
               <span class="soft-status" id="riskAfterTx">No liquidation executed yet</span>
             </div>
@@ -903,7 +946,27 @@
                 <dt>Supplier loss</dt>
                 <dd id="riskAfterSupplierLoss">-</dd>
               </div>
+              <div>
+                <dt>Liquidator seized voucher</dt>
+                <dd id="riskSettlementSeizedVoucher">-</dd>
+              </div>
+              <div>
+                <dt>Settlement packet</dt>
+                <dd id="riskSettlementPacket">-</dd>
+              </div>
+              <div>
+                <dt>Origin recipient balance</dt>
+                <dd id="riskSettlementOriginBalance">-</dd>
+              </div>
+              <div>
+                <dt>Settlement status</dt>
+                <dd id="riskSettlementStatus">-</dd>
+              </div>
             </dl>
+            <div class="action-buttons action-buttons--settlement">
+              <button class="button-primary-soft" data-action="settleSeizedVoucher" type="button">Settle Seized Voucher</button>
+              <button class="button-run" data-action="proveReverseUnlock" type="button">Complete Settlement</button>
+            </div>
           </article>
         </div>
       </section>
@@ -918,6 +981,11 @@
         </div>
 
         <article class="product-card proof-inspector">
+          <div class="trust-boundary trust-boundary--panel" aria-label="Proof inspector trust boundary">
+            <span class="trust-badge trust-badge--chain" title="Packet receipt, acknowledgement, replay rejection, and proof verification are enforced by contracts.">On-chain verified</span>
+            <span class="trust-badge trust-badge--script" title="Headers and storage proofs are generated and relayed by local scripts.">Script-assisted</span>
+            <span class="trust-badge trust-badge--visual" title="Some timeout and architecture explanations are inspection views, not standalone transactions.">Visualization only</span>
+          </div>
           <div class="proof-flow" aria-label="Proof flow">
             <span>Bank A / Source Chain</span>
             <i></i>
@@ -1028,6 +1096,10 @@
             <p class="eyebrow">Scenario Demo Panel</p>
             <h2>Defense-ready flows</h2>
           </div>
+          <div class="scenario-actions scenario-actions--heading">
+            <button class="button-secondary" data-action="borrowerCloseout" type="button">Run Borrower Closeout</button>
+            <button class="button-danger" data-action="fullFlow" type="button">Run Risk/Liquidation</button>
+          </div>
         </div>
         <div class="scenario-grid">
           <article class="product-card scenario-card">
@@ -1076,6 +1148,10 @@
               <h3>Price Shock and Liquidation</h3>
               <span class="status-chip" id="scenarioLiquidationStatus">Waiting</span>
             </div>
+            <div class="trust-boundary">
+              <span class="trust-badge trust-badge--chain">On-chain verified</span>
+              <span class="trust-badge trust-badge--assumption">Prototype assumption</span>
+            </div>
             <div class="scenario-live">
               <div><span>Before</span><strong id="scenarioLiquidationBefore">Needs active debt</strong></div>
               <div><span>Action</span><strong id="scenarioLiquidationAction">Shock price / liquidate</strong></div>
@@ -1090,6 +1166,7 @@
             <div class="scenario-actions">
               <button class="button-danger" data-action="simulatePriceShock" type="button">Shock Price</button>
               <button class="button-danger" data-action="executeLiquidation" type="button">Liquidate</button>
+              <button class="button-primary-soft" data-action="settleSeizedVoucher" type="button">Settle Voucher</button>
             </div>
           </article>
 
@@ -1116,6 +1193,10 @@
             <div class="scenario-card-head">
               <h3>Timeout Refund Scenario</h3>
               <span class="status-chip" id="scenarioTimeoutStatus">Script-backed</span>
+            </div>
+            <div class="trust-boundary">
+              <span class="trust-badge trust-badge--visual">Visualization only</span>
+              <span class="trust-badge trust-badge--script">Script-assisted</span>
             </div>
             <div class="scenario-live">
               <div><span>Before</span><strong id="scenarioTimeoutBefore">Needs denied packet</strong></div>
@@ -1170,7 +1251,8 @@
           </p>
           <div class="runtime-tool-actions">
             <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
-            <button class="button-secondary" data-action="fullFlow" type="button">Run Guided Lifecycle</button>
+            <button class="button-secondary" data-action="borrowerCloseout" type="button">Run Borrower Closeout</button>
+            <button class="button-secondary" data-action="fullFlow" type="button">Run Risk/Liquidation</button>
           </div>
         </aside>
       </div>
@@ -1271,10 +1353,10 @@
                 <span id="visualTrustState"><strong>waiting</strong></span>
               </div>
               <div class="action-buttons action-buttons--compact">
-                <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Fetch Source Proof</button>
-                <button class="button-secondary" data-action="updateForwardClient" type="button">Sync Trust on Bank B</button>
-                <button class="button-secondary" data-action="finalizeReverseHeader" type="button">Fetch Redemption Proof</button>
-                <button class="button-secondary" data-action="updateReverseClient" type="button">Sync Trust on Bank A</button>
+                <button class="button-secondary" data-action="finalizeForwardHeader" type="button" title="Script-assisted header relay">Fetch Source Proof</button>
+                <button class="button-secondary" data-action="updateForwardClient" type="button" title="On-chain light-client update using script-prepared header data">Sync Trust on Bank B</button>
+                <button class="button-secondary" data-action="finalizeReverseHeader" type="button" title="Script-assisted reverse header relay">Fetch Redemption Proof</button>
+                <button class="button-secondary" data-action="updateReverseClient" type="button" title="On-chain light-client update using script-prepared header data">Sync Trust on Bank A</button>
               </div>
             </details>
 

@@ -430,6 +430,7 @@ function renderRiskAdmin(status) {
   const shock = risk.shockPreview || {};
   const preview = risk.liquidationPreview || {};
   const after = risk.afterLiquidation || {};
+  const settlement = risk.settlement || {};
 
   setText("riskOracleLabel", oracle.label || "Governed Demo Oracle");
   setText("riskOracleCollateralPrice", oracle.collateralPrice ? `${compactAmount(oracle.collateralPrice)} bCASH / vA` : "-");
@@ -483,6 +484,19 @@ function renderRiskAdmin(status) {
   setText("riskAfterReserveUsed", liquidationExecuted && after.reservesUsed ? `${compactAmount(after.reservesUsed)} bCASH` : "-");
   setText("riskAfterSupplierLoss", liquidationExecuted && after.supplierLoss ? `${compactAmount(after.supplierLoss)} bCASH` : "-");
   setText("riskAfterTx", liquidationExecuted ? compact(after.latestTxHash) : after.message || "No liquidation executed yet");
+  setText(
+    "riskSettlementSeizedVoucher",
+    settlement.seizedVoucherBalance ? `${compactAmount(settlement.seizedVoucherBalance)} vA` : "-"
+  );
+  setText("riskSettlementPacket", settlement.packetId ? compact(settlement.packetId) : "-");
+  setText(
+    "riskSettlementOriginBalance",
+    settlement.originRecipientBalance ? `${compactAmount(settlement.originRecipientBalance)} aBANK` : "-"
+  );
+  setText(
+    "riskSettlementStatus",
+    settlement.unlocked ? "Unlocked on Bank A" : settlement.started ? "Reverse proof pending" : "Waiting for seized voucher"
+  );
 }
 
 function renderProofInspector(status) {

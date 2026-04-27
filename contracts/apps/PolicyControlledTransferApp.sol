@@ -20,6 +20,7 @@ contract PolicyControlledTransferApp is
     IBCPacketTimeoutReceiver
 {
     bytes32 public constant APP_ADMIN_ROLE = keccak256("APP_ADMIN_ROLE");
+    bytes32 public constant SETTLEMENT_OPERATOR_ROLE = keccak256("SETTLEMENT_OPERATOR_ROLE");
 
     struct RemoteRoute {
         address remoteApp;
@@ -184,13 +185,35 @@ contract PolicyControlledTransferApp is
         uint64 timeoutHeight,
         uint64 timeoutTimestamp
     ) external whenNotPaused returns (bytes32 packetId) {
+        return _burnAndRelease(msg.sender, destinationChainId, recipient, amount, timeoutHeight, timeoutTimestamp);
+    }
+
+    /// @notice Controlled prototype path for an authorized liquidator settling seized voucher collateral.
+    function settleSeizedVoucher(
+        uint256 destinationChainId,
+        address recipient,
+        uint256 amount,
+        uint64 timeoutHeight,
+        uint64 timeoutTimestamp
+    ) external onlyRole(SETTLEMENT_OPERATOR_ROLE) whenNotPaused returns (bytes32 packetId) {
+        return _burnAndRelease(msg.sender, destinationChainId, recipient, amount, timeoutHeight, timeoutTimestamp);
+    }
+
+    function _burnAndRelease(
+        address sender,
+        uint256 destinationChainId,
+        address recipient,
+        uint256 amount,
+        uint64 timeoutHeight,
+        uint64 timeoutTimestamp
+    ) internal returns (bytes32 packetId) {
         require(address(voucherToken) != address(0), "VOUCHER_NOT_SET");
         RemoteRoute memory route = _requireRoute(destinationChainId);
         require(voucherToken.canonicalAsset() == route.canonicalAsset, "VOUCHER_ASSET_ROUTE_MISMATCH");
         require(recipient != address(0), "RECIPIENT_ZERO");
         require(amount > 0, "AMOUNT_ZERO");
 
-        voucherToken.burnFromWithPolicy(msg.sender, route.canonicalAsset, amount);
+        voucherToken.burnFromWithPolicy(sender, route.canonicalAsset, amount);
 
         IBCPacketLib.Packet memory packet = IBCPacketLib.Packet({
             sequence: packetStore.nextSequence(),
@@ -206,7 +229,7 @@ contract PolicyControlledTransferApp is
             }),
             data: IBCPacketLib.encodeTransferData(
                 IBCPacketLib.TransferData({
-                    sender: msg.sender,
+                    sender: sender,
                     recipient: recipient,
                     asset: route.canonicalAsset,
                     amount: amount,
@@ -218,7 +241,7 @@ contract PolicyControlledTransferApp is
         });
 
         packetId = packetStore.commitPacket(packet);
-        emit BurnPacketSent(packetId, destinationChainId, packet.sequence, msg.sender, recipient, amount);
+        emit BurnPacketSent(packetId, destinationChainId, packet.sequence, sender, recipient, amount);
     }
 
     function onRecvPacket(IBCPacketLib.Packet calldata packet, bytes32 packetId)

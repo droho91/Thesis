@@ -41,6 +41,11 @@ assert.doesNotMatch(withdrawBlock, /badDebtWrittenOff|reservesUsed|supplierLoss/
 const demoHtml = await readFile(resolve(process.cwd(), "demo", "index.html"), "utf8");
 const proofInspectorHeadings = demoHtml.match(/<h2>Proof inspector<\/h2>/g) || [];
 assert.equal(proofInspectorHeadings.length, 1, "Proof inspector heading should appear exactly once");
+assert.match(demoHtml, /data-workflow-step="return"/, "borrower workflow should expose an explicit return/settle step");
+assert.match(demoHtml, /data-workflow-panel="return redeem"/, "redeem panel should be reachable from the return/settle step");
+
+assert.match(demoRunner, /runBorrowerCloseoutScenario/, "demo runner should include a borrower closeout lifecycle");
+assert.match(demoRunner, /--scenario/, "demo runner should support explicit scenario selection");
 
 const traceShock = resolveShockPreviewPriceE18({
   traceRisk: { shockedVoucherPriceE18: e18("0.3").toString() },
@@ -157,6 +162,18 @@ const liquidatedTrace = normalizeTraceForUi({
   },
 });
 assert.equal(liquidatedTrace.lending.liquidated, true, "liquidation tx hash should mark lending as liquidated");
+
+const reverseSettlementTrace = normalizeTraceForUi({
+  reverse: {
+    packetId: "0xsettlement",
+    proofMode: "storage",
+  },
+  denied: {
+    packetId: "0xdenied",
+  },
+});
+assert.equal(reverseSettlementTrace.reverse.packetId, "0xsettlement", "reverse settlement packet should not be overwritten by denied timeout packet");
+assert.equal(reverseSettlementTrace.reverse.proofMode, "storage", "reverse settlement proof mode should be preserved");
 
 const afterLiquidation = afterLiquidationState({
   traceRisk: {

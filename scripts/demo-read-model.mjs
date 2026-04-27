@@ -271,13 +271,13 @@ export function normalizeTraceForUi(trace) {
     },
     reverse: {
       ...(trace.reverse || {}),
-      headerHeight: trace.timeout?.trustedHeight,
-      headerHash: trace.timeout?.trustedHeaderHash,
-      stateRoot: trace.timeout?.trustedStateRoot,
-      executionStateRoot: trace.timeout?.trustedStateRoot,
-      consensusHash: trace.timeout?.trustedHeaderHash,
-      packetId: trace.denied?.packetId,
-      proofMode: "storage-absence",
+      headerHeight: trace.reverse?.trustedHeight || trace.timeout?.trustedHeight,
+      headerHash: trace.reverse?.trustedHeaderHash || trace.timeout?.trustedHeaderHash,
+      stateRoot: trace.reverse?.trustedStateRoot || trace.timeout?.trustedStateRoot,
+      executionStateRoot: trace.reverse?.trustedStateRoot || trace.timeout?.trustedStateRoot,
+      consensusHash: trace.reverse?.trustedHeaderHash || trace.timeout?.trustedHeaderHash,
+      packetId: trace.reverse?.packetId || trace.denied?.packetId,
+      proofMode: trace.reverse?.proofMode || (trace.denied?.packetId ? "storage-absence" : undefined),
     },
     misbehaviour: {
       frozen: false,
@@ -529,6 +529,12 @@ async function readOnchainDemoStatus(health) {
   const destinationUser =
     cfg.participants?.destinationUser ||
     (await (await signerForChain(cfg, "B", Number(cfg.participants?.destinationUserIndex ?? 1))).getAddress());
+  const liquidator =
+    cfg.participants?.liquidator ||
+    (await (await signerForChain(cfg, "B", Number(cfg.participants?.liquidatorIndex ?? 2))).getAddress());
+  const sourceLiquidator =
+    cfg.participants?.sourceLiquidator ||
+    (await (await signerForChain(cfg, "A", Number(cfg.participants?.liquidatorIndex ?? 2))).getAddress());
   const liquiditySupplier = cfg.participants?.liquiditySupplier || cfg.chains.B.admin;
 
   const canonical = new ethers.Contract(cfg.chains.A.canonicalToken, artifacts.bankToken.abi, providerA);
@@ -552,6 +558,8 @@ async function readOnchainDemoStatus(health) {
     escrowTotal,
     voucherBalance,
     bankBBalance,
+    liquidatorVoucherBalance,
+    liquidatorOriginBalance,
     poolCollateral,
     poolDebt,
     poolCash,
@@ -606,6 +614,8 @@ async function readOnchainDemoStatus(health) {
     escrow.totalEscrowed(),
     voucher.balanceOf(destinationUser),
     debtToken.balanceOf(destinationUser),
+    voucher.balanceOf(liquidator),
+    canonical.balanceOf(sourceLiquidator),
     lendingPool.collateralBalance(destinationUser),
     lendingPool.debtBalance(destinationUser),
     lendingPool.totalCash(),
@@ -731,6 +741,9 @@ async function readOnchainDemoStatus(health) {
     liveReserves: totalReserves,
     liveBadDebt: totalBadDebt,
   });
+  const settlementTrace = trace?.liquidatorSettlement || {};
+  const settlementStarted = Boolean(settlementTrace.burnTxHash || settlementTrace.packetId);
+  const settlementUnlocked = Boolean(settlementTrace.unlockTxHash || (settlementStarted && trace?.reverse?.receiveTxHash));
   const packetLifecycleStatus = packetStatusLabel({
     consumed: forwardProofVerified,
     acknowledged: forwardAcknowledged,
@@ -752,6 +765,8 @@ async function readOnchainDemoStatus(health) {
       escrow: units(escrowTotal),
       voucher: units(voucherBalance),
       bankB: units(bankBBalance),
+      liquidatorVoucher: units(liquidatorVoucherBalance),
+      liquidatorOrigin: units(liquidatorOriginBalance),
       poolCollateral: units(poolCollateral),
       poolDebt: units(poolDebt),
       poolCash: units(poolCash),
@@ -845,6 +860,18 @@ async function readOnchainDemoStatus(health) {
         executable: Boolean(liquidationPreview.executable),
       },
       afterLiquidation,
+      settlement: {
+        liquidator,
+        originRecipient: sourceLiquidator,
+        seizedVoucherBalance: units(liquidatorVoucherBalance),
+        originRecipientBalance: units(liquidatorOriginBalance),
+        started: settlementStarted,
+        unlocked: settlementUnlocked,
+        packetId: settlementTrace.packetId || null,
+        burnTxHash: settlementTrace.burnTxHash || null,
+        unlockTxHash: settlementTrace.unlockTxHash || (settlementStarted ? trace?.reverse?.receiveTxHash : null) || null,
+        amount: settlementTrace.amount || units(0n),
+      },
     },
     progress: {
       packetSequenceA: packetSequenceA.toString(),
@@ -871,7 +898,7 @@ async function readOnchainDemoStatus(health) {
     security: {
       forwardConsumed: Boolean(forwardConsumed || trace?.forward?.receiveTxHash),
       forwardCollateralObserved,
-      reverseConsumed: false,
+      reverseConsumed: Boolean(trace?.reverse?.receiveTxHash),
       forwardAcknowledged,
       deniedTimedOut,
       replayBlocked: Boolean(forwardConsumed || traceSecurity.replayBlocked),

@@ -110,11 +110,14 @@ async function main() {
   const policyArtifact = await loadArtifact("apps/BankPolicyEngine.sol", "BankPolicyEngine");
   const oracleArtifact = await loadArtifact("apps/ManualAssetOracle.sol", "ManualAssetOracle");
   const lendingArtifact = await loadArtifact("apps/PolicyControlledLendingPool.sol", "PolicyControlledLendingPool");
+  const transferAppArtifact = await loadArtifact("apps/PolicyControlledTransferApp.sol", "PolicyControlledTransferApp");
 
   const sourceUser = await signerForChain(config, "A", SOURCE_USER_INDEX);
+  const sourceLiquidator = await signerForChain(config, "A", LIQUIDATOR_INDEX);
   const destinationUser = await signerForChain(config, "B", DESTINATION_USER_INDEX);
   const liquidator = await signerForChain(config, "B", LIQUIDATOR_INDEX);
   const sourceUserAddress = await sourceUser.getAddress();
+  const sourceLiquidatorAddress = await sourceLiquidator.getAddress();
   const destinationUserAddress = await destinationUser.getAddress();
   const liquidatorAddress = await liquidator.getAddress();
   const liquiditySupplierAddress = config.chains.B.admin;
@@ -125,11 +128,15 @@ async function main() {
   const policyB = await contractAt(config, "B", config.chains.B.policyEngine, policyArtifact);
   const oracleB = await contractAt(config, "B", config.chains.B.oracle, oracleArtifact);
   const lendingPoolB = await contractAt(config, "B", config.chains.B.lendingPool, lendingArtifact);
+  const transferAppB = await contractAt(config, "B", config.chains.B.transferApp, transferAppArtifact);
 
   await ensureBalanceAtLeast(canonicalToken, sourceUserAddress, SOURCE_USER_AMOUNT, "fund source user with canonical token");
   await ensureBalanceAtLeast(debtToken, liquidatorAddress, LIQUIDATOR_DEBT_BALANCE, "fund liquidator");
 
   await txStep("allow source user on Bank A", () => policyA.setAccountAllowed(sourceUserAddress, true, txOptions()));
+  await txStep("allow origin liquidator recipient on Bank A", () =>
+    policyA.setAccountAllowed(sourceLiquidatorAddress, true, txOptions())
+  );
   await txStep("allow Bank A admin", () => policyA.setAccountAllowed(config.chains.A.admin, true, txOptions()));
   await txStep("allow Bank B source chain on Bank A", () => policyA.setSourceChainAllowed(config.chains.B.chainId, true, txOptions()));
   await txStep("allow canonical unlock asset on Bank A", () =>
@@ -183,6 +190,9 @@ async function main() {
   await txStep("grant liquidator role", async () =>
     lendingPoolB.grantRole(await lendingPoolB.LIQUIDATOR_ROLE(), liquidatorAddress, txOptions())
   );
+  await txStep("grant seized-voucher settlement role", async () =>
+    transferAppB.grantRole(await transferAppB.SETTLEMENT_OPERATOR_ROLE(), liquidatorAddress, txOptions())
+  );
 
   const suppliedLiquidity = await lendingPoolB.liquidityBalanceOf(liquiditySupplierAddress);
   if (suppliedLiquidity < POOL_LIQUIDITY) {
@@ -202,6 +212,7 @@ async function main() {
   };
   config.participants = {
     sourceUser: sourceUserAddress,
+    sourceLiquidator: sourceLiquidatorAddress,
     destinationUser: destinationUserAddress,
     liquidator: liquidatorAddress,
     liquiditySupplier: liquiditySupplierAddress,

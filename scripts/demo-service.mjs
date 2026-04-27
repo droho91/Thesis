@@ -12,7 +12,7 @@ const traceJsonPath = resolve(process.cwd(), "demo", "latest-run.json");
 const traceJsPath = resolve(process.cwd(), "demo", "latest-run.js");
 const npm = "npm";
 const node = process.execPath;
-const DEFAULT_TIMEOUT_MS = Number(process.env.DEMO_SERVICE_TIMEOUT_MS || 300000);
+const DEFAULT_TIMEOUT_MS = Number(process.env.DEMO_SERVICE_TIMEOUT_MS || 600000);
 const FAST_READY_TIMEOUT_MS = Number(process.env.DEMO_FAST_READY_TIMEOUT_MS || 5000);
 const STATUS_READ_TIMEOUT_MS = Number(process.env.DEMO_STATUS_READ_TIMEOUT_MS || 8000);
 let activeOperation = null;
@@ -58,7 +58,8 @@ function operationLabel(action) {
   const labels = {
     deploySeed: "Prepare Demo Account",
     resetSeeded: "Fresh Reset",
-    fullFlow: "Run Guided Lifecycle",
+    fullFlow: "Run Risk/Liquidation Lifecycle",
+    borrowerCloseout: "Run Borrower Closeout Lifecycle",
     runFlow: "Run Flow",
     openRoute: "Open connection and channel",
     lock: "Lock canonical asset",
@@ -73,6 +74,7 @@ function operationLabel(action) {
     withdrawCollateral: "Withdraw collateral",
     simulatePriceShock: "Simulate oracle shock",
     executeLiquidation: "Execute liquidation",
+    settleSeizedVoucher: "Settle seized voucher",
     burn: "Burn voucher",
     finalizeReverseHeader: "Read Bank B Besu header",
     updateReverseClient: "Import Bank B header on Bank A",
