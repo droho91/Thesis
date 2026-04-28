@@ -58,7 +58,7 @@ const DEMO_TX_GAS_LIMIT = BigInt(process.env.DEMO_TX_GAS_LIMIT || "8000000");
 const DEMO_TX_WAIT_TIMEOUT_MS = Number(process.env.DEMO_TX_WAIT_TIMEOUT_MS || process.env.TX_WAIT_TIMEOUT_MS || 120000);
 const DEMO_REPAY_BUFFER_BPS = BigInt(process.env.DEMO_REPAY_BUFFER_BPS || "1");
 const DEMO_REPAY_MIN_BUFFER = ethers.parseUnits(process.env.DEMO_REPAY_MIN_BUFFER || "0.01", 18);
-const DEMO_MAX_TIMEOUT_HEADER_GAP = BigInt(process.env.DEMO_MAX_TIMEOUT_HEADER_GAP || "300");
+const DEMO_MAX_TIMEOUT_HEADER_GAP = BigInt(process.env.DEMO_MAX_TIMEOUT_HEADER_GAP || "600");
 const DEMO_READ_RETRY_ATTEMPTS = Number(process.env.DEMO_READ_RETRY_ATTEMPTS || "4");
 const DEMO_READ_RETRY_DELAY_MS = Number(process.env.DEMO_READ_RETRY_DELAY_MS || "250");
 
@@ -206,7 +206,9 @@ function shortError(error) {
 function isTransientBesuReadError(error) {
   const text = shortError(error);
   return (
+    error?.code === "CALL_EXCEPTION" ||
     error?.info?.error?.code === -32603 ||
+    error?.error?.code === -32603 ||
     text.includes("Internal error") ||
     text.includes("missing revert data") ||
     text.includes("missing response") ||
@@ -1043,30 +1045,45 @@ async function openOrRepairChannelHandshake(config, ctx, params) {
     version,
   } = params;
 
-  const [sourceChannelOpen, destinationChannelOpen] = await Promise.all([
-    readWithRetry("Bank A packet route status", () =>
-      ctx.A.channelKeeper.isPacketRouteOpenForChannel(
-        destinationChainId,
-        config.chains.B.transferApp,
-        config.chains.A.transferApp,
-        sourceChannelId,
-        destinationChannelId
-      )
-    ),
-    readWithRetry("Bank B packet route status", () =>
-      ctx.B.channelKeeper.isPacketRouteOpenForChannel(
-        sourceChainId,
-        config.chains.A.transferApp,
-        config.chains.B.transferApp,
-        destinationChannelId,
-        sourceChannelId
-      )
-    ),
-  ]);
+  let sourceChannelOpen = false;
+  let destinationChannelOpen = false;
+  let initialRouteReadError = null;
+  try {
+    [sourceChannelOpen, destinationChannelOpen] = await Promise.all([
+      readWithRetry("Bank A packet route status", () =>
+        ctx.A.channelKeeper.isPacketRouteOpenForChannel(
+          destinationChainId,
+          config.chains.B.transferApp,
+          config.chains.A.transferApp,
+          sourceChannelId,
+          destinationChannelId
+        )
+      ),
+      readWithRetry("Bank B packet route status", () =>
+        ctx.B.channelKeeper.isPacketRouteOpenForChannel(
+          sourceChainId,
+          config.chains.A.transferApp,
+          config.chains.B.transferApp,
+          destinationChannelId,
+          sourceChannelId
+        )
+      ),
+    ]);
+  } catch (error) {
+    if (!isTransientBesuReadError(error)) throw error;
+    initialRouteReadError = error;
+  }
 
   let states = await readChannelStates(ctx, sourceChannelId, destinationChannelId);
   if (sourceChannelOpen && destinationChannelOpen) {
     return { reused: true };
+  }
+  if (
+    initialRouteReadError &&
+    states.sourceState === CHANNEL_STATE.Open &&
+    states.destinationState === CHANNEL_STATE.Open
+  ) {
+    return { reused: true, degraded: true, readError: shortError(initialRouteReadError) };
   }
 
   if (
@@ -1195,26 +1212,37 @@ async function openOrRepairChannelHandshake(config, ctx, params) {
     states = await readChannelStates(ctx, sourceChannelId, destinationChannelId);
   }
 
-  const [sourceRouteOpenAfter, destinationRouteOpenAfter] = await Promise.all([
-    readWithRetry("Bank A packet route status after repair", () =>
-      ctx.A.channelKeeper.isPacketRouteOpenForChannel(
-        destinationChainId,
-        config.chains.B.transferApp,
-        config.chains.A.transferApp,
-        sourceChannelId,
-        destinationChannelId
-      )
-    ),
-    readWithRetry("Bank B packet route status after repair", () =>
-      ctx.B.channelKeeper.isPacketRouteOpenForChannel(
-        sourceChainId,
-        config.chains.A.transferApp,
-        config.chains.B.transferApp,
-        destinationChannelId,
-        sourceChannelId
-      )
-    ),
-  ]);
+  let sourceRouteOpenAfter;
+  let destinationRouteOpenAfter;
+  try {
+    [sourceRouteOpenAfter, destinationRouteOpenAfter] = await Promise.all([
+      readWithRetry("Bank A packet route status after repair", () =>
+        ctx.A.channelKeeper.isPacketRouteOpenForChannel(
+          destinationChainId,
+          config.chains.B.transferApp,
+          config.chains.A.transferApp,
+          sourceChannelId,
+          destinationChannelId
+        )
+      ),
+      readWithRetry("Bank B packet route status after repair", () =>
+        ctx.B.channelKeeper.isPacketRouteOpenForChannel(
+          sourceChainId,
+          config.chains.A.transferApp,
+          config.chains.B.transferApp,
+          destinationChannelId,
+          sourceChannelId
+        )
+      ),
+    ]);
+  } catch (error) {
+    if (!isTransientBesuReadError(error)) throw error;
+    result.sourceEndState = states.sourceStateName;
+    result.destinationEndState = states.destinationStateName;
+    result.degraded = true;
+    result.readError = shortError(error);
+    return result;
+  }
   if (!sourceRouteOpenAfter || !destinationRouteOpenAfter) {
     cannotRepairHandshake("channel", states);
   }
@@ -1304,8 +1332,64 @@ async function currentRouteStatus(config, ctx) {
   };
 }
 
+function degradedRouteStatus(error) {
+  const unknownState = {
+    sourceStateName: "Unknown",
+    destinationStateName: "Unknown",
+  };
+  return {
+    ready: true,
+    degraded: true,
+    readError: shortError(error),
+    connection: unknownState,
+    channel: unknownState,
+    sourceRouteOpen: null,
+    destinationRouteOpen: null,
+  };
+}
+
+function routeStatusReadError(error) {
+  return (
+    "Route status read failed due to a Besu RPC read error after attempting to open/reuse the handshake. " +
+    "Retry the step, run Fresh Reset, or check whether runtime config points to stale deployments. " +
+    `Last error: ${shortError(error)}`
+  );
+}
+
+async function robustCurrentRouteStatus(config, ctx, { repair = true } = {}) {
+  try {
+    return await currentRouteStatus(config, ctx);
+  } catch (firstError) {
+    if (!isTransientBesuReadError(firstError)) throw firstError;
+
+    let repaired = false;
+    if (repair) {
+      try {
+        await openOrReuseHandshake(config, ctx);
+        repaired = true;
+      } catch (repairError) {
+        if (!isTransientBesuReadError(repairError) || !config.status?.proofCheckedHandshakeOpened) {
+          throw new Error(routeStatusReadError(repairError));
+        }
+      }
+    }
+
+    try {
+      return await currentRouteStatus(config, ctx);
+    } catch (retryError) {
+      if (isTransientBesuReadError(retryError) && (repaired || config.status?.proofCheckedHandshakeOpened)) {
+        return degradedRouteStatus(retryError);
+      }
+      if (isTransientBesuReadError(retryError)) {
+        throw new Error(routeStatusReadError(retryError));
+      }
+      throw retryError;
+    }
+  }
+}
+
 async function requireOpenHandshake(config, ctx) {
-  const status = await currentRouteStatus(config, ctx);
+  const status = await robustCurrentRouteStatus(config, ctx);
   if (status.ready) return status;
 
   const routeText = `${status.sourceRouteOpen ? "open" : "closed"} / ${status.destinationRouteOpen ? "open" : "closed"}`;
@@ -1698,6 +1782,7 @@ export {
   getCurrentPhase,
   handshakeTrace,
   isKnownReplay,
+  isTransientBesuReadError,
   isWorldStateUnavailable,
   loadContext,
   loadRuntimeConfig,
@@ -1712,11 +1797,13 @@ export {
   readExistingTrace,
   readForwardHeader,
   readReverseHeader,
+  readWithRetry,
   repayCloseBuffer,
   repayCloseTarget,
   requireDemoSafetyModeAllows,
   requireOpenHandshake,
   requireTrustedProofAnchor,
+  robustCurrentRouteStatus,
   reversePacket,
   rlpWord,
   saveRuntimeConfig,

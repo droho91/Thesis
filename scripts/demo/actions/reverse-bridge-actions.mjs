@@ -11,6 +11,7 @@ import {
   packetLeaf,
   packetPath,
   readExistingTrace,
+  readWithRetry,
   requireOpenHandshake,
   reversePacket,
   setPhase,
@@ -24,8 +25,8 @@ import { readReverseHeader, trustCurrentHeaderForProof, trustReverseHeader } fro
 
 async function requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label }) {
   const [trustedHeight, latestHeight] = await Promise.all([
-    lightClient.latestTrustedHeight(sourceChainId),
-    provider.getBlockNumber(),
+    readWithRetry(`${label} trusted height`, () => lightClient.latestTrustedHeight(sourceChainId)),
+    readWithRetry(`${label} source block`, () => provider.getBlockNumber()),
   ]);
   const trusted = BigInt(trustedHeight);
   const latest = BigInt(latestHeight);

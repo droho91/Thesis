@@ -22,6 +22,7 @@ import {
   packetLeaf,
   packetPath,
   previewField,
+  readWithRetry,
   reversePacket,
   saveRuntimeConfig,
   setPhase,
@@ -36,6 +37,8 @@ import { writeTrace } from "../trace-writer.mjs";
 import { buildAcknowledgementProof, buildPacketProofs } from "../proof/packet-proof-builder.mjs";
 import { trustCurrentHeaderForProof } from "../proof/header-trust.mjs";
 import { executeTimeoutRefundAction } from "../actions/timeout-actions.mjs";
+
+const readDemo = (label, read) => readWithRetry(label, read);
 
 export async function runRiskScenario() {
   const runtime = normalizeRuntime();
@@ -189,10 +192,14 @@ export async function runRiskScenario() {
 
   setPhase("risk-deposit-and-borrow");
   await ensureRiskSeeded(config, ctx);
-  const currentCollateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
+  const currentCollateral = await readDemo("risk collateral balance", () =>
+    ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress)
+  );
   const depositDelta = FORWARD_AMOUNT > currentCollateral ? FORWARD_AMOUNT - currentCollateral : 0n;
   if (depositDelta > 0n) {
-    const voucherBalance = await ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress);
+    const voucherBalance = await readDemo("risk voucher balance", () =>
+      ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress)
+    );
     if (voucherBalance < depositDelta) {
       throw new Error(
         `Bank B user needs ${units(depositDelta)} free voucher collateral, but only has ${units(voucherBalance)}.`
@@ -203,13 +210,17 @@ export async function runRiskScenario() {
     );
     await txStep("deposit voucher collateral", () => ctx.B.lendingPoolUser.depositCollateral(depositDelta, txOptions()));
   }
-  const maxBorrowBefore = await ctx.B.lendingPoolAdmin.maxBorrow(ctx.destinationUserAddress);
-  const availableBeforeBorrow = await ctx.B.lendingPoolAdmin.availableToBorrow(ctx.destinationUserAddress);
-  const debtBeforeBorrow = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
+  const [maxBorrowBefore, availableBeforeBorrow, debtBeforeBorrow] = await Promise.all([
+    readDemo("risk max borrow", () => ctx.B.lendingPoolAdmin.maxBorrow(ctx.destinationUserAddress)),
+    readDemo("risk available borrow", () => ctx.B.lendingPoolAdmin.availableToBorrow(ctx.destinationUserAddress)),
+    readDemo("risk debt before borrow", () => ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress)),
+  ]);
   const borrowDelta = BORROW_AMOUNT > debtBeforeBorrow ? BORROW_AMOUNT - debtBeforeBorrow : 0n;
   if (borrowDelta > 0n) {
     if (availableBeforeBorrow < borrowDelta) {
-      const collateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
+      const collateral = await readDemo("risk collateral for borrow limit", () =>
+        ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress)
+      );
       throw new Error(
         `BORROW_LIMIT: available ${units(availableBeforeBorrow)} bCASH, need ${units(borrowDelta)}; ` +
           `maxBorrow=${units(maxBorrowBefore)}, collateral=${units(collateral)} vA, existingDebt=${units(debtBeforeBorrow)}.`
@@ -217,36 +228,49 @@ export async function runRiskScenario() {
     }
     await txStep("borrow debt asset", () => ctx.B.lendingPoolUser.borrow(borrowDelta, txOptions()));
   }
-  const healthBeforeShock = await ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress);
-  const debtAfterBorrow = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
-  const collateralAfterDeposit = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
+  const [healthBeforeShock, debtAfterBorrow, collateralAfterDeposit] = await Promise.all([
+    readDemo("risk health before shock", () => ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress)),
+    readDemo("risk debt after borrow", () => ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress)),
+    readDemo("risk collateral after deposit", () => ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress)),
+  ]);
 
   setPhase("risk-price-shock-and-liquidate");
   await txStep("shock voucher price", () =>
     ctx.B.oracle.setPrice(config.chains.B.voucherToken, SHOCKED_VOUCHER_PRICE_E18, txOptions())
   );
-  const healthAfterShock = await ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress);
-  const liquidatableAfterShock = await ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress);
-  const maxLiquidationRepay = await ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress);
-  const liquidationPreview = await ctx.B.lendingPoolAdmin.previewLiquidation(
-    ctx.destinationUserAddress,
-    LIQUIDATION_REPAY
-  );
+  const [healthAfterShock, liquidatableAfterShock, maxLiquidationRepay, liquidationPreview] = await Promise.all([
+    readDemo("risk health after shock", () => ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress)),
+    readDemo("risk liquidatable after shock", () => ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress)),
+    readDemo("risk max liquidation repay", () => ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress)),
+    readDemo("risk liquidation preview", () =>
+      ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, LIQUIDATION_REPAY)
+    ),
+  ]);
   const actualLiquidationRepay = previewField(liquidationPreview, "actualRepayAmount", 1);
   const seizedCollateralPreview = previewField(liquidationPreview, "seizedCollateral", 2);
-  const reservesBeforeLiquidation = await ctx.B.lendingPoolAdmin.totalReserves();
-  const badDebtBeforeLiquidation = await ctx.B.lendingPoolAdmin.totalBadDebt();
+  const [reservesBeforeLiquidation, badDebtBeforeLiquidation] = await Promise.all([
+    readDemo("risk reserves before liquidation", () => ctx.B.lendingPoolAdmin.totalReserves()),
+    readDemo("risk bad debt before liquidation", () => ctx.B.lendingPoolAdmin.totalBadDebt()),
+  ]);
   await txStep("approve liquidation repay", () =>
     ctx.B.debtLiquidator.approve(config.chains.B.lendingPool, actualLiquidationRepay, txOptions())
   );
   const liquidationReceipt = await txStep("liquidate unhealthy position", () =>
     ctx.B.lendingPoolLiquidator.liquidate(ctx.destinationUserAddress, LIQUIDATION_REPAY, txOptions())
   );
-  const debtAfterLiquidation = await ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress);
-  const collateralAfterLiquidation = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
-  const reservesAfterLiquidation = await ctx.B.lendingPoolAdmin.totalReserves();
-  const badDebtAfterLiquidation = await ctx.B.lendingPoolAdmin.totalBadDebt();
-  const liquidatorVoucherBalance = await ctx.B.voucherAdmin.balanceOf(ctx.liquidatorAddress);
+  const [
+    debtAfterLiquidation,
+    collateralAfterLiquidation,
+    reservesAfterLiquidation,
+    badDebtAfterLiquidation,
+    liquidatorVoucherBalance,
+  ] = await Promise.all([
+    readDemo("risk debt after liquidation", () => ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress)),
+    readDemo("risk collateral after liquidation", () => ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress)),
+    readDemo("risk reserves after liquidation", () => ctx.B.lendingPoolAdmin.totalReserves()),
+    readDemo("risk bad debt after liquidation", () => ctx.B.lendingPoolAdmin.totalBadDebt()),
+    readDemo("risk liquidator voucher balance", () => ctx.B.voucherAdmin.balanceOf(ctx.liquidatorAddress)),
+  ]);
   const badDebtWrittenOff =
     debtAfterBorrow > actualLiquidationRepay + debtAfterLiquidation ? debtAfterBorrow - actualLiquidationRepay - debtAfterLiquidation : 0n;
   const reservesUsed =

@@ -4,6 +4,7 @@ import {
   SHOCKED_VOUCHER_PRICE_E18,
   ensureRiskSeeded,
   previewField,
+  readWithRetry,
   setPhase,
   txOptions,
   txStep,
@@ -11,20 +12,28 @@ import {
 } from "../context.mjs";
 import { writeTracePatch } from "../trace-writer.mjs";
 
+const readDemo = (label, read) => readWithRetry(label, read);
+
 export async function simulatePriceShockStep({ config, ctx }) {
   setPhase("step-price-shock");
   await ensureRiskSeeded(config, ctx);
-  const healthBeforeShock = await ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress);
+  const healthBeforeShock = await readDemo("health before shock", () =>
+    ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress)
+  );
   await txStep("step shock voucher oracle price", () =>
     ctx.B.oracle.setPrice(config.chains.B.voucherToken, SHOCKED_VOUCHER_PRICE_E18, txOptions())
   );
   const [healthAfterShock, liquidatableAfterShock, maxLiquidationRepay, liquidationPreview] = await Promise.all([
-    ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress),
-    ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress),
-    ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress),
+    readDemo("health after shock", () => ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress)),
+    readDemo("liquidatable after shock", () => ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress)),
+    readDemo("max liquidation repay", () => ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress)),
     (async () => {
-      const repay = await ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress);
-      return ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, repay);
+      const repay = await readDemo("preview max liquidation repay", () =>
+        ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress)
+      );
+      return readDemo("liquidation preview after shock", () =>
+        ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, repay)
+      );
     })(),
   ]);
   const previewSeized = previewField(liquidationPreview, "seizedCollateral", 2);
@@ -53,24 +62,28 @@ export async function simulatePriceShockStep({ config, ctx }) {
 
 export async function executeLiquidationStep({ config, ctx }) {
   setPhase("step-liquidation");
-  const liquidatable = await ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress);
+  const liquidatable = await readDemo("liquidatable before liquidation", () =>
+    ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress)
+  );
   if (!liquidatable) {
     throw new Error("Position is not liquidatable at the current oracle price. Run Simulate Oracle Shock first.");
   }
 
   const [debtBefore, collateralBefore, maxLiquidationRepay, reservesBefore, badDebtBefore] = await Promise.all([
-    ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress),
-    ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress),
-    ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress),
-    ctx.B.lendingPoolAdmin.totalReserves(),
-    ctx.B.lendingPoolAdmin.totalBadDebt(),
+    readDemo("debt before liquidation", () => ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress)),
+    readDemo("collateral before liquidation", () => ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress)),
+    readDemo("max liquidation repay before liquidation", () => ctx.B.lendingPoolAdmin.maxLiquidationRepay(ctx.destinationUserAddress)),
+    readDemo("reserves before liquidation", () => ctx.B.lendingPoolAdmin.totalReserves()),
+    readDemo("bad debt before liquidation", () => ctx.B.lendingPoolAdmin.totalBadDebt()),
   ]);
   const requestedRepayAmount = LIQUIDATION_REPAY_CONFIGURED ? LIQUIDATION_REPAY : maxLiquidationRepay;
-  const liquidationPreview = await ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, requestedRepayAmount);
+  const liquidationPreview = await readDemo("liquidation preview", () =>
+    ctx.B.lendingPoolAdmin.previewLiquidation(ctx.destinationUserAddress, requestedRepayAmount)
+  );
   const repayAmount = previewField(liquidationPreview, "actualRepayAmount", 1);
   if (repayAmount === 0n) throw new Error("No debt is available for liquidation.");
   const previewSeized = previewField(liquidationPreview, "seizedCollateral", 2);
-  const liquidatorBalance = await ctx.B.debtAdmin.balanceOf(ctx.liquidatorAddress);
+  const liquidatorBalance = await readDemo("liquidator debt balance", () => ctx.B.debtAdmin.balanceOf(ctx.liquidatorAddress));
   if (liquidatorBalance < repayAmount) {
     await txStep("step fund liquidator repay balance", () =>
       ctx.B.debtAdmin.mint(ctx.liquidatorAddress, repayAmount - liquidatorBalance, txOptions())
@@ -83,11 +96,11 @@ export async function executeLiquidationStep({ config, ctx }) {
     ctx.B.lendingPoolLiquidator.liquidate(ctx.destinationUserAddress, requestedRepayAmount, txOptions())
   );
   const [debtAfter, collateralAfter, reservesAfter, badDebtAfter, liquidatorVoucherBalance] = await Promise.all([
-    ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress),
-    ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress),
-    ctx.B.lendingPoolAdmin.totalReserves(),
-    ctx.B.lendingPoolAdmin.totalBadDebt(),
-    ctx.B.voucherAdmin.balanceOf(ctx.liquidatorAddress),
+    readDemo("debt after liquidation", () => ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress)),
+    readDemo("collateral after liquidation", () => ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress)),
+    readDemo("reserves after liquidation", () => ctx.B.lendingPoolAdmin.totalReserves()),
+    readDemo("bad debt after liquidation", () => ctx.B.lendingPoolAdmin.totalBadDebt()),
+    readDemo("liquidator voucher balance", () => ctx.B.voucherAdmin.balanceOf(ctx.liquidatorAddress)),
   ]);
   const badDebtWrittenOff = debtBefore > repayAmount + debtAfter ? debtBefore - repayAmount - debtAfter : 0n;
   const reservesUsed = reservesBefore > reservesAfter ? reservesBefore - reservesAfter : 0n;

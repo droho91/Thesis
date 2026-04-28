@@ -8,6 +8,7 @@ import {
   openOrReuseHandshake,
   packetLeaf,
   packetPath,
+  readWithRetry,
   setPhase,
   shortError,
   transferPacket,
@@ -22,8 +23,8 @@ import { trustCurrentHeaderForProof } from "../proof/header-trust.mjs";
 
 async function requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label }) {
   const [trustedHeight, latestHeight] = await Promise.all([
-    lightClient.latestTrustedHeight(sourceChainId),
-    provider.getBlockNumber(),
+    readWithRetry(`${label} trusted height`, () => lightClient.latestTrustedHeight(sourceChainId)),
+    readWithRetry(`${label} source block`, () => provider.getBlockNumber()),
   ]);
   const trusted = BigInt(trustedHeight);
   const latest = BigInt(latestHeight);
@@ -40,8 +41,8 @@ async function requireReasonableProofRefresh({ lightClient, provider, sourceChai
 
 async function preflightOrRefreshTimeoutLightClient({ lightClient, provider, sourceChainId, label }) {
   const [trustedHeight, latestHeight] = await Promise.all([
-    lightClient.latestTrustedHeight(sourceChainId),
-    provider.getBlockNumber(),
+    readWithRetry(`${label} trusted height`, () => lightClient.latestTrustedHeight(sourceChainId)),
+    readWithRetry(`${label} source block`, () => provider.getBlockNumber()),
   ]);
   const trusted = BigInt(trustedHeight);
   const latest = BigInt(latestHeight);

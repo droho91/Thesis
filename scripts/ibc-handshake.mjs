@@ -3,11 +3,17 @@ import { buildBesuHeaderUpdate } from "./besu-header-update.mjs";
 
 const HANDSHAKE_TX_GAS_LIMIT = BigInt(process.env.HANDSHAKE_TX_GAS_LIMIT || process.env.INTERCHAIN_TX_GAS_LIMIT || "8000000");
 const HANDSHAKE_TX_WAIT_TIMEOUT_MS = Number(
-  process.env.HANDSHAKE_TX_WAIT_TIMEOUT_MS || process.env.TX_WAIT_TIMEOUT_MS || 120000
+  process.env.HANDSHAKE_TX_WAIT_TIMEOUT_MS || process.env.TX_WAIT_TIMEOUT_MS || 300000
 );
 const HEADER_WAIT_TIMEOUT_MS = Number(process.env.HEADER_WAIT_TIMEOUT_MS || "120000");
 const HEADER_WAIT_INTERVAL_MS = Number(process.env.HEADER_WAIT_INTERVAL_MS || "2000");
 const HEADER_UPDATE_BATCH_SIZE = Math.max(1, Number(process.env.HEADER_UPDATE_BATCH_SIZE || "5"));
+const HANDSHAKE_READ_RETRY_ATTEMPTS = Number(
+  process.env.HANDSHAKE_READ_RETRY_ATTEMPTS || process.env.DEMO_READ_RETRY_ATTEMPTS || "4"
+);
+const HANDSHAKE_READ_RETRY_DELAY_MS = Number(
+  process.env.HANDSHAKE_READ_RETRY_DELAY_MS || process.env.DEMO_READ_RETRY_DELAY_MS || "250"
+);
 
 function debugHandshake() {
   return process.env.DEBUG_HANDSHAKE === "true" || process.env.DEBUG_DEMO_FLOW === "true";
@@ -21,13 +27,59 @@ function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
+function shortError(error) {
+  return error?.shortMessage || error?.reason || error?.message || String(error);
+}
+
+function isTransientBesuReadError(error) {
+  const text = shortError(error);
+  return (
+    error?.code === "CALL_EXCEPTION" ||
+    error?.info?.error?.code === -32603 ||
+    error?.error?.code === -32603 ||
+    text.includes("Internal error") ||
+    text.includes("missing revert data") ||
+    text.includes("missing response") ||
+    text.includes("invalid BytesLike value")
+  );
+}
+
+async function readWithRetry(label, read) {
+  let lastError;
+  for (let attempt = 1; attempt <= HANDSHAKE_READ_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientBesuReadError(error) || attempt === HANDSHAKE_READ_RETRY_ATTEMPTS) break;
+      await sleep(HANDSHAKE_READ_RETRY_DELAY_MS * attempt);
+    }
+  }
+  if (lastError) {
+    lastError.message = `${label} failed after ${HANDSHAKE_READ_RETRY_ATTEMPTS} read attempts: ${shortError(lastError)}`;
+  }
+  throw lastError;
+}
+
 async function waitForTx(tx, label) {
-  const timeout = new Promise((_, reject) => {
+  const timeout = new Promise((resolve) => {
     setTimeout(() => {
-      reject(new Error(`[ibc handshake] ${label} timed out waiting for ${tx.hash}`));
+      resolve({ timedOut: true });
     }, HANDSHAKE_TX_WAIT_TIMEOUT_MS);
   });
-  const receipt = await Promise.race([tx.wait(), timeout]);
+  const result = await Promise.race([tx.wait().then((receipt) => ({ receipt })), timeout]);
+  const receipt = result.receipt;
+  if (result.timedOut) {
+    const lateReceipt = await tx.provider?.getTransactionReceipt(tx.hash).catch(() => null);
+    if (lateReceipt?.status === 1) return lateReceipt;
+    if (lateReceipt && lateReceipt.status !== 1) {
+      throw new Error(`[ibc handshake] ${label} failed in transaction ${tx.hash}`);
+    }
+    throw new Error(
+      `[ibc handshake] ${label} timed out waiting for ${tx.hash} after ${HANDSHAKE_TX_WAIT_TIMEOUT_MS}ms. ` +
+        "The transaction may still be pending on local Besu; retry the step, or run Fresh Reset if it remains pending."
+    );
+  }
   if (!receipt || receipt.status !== 1) {
     throw new Error(`[ibc handshake] ${label} failed in transaction ${tx.hash}`);
   }
@@ -46,7 +98,15 @@ async function updateLightClientHeaders({ lightClient, updates, label }) {
 
   let latest = null;
   for (let i = 0; i < updates.length; i += HEADER_UPDATE_BATCH_SIZE) {
-    const chunk = updates.slice(i, i + HEADER_UPDATE_BATCH_SIZE);
+    let chunk = updates.slice(i, i + HEADER_UPDATE_BATCH_SIZE);
+    latest = chunk[chunk.length - 1];
+    const alreadyTrustedHeight = BigInt(
+      await readWithRetry(`${label} latest trusted height`, () =>
+        lightClient.latestTrustedHeight(latest.headerUpdate.sourceChainId)
+      )
+    );
+    chunk = chunk.filter((item) => BigInt(item.headerUpdate.height) > alreadyTrustedHeight);
+    if (chunk.length === 0) continue;
     latest = chunk[chunk.length - 1];
 
     if (chunk.length === 1 || typeof lightClient.updateClientBatch !== "function") {
@@ -98,7 +158,7 @@ async function buildVerifiableBesuHeaderUpdate({
   let lastMismatch = null;
 
   while (Date.now() - start < HEADER_WAIT_TIMEOUT_MS) {
-    const latestHeight = BigInt(await provider.getBlockNumber());
+    const latestHeight = BigInt(await readWithRetry("Besu latest block height", () => provider.getBlockNumber()));
     if (latestHeight < minHeight) {
       await sleep(HEADER_WAIT_INTERVAL_MS);
       continue;
@@ -140,7 +200,7 @@ async function buildVerifiableBesuHeaderAt({
   let lastMismatch = null;
 
   while (Date.now() - start < HEADER_WAIT_TIMEOUT_MS) {
-    const latestHeight = BigInt(await provider.getBlockNumber());
+    const latestHeight = BigInt(await readWithRetry("Besu latest block height", () => provider.getBlockNumber()));
     if (latestHeight < targetHeight) {
       await sleep(HEADER_WAIT_INTERVAL_MS);
       continue;
@@ -232,7 +292,9 @@ export async function trustRemoteHeaderAt({
     throw new Error("Cannot trust block zero through the Besu update path.");
   }
 
-  let currentHeight = BigInt(await lightClient.latestTrustedHeight(sourceChainId));
+  let currentHeight = BigInt(
+    await readWithRetry("Besu light client latest trusted height", () => lightClient.latestTrustedHeight(sourceChainId))
+  );
   if (currentHeight >= height) {
     const current = await buildBesuHeaderUpdate({
       provider,
