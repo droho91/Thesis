@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import {
+  DEMO_MAX_TIMEOUT_HEADER_GAP,
   DENIED_AMOUNT,
   FORWARD_AMOUNT,
   asBigInt,
@@ -8,6 +9,7 @@ import {
   ensureForwardPacketReceived,
   ensureRiskSeeded,
   isKnownReplay,
+  isWorldStateUnavailable,
   packetLeaf,
   packetPath,
   requireOpenHandshake,
@@ -25,6 +27,129 @@ import {
   trustCurrentHeaderForProof,
   trustForwardHeader,
 } from "../proof/header-trust.mjs";
+
+async function requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label }) {
+  const [trustedHeight, latestHeight] = await Promise.all([
+    lightClient.latestTrustedHeight(sourceChainId),
+    provider.getBlockNumber(),
+  ]);
+  const trusted = BigInt(trustedHeight);
+  const latest = BigInt(latestHeight);
+  if (trusted !== 0n && latest > trusted + DEMO_MAX_TIMEOUT_HEADER_GAP) {
+    throw new Error(
+      `${label} proof state is unavailable at trusted height ${trusted.toString()}, and refreshing to latest ` +
+        `${latest.toString()} would require a large header catch-up. Run Fresh Reset or rerun the guided lifecycle from a clean seeded state.`
+    );
+  }
+  if (latest < BigInt(minimumHeight)) {
+    throw new Error(`${label} source head ${latest.toString()} is below required proof height ${BigInt(minimumHeight).toString()}.`);
+  }
+}
+
+async function buildForwardPacketProofs({ config, ctx, sourceChainId, minimumHeight, packet }) {
+  let proofAnchor = await requireTrustedProofAnchor({
+    lightClient: ctx.B.lightClient,
+    sourceChainId,
+    minimumHeight,
+    sourceLabel: "Bank A",
+    destinationLabel: "Bank B",
+  });
+  try {
+    const proofs = await buildPacketProofs({
+      provider: ctx.providerA,
+      packetStoreAddress: config.chains.A.packetStore,
+      packet,
+      sourceChainId,
+      trustedHeight: proofAnchor.height,
+      stateRoot: proofAnchor.stateRoot,
+    });
+    return { proofAnchor, proofs };
+  } catch (error) {
+    if (!isWorldStateUnavailable(error)) throw error;
+    console.warn("[demo] Bank A proof state unavailable at trusted height; importing a fresher header and retrying packet proof.");
+    await requireReasonableProofRefresh({
+      lightClient: ctx.B.lightClient,
+      provider: ctx.providerA,
+      sourceChainId,
+      minimumHeight,
+      label: "Bank A packet",
+    });
+    const refreshed = await trustCurrentHeaderForProof({
+      lightClient: ctx.B.lightClient,
+      provider: ctx.providerA,
+      sourceChainId,
+      minimumHeight,
+    });
+    proofAnchor = {
+      height: refreshed.height,
+      headerHash: refreshed.header.headerUpdate.headerHash,
+      stateRoot: refreshed.header.headerUpdate.stateRoot,
+    };
+    const proofs = await buildPacketProofs({
+      provider: ctx.providerA,
+      packetStoreAddress: config.chains.A.packetStore,
+      packet,
+      sourceChainId,
+      trustedHeight: proofAnchor.height,
+      stateRoot: proofAnchor.stateRoot,
+    });
+    return { proofAnchor, proofs };
+  }
+}
+
+async function buildForwardAcknowledgementProof({
+  config,
+  ctx,
+  destinationChainId,
+  receiveHeight,
+  packetId,
+  acknowledgementHash,
+}) {
+  let ackAnchor = await trustCurrentHeaderForProof({
+    lightClient: ctx.A.lightClient,
+    provider: ctx.providerB,
+    sourceChainId: destinationChainId,
+    minimumHeight: receiveHeight,
+  });
+  try {
+    const result = await buildAcknowledgementProof({
+      provider: ctx.providerB,
+      packetHandlerAddress: config.chains.B.packetHandler,
+      packetIdValue: packetId,
+      acknowledgementHash,
+      sourceChainId: destinationChainId,
+      trustedHeight: ackAnchor.height,
+      stateRoot: ackAnchor.header.headerUpdate.stateRoot,
+    });
+    return { ackAnchor, ...result };
+  } catch (error) {
+    if (!isWorldStateUnavailable(error)) throw error;
+    console.warn("[demo] Bank B acknowledgement state unavailable at trusted height; importing a fresher header and retrying acknowledgement proof.");
+    await requireReasonableProofRefresh({
+      lightClient: ctx.A.lightClient,
+      provider: ctx.providerB,
+      sourceChainId: destinationChainId,
+      minimumHeight: receiveHeight,
+      label: "Bank B acknowledgement",
+    });
+    ackAnchor = await trustCurrentHeaderForProof({
+      lightClient: ctx.A.lightClient,
+      provider: ctx.providerB,
+      sourceChainId: destinationChainId,
+      minimumHeight: receiveHeight,
+    });
+    const result = await buildAcknowledgementProof({
+      provider: ctx.providerB,
+      packetHandlerAddress: config.chains.B.packetHandler,
+      packetIdValue: packetId,
+      acknowledgementHash,
+      sourceChainId: destinationChainId,
+      trustedHeight: ackAnchor.height,
+      stateRoot: ackAnchor.header.headerUpdate.stateRoot,
+    });
+    return { ackAnchor, ...result };
+  }
+}
 
 export async function lockStep({ config, ctx, sourceChainId, destinationChainId }) {
   setPhase("step-lock-check-route");
@@ -128,20 +253,12 @@ export async function proveForwardMintStep({ config, ctx, sourceChainId, destina
   setPhase("step-prove-forward");
   await requireOpenHandshake(config, ctx);
   const forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
-  const proofAnchor = await requireTrustedProofAnchor({
-    lightClient: ctx.B.lightClient,
+  const { proofAnchor, proofs } = await buildForwardPacketProofs({
+    config,
+    ctx,
     sourceChainId,
     minimumHeight: forward.commitHeight,
-    sourceLabel: "Bank A",
-    destinationLabel: "Bank B",
-  });
-  const proofs = await buildPacketProofs({
-    provider: ctx.providerA,
-    packetStoreAddress: config.chains.A.packetStore,
     packet: forward.packet,
-    sourceChainId,
-    trustedHeight: proofAnchor.height,
-    stateRoot: proofAnchor.stateRoot,
   });
 
   let recvReceipt = null;
@@ -156,21 +273,14 @@ export async function proveForwardMintStep({ config, ctx, sourceChainId, destina
   const receiveHeight = recvReceipt ? BigInt(recvReceipt.blockNumber) : BigInt(await ctx.providerB.getBlockNumber());
   const ackHash = await ctx.B.packetHandler.acknowledgementHashes(forward.packetId);
   if (ackHash !== ethers.ZeroHash) {
-    const ackAnchor = await trustCurrentHeaderForProof({
-      lightClient: ctx.A.lightClient,
-      provider: ctx.providerB,
-      sourceChainId: destinationChainId,
-      minimumHeight: receiveHeight,
-    });
     const acknowledgement = ethers.solidityPacked(["string", "bytes32"], ["ok:", forward.packetId]);
-    const { acknowledgementSlot, proof: ackProof } = await buildAcknowledgementProof({
-      provider: ctx.providerB,
-      packetHandlerAddress: config.chains.B.packetHandler,
-      packetIdValue: forward.packetId,
+    const { ackAnchor, acknowledgementSlot, proof: ackProof } = await buildForwardAcknowledgementProof({
+      config,
+      ctx,
+      destinationChainId,
+      receiveHeight,
+      packetId: forward.packetId,
       acknowledgementHash: ackHash,
-      sourceChainId: destinationChainId,
-      trustedHeight: ackAnchor.height,
-      stateRoot: ackAnchor.header.headerUpdate.stateRoot,
     });
     try {
       await txStep("step acknowledge forward packet", () =>
@@ -222,19 +332,13 @@ export async function proveForwardMintStep({ config, ctx, sourceChainId, destina
 export async function replayForwardStep({ config, ctx, sourceChainId, destinationChainId }) {
   setPhase("step-replay-forward");
   const forward = await ensureForwardPacketReceived(config, ctx, sourceChainId, destinationChainId);
-  const proofAnchor = await trustCurrentHeaderForProof({
-    lightClient: ctx.B.lightClient,
+  const { proofAnchor, proofs } = await buildForwardPacketProofs({
+    config,
+    ctx,
     provider: ctx.providerA,
     sourceChainId,
     minimumHeight: forward.commitHeight,
-  });
-  const proofs = await buildPacketProofs({
-    provider: ctx.providerA,
-    packetStoreAddress: config.chains.A.packetStore,
     packet: forward.packet,
-    sourceChainId,
-    trustedHeight: proofAnchor.height,
-    stateRoot: proofAnchor.header.headerUpdate.stateRoot,
   });
   try {
     await ctx.B.packetHandler.recvPacketFromStorageProof.staticCall(forward.packet, proofs.leafProof, proofs.pathProof);

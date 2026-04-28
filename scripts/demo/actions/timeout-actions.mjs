@@ -4,6 +4,7 @@ import {
   asBigInt,
   compact,
   ensureRiskSeeded,
+  isWorldStateUnavailable,
   openOrReuseHandshake,
   packetLeaf,
   packetPath,
@@ -17,7 +18,25 @@ import {
 import { writeTracePatch } from "../trace-writer.mjs";
 import { buildPacketProofs } from "../proof/packet-proof-builder.mjs";
 import { buildReceiptAbsenceProof } from "../proof/receipt-absence-proof-builder.mjs";
-import { trustRemoteHeaderAt } from "../proof/header-trust.mjs";
+import { trustCurrentHeaderForProof, trustRemoteHeaderAt } from "../proof/header-trust.mjs";
+
+async function requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label }) {
+  const [trustedHeight, latestHeight] = await Promise.all([
+    lightClient.latestTrustedHeight(sourceChainId),
+    provider.getBlockNumber(),
+  ]);
+  const trusted = BigInt(trustedHeight);
+  const latest = BigInt(latestHeight);
+  if (trusted !== 0n && latest > trusted + DEMO_MAX_TIMEOUT_HEADER_GAP) {
+    throw new Error(
+      `${label} proof state is unavailable at trusted height ${trusted.toString()}, and refreshing to latest ` +
+        `${latest.toString()} would require a large header catch-up. Run Fresh Reset or rerun the guided lifecycle from a clean seeded state.`
+    );
+  }
+  if (latest < BigInt(minimumHeight)) {
+    throw new Error(`${label} source head ${latest.toString()} is below required proof height ${BigInt(minimumHeight).toString()}.`);
+  }
+}
 
 export async function executeTimeoutRefundAction(config, ctx, sourceChainId, destinationChainId, options = {}) {
   const phasePrefix = options.phasePrefix || "";
@@ -95,22 +114,51 @@ export async function executeTimeoutRefundAction(config, ctx, sourceChainId, des
       targetHeight: deniedCommitHeight,
       label: "Bank B light client for Bank A",
     });
-    const deniedHeader = await trustRemoteHeaderAt({
+    let deniedHeader = await trustRemoteHeaderAt({
       lightClient: ctx.B.lightClient,
       provider: ctx.providerA,
       sourceChainId,
       targetHeight: deniedCommitHeight,
       validatorEpoch: 1n,
     });
-    const deniedProofHeight = deniedHeader.headerUpdate.height;
-    const deniedProofs = await buildPacketProofs({
-      provider: ctx.providerA,
-      packetStoreAddress: config.chains.A.packetStore,
-      packet: deniedPacket,
-      sourceChainId,
-      trustedHeight: deniedProofHeight,
-      stateRoot: deniedHeader.headerUpdate.stateRoot,
-    });
+    let deniedProofHeight = deniedHeader.headerUpdate.height;
+    let deniedProofs;
+    try {
+      deniedProofs = await buildPacketProofs({
+        provider: ctx.providerA,
+        packetStoreAddress: config.chains.A.packetStore,
+        packet: deniedPacket,
+        sourceChainId,
+        trustedHeight: deniedProofHeight,
+        stateRoot: deniedHeader.headerUpdate.stateRoot,
+      });
+    } catch (error) {
+      if (!isWorldStateUnavailable(error)) throw error;
+      console.warn("[demo] Bank A denied-packet proof state unavailable; importing a fresher header and retrying packet proof.");
+      await requireReasonableProofRefresh({
+        lightClient: ctx.B.lightClient,
+        provider: ctx.providerA,
+        sourceChainId,
+        minimumHeight: deniedCommitHeight,
+        label: "Bank A denied-packet",
+      });
+      const refreshed = await trustCurrentHeaderForProof({
+        lightClient: ctx.B.lightClient,
+        provider: ctx.providerA,
+        sourceChainId,
+        minimumHeight: deniedCommitHeight,
+      });
+      deniedHeader = refreshed.header;
+      deniedProofHeight = refreshed.height;
+      deniedProofs = await buildPacketProofs({
+        provider: ctx.providerA,
+        packetStoreAddress: config.chains.A.packetStore,
+        packet: deniedPacket,
+        sourceChainId,
+        trustedHeight: deniedProofHeight,
+        stateRoot: deniedHeader.headerUpdate.stateRoot,
+      });
+    }
 
     phase("confirm-denied-receive");
     let deniedReason = "unknown";
@@ -136,22 +184,52 @@ export async function executeTimeoutRefundAction(config, ctx, sourceChainId, des
       targetHeight: deniedTimeoutHeight,
       label: "Bank A light client for Bank B",
     });
-    const timeoutHeader = await trustRemoteHeaderAt({
+    let timeoutHeader = await trustRemoteHeaderAt({
       lightClient: ctx.A.lightClient,
       provider: ctx.providerB,
       sourceChainId: destinationChainId,
       targetHeight: deniedTimeoutHeight,
       validatorEpoch: 1n,
     });
-    const timeoutProofHeight = timeoutHeader.headerUpdate.height;
-    const { receiptSlot, proof: deniedReceiptAbsenceProof } = await buildReceiptAbsenceProof({
-      provider: ctx.providerB,
-      packetHandlerAddress: config.chains.B.packetHandler,
-      packetIdValue: deniedPacketId,
-      sourceChainId: destinationChainId,
-      trustedHeight: timeoutProofHeight,
-      stateRoot: timeoutHeader.headerUpdate.stateRoot,
-    });
+    let timeoutProofHeight = timeoutHeader.headerUpdate.height;
+    let receiptSlot;
+    let deniedReceiptAbsenceProof;
+    try {
+      ({ receiptSlot, proof: deniedReceiptAbsenceProof } = await buildReceiptAbsenceProof({
+        provider: ctx.providerB,
+        packetHandlerAddress: config.chains.B.packetHandler,
+        packetIdValue: deniedPacketId,
+        sourceChainId: destinationChainId,
+        trustedHeight: timeoutProofHeight,
+        stateRoot: timeoutHeader.headerUpdate.stateRoot,
+      }));
+    } catch (error) {
+      if (!isWorldStateUnavailable(error)) throw error;
+      console.warn("[demo] Bank B receipt-absence proof state unavailable; importing a fresher header and retrying absence proof.");
+      await requireReasonableProofRefresh({
+        lightClient: ctx.A.lightClient,
+        provider: ctx.providerB,
+        sourceChainId: destinationChainId,
+        minimumHeight: deniedTimeoutHeight,
+        label: "Bank B receipt-absence",
+      });
+      const refreshed = await trustCurrentHeaderForProof({
+        lightClient: ctx.A.lightClient,
+        provider: ctx.providerB,
+        sourceChainId: destinationChainId,
+        minimumHeight: deniedTimeoutHeight,
+      });
+      timeoutHeader = refreshed.header;
+      timeoutProofHeight = refreshed.height;
+      ({ receiptSlot, proof: deniedReceiptAbsenceProof } = await buildReceiptAbsenceProof({
+        provider: ctx.providerB,
+        packetHandlerAddress: config.chains.B.packetHandler,
+        packetIdValue: deniedPacketId,
+        sourceChainId: destinationChainId,
+        trustedHeight: timeoutProofHeight,
+        stateRoot: timeoutHeader.headerUpdate.stateRoot,
+      }));
+    }
     const timeoutReceipt = await txStep(`${labelPrefix}timeout denied packet`, () =>
       ctx.A.packetHandler.timeoutPacketFromStorageProof(
         deniedPacket,

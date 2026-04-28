@@ -14,6 +14,7 @@ import {
   ensureDeploymentCode,
   ensureRiskSeeded,
   ensureSeededConfig,
+  isWorldStateUnavailable,
   loadContext,
   loadRuntimeConfig,
   normalizeRuntime,
@@ -33,6 +34,7 @@ import {
 } from "../context.mjs";
 import { writeTrace } from "../trace-writer.mjs";
 import { buildAcknowledgementProof, buildPacketProofs } from "../proof/packet-proof-builder.mjs";
+import { trustCurrentHeaderForProof } from "../proof/header-trust.mjs";
 import { executeTimeoutRefundAction } from "../actions/timeout-actions.mjs";
 
 export async function runRiskScenario() {
@@ -81,22 +83,44 @@ export async function runRiskScenario() {
   const approvedPacketId = await ctx.A.packetStore.packetIdAt(approvedSequence);
 
   setPhase("trust-source-header-and-receive");
-  const approvedHeader = await trustRemoteHeaderAt({
+  let approvedHeader = await trustRemoteHeaderAt({
     lightClient: ctx.B.lightClient,
     provider: ctx.providerA,
     sourceChainId,
     targetHeight: approvedCommitHeight,
     validatorEpoch: 1n,
   });
-  const approvedProofHeight = approvedHeader.headerUpdate.height;
-  const approvedProofs = await buildPacketProofs({
-    provider: ctx.providerA,
-    packetStoreAddress: config.chains.A.packetStore,
-    packet: approvedPacket,
-    sourceChainId,
-    trustedHeight: approvedProofHeight,
-    stateRoot: approvedHeader.headerUpdate.stateRoot,
-  });
+  let approvedProofHeight = approvedHeader.headerUpdate.height;
+  let approvedProofs;
+  try {
+    approvedProofs = await buildPacketProofs({
+      provider: ctx.providerA,
+      packetStoreAddress: config.chains.A.packetStore,
+      packet: approvedPacket,
+      sourceChainId,
+      trustedHeight: approvedProofHeight,
+      stateRoot: approvedHeader.headerUpdate.stateRoot,
+    });
+  } catch (error) {
+    if (!isWorldStateUnavailable(error)) throw error;
+    console.warn("[demo] Bank A proof state unavailable at trusted height; importing a fresher header and retrying packet proof.");
+    const refreshed = await trustCurrentHeaderForProof({
+      lightClient: ctx.B.lightClient,
+      provider: ctx.providerA,
+      sourceChainId,
+      minimumHeight: approvedCommitHeight,
+    });
+    approvedHeader = refreshed.header;
+    approvedProofHeight = refreshed.height;
+    approvedProofs = await buildPacketProofs({
+      provider: ctx.providerA,
+      packetStoreAddress: config.chains.A.packetStore,
+      packet: approvedPacket,
+      sourceChainId,
+      trustedHeight: approvedProofHeight,
+      stateRoot: approvedHeader.headerUpdate.stateRoot,
+    });
+  }
   const approvedRecvReceipt = await txStep("receive forward packet", () =>
     ctx.B.packetHandler.recvPacketFromStorageProof(
       approvedPacket,
@@ -110,24 +134,48 @@ export async function runRiskScenario() {
 
   setPhase("acknowledge-forward-packet");
   const ackHeight = BigInt(approvedRecvReceipt.blockNumber);
-  const ackHeader = await trustRemoteHeaderAt({
+  let ackHeader = await trustRemoteHeaderAt({
     lightClient: ctx.A.lightClient,
     provider: ctx.providerB,
     sourceChainId: destinationChainId,
     targetHeight: ackHeight,
     validatorEpoch: 1n,
   });
-  const acknowledgementProofHeight = ackHeader.headerUpdate.height;
+  let acknowledgementProofHeight = ackHeader.headerUpdate.height;
   const acknowledgement = ethers.solidityPacked(["string", "bytes32"], ["ok:", approvedPacketId]);
-  const { acknowledgementSlot, proof: ackProof } = await buildAcknowledgementProof({
-    provider: ctx.providerB,
-    packetHandlerAddress: config.chains.B.packetHandler,
-    packetIdValue: approvedPacketId,
-    acknowledgementHash: approvedAckHash,
-    sourceChainId: destinationChainId,
-    trustedHeight: acknowledgementProofHeight,
-    stateRoot: ackHeader.headerUpdate.stateRoot,
-  });
+  let acknowledgementSlot;
+  let ackProof;
+  try {
+    ({ acknowledgementSlot, proof: ackProof } = await buildAcknowledgementProof({
+      provider: ctx.providerB,
+      packetHandlerAddress: config.chains.B.packetHandler,
+      packetIdValue: approvedPacketId,
+      acknowledgementHash: approvedAckHash,
+      sourceChainId: destinationChainId,
+      trustedHeight: acknowledgementProofHeight,
+      stateRoot: ackHeader.headerUpdate.stateRoot,
+    }));
+  } catch (error) {
+    if (!isWorldStateUnavailable(error)) throw error;
+    console.warn("[demo] Bank B acknowledgement state unavailable at trusted height; importing a fresher header and retrying acknowledgement proof.");
+    const refreshed = await trustCurrentHeaderForProof({
+      lightClient: ctx.A.lightClient,
+      provider: ctx.providerB,
+      sourceChainId: destinationChainId,
+      minimumHeight: ackHeight,
+    });
+    ackHeader = refreshed.header;
+    acknowledgementProofHeight = refreshed.height;
+    ({ acknowledgementSlot, proof: ackProof } = await buildAcknowledgementProof({
+      provider: ctx.providerB,
+      packetHandlerAddress: config.chains.B.packetHandler,
+      packetIdValue: approvedPacketId,
+      acknowledgementHash: approvedAckHash,
+      sourceChainId: destinationChainId,
+      trustedHeight: acknowledgementProofHeight,
+      stateRoot: ackHeader.headerUpdate.stateRoot,
+    }));
+  }
   const ackReceipt = await txStep("acknowledge forward packet", () =>
     ctx.A.packetHandler.acknowledgePacketFromStorageProof(
       approvedPacket,
@@ -232,22 +280,44 @@ export async function runRiskScenario() {
     amount: liquidatorVoucherBalance,
   });
   const settlementPacketId = await ctx.B.packetStore.packetIdAt(settlementSequence);
-  const settlementHeader = await trustRemoteHeaderAt({
+  let settlementHeader = await trustRemoteHeaderAt({
     lightClient: ctx.A.lightClient,
     provider: ctx.providerB,
     sourceChainId: destinationChainId,
     targetHeight: settlementCommitHeight,
     validatorEpoch: 1n,
   });
-  const settlementProofHeight = settlementHeader.headerUpdate.height;
-  const settlementProofs = await buildPacketProofs({
-    provider: ctx.providerB,
-    packetStoreAddress: config.chains.B.packetStore,
-    packet: settlementPacket,
-    sourceChainId: destinationChainId,
-    trustedHeight: settlementProofHeight,
-    stateRoot: settlementHeader.headerUpdate.stateRoot,
-  });
+  let settlementProofHeight = settlementHeader.headerUpdate.height;
+  let settlementProofs;
+  try {
+    settlementProofs = await buildPacketProofs({
+      provider: ctx.providerB,
+      packetStoreAddress: config.chains.B.packetStore,
+      packet: settlementPacket,
+      sourceChainId: destinationChainId,
+      trustedHeight: settlementProofHeight,
+      stateRoot: settlementHeader.headerUpdate.stateRoot,
+    });
+  } catch (error) {
+    if (!isWorldStateUnavailable(error)) throw error;
+    console.warn("[demo] Bank B settlement proof state unavailable; importing a fresher header and retrying packet proof.");
+    const refreshed = await trustCurrentHeaderForProof({
+      lightClient: ctx.A.lightClient,
+      provider: ctx.providerB,
+      sourceChainId: destinationChainId,
+      minimumHeight: settlementCommitHeight,
+    });
+    settlementHeader = refreshed.header;
+    settlementProofHeight = refreshed.height;
+    settlementProofs = await buildPacketProofs({
+      provider: ctx.providerB,
+      packetStoreAddress: config.chains.B.packetStore,
+      packet: settlementPacket,
+      sourceChainId: destinationChainId,
+      trustedHeight: settlementProofHeight,
+      stateRoot: settlementHeader.headerUpdate.stateRoot,
+    });
+  }
   const settlementRecvReceipt = await txStep("receive seized-voucher settlement packet", () =>
     ctx.A.packetHandler.recvPacketFromStorageProof(
       settlementPacket,

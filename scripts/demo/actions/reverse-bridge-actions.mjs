@@ -1,4 +1,5 @@
 import {
+  DEMO_MAX_TIMEOUT_HEADER_GAP,
   FORWARD_AMOUNT,
   amountFromTrace,
   asBigInt,
@@ -6,6 +7,7 @@ import {
   ensureReversePacket,
   ensureRiskSeeded,
   isKnownReplay,
+  isWorldStateUnavailable,
   packetLeaf,
   packetPath,
   readExistingTrace,
@@ -18,7 +20,76 @@ import {
 } from "../context.mjs";
 import { writeTracePatch } from "../trace-writer.mjs";
 import { buildPacketProofs } from "../proof/packet-proof-builder.mjs";
-import { readReverseHeader, requireTrustedProofAnchor, trustReverseHeader } from "../proof/header-trust.mjs";
+import { readReverseHeader, requireTrustedProofAnchor, trustCurrentHeaderForProof, trustReverseHeader } from "../proof/header-trust.mjs";
+
+async function requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label }) {
+  const [trustedHeight, latestHeight] = await Promise.all([
+    lightClient.latestTrustedHeight(sourceChainId),
+    provider.getBlockNumber(),
+  ]);
+  const trusted = BigInt(trustedHeight);
+  const latest = BigInt(latestHeight);
+  if (trusted !== 0n && latest > trusted + DEMO_MAX_TIMEOUT_HEADER_GAP) {
+    throw new Error(
+      `${label} proof state is unavailable at trusted height ${trusted.toString()}, and refreshing to latest ` +
+        `${latest.toString()} would require a large header catch-up. Run Fresh Reset or rerun the guided lifecycle from a clean seeded state.`
+    );
+  }
+  if (latest < BigInt(minimumHeight)) {
+    throw new Error(`${label} source head ${latest.toString()} is below required proof height ${BigInt(minimumHeight).toString()}.`);
+  }
+}
+
+async function buildReversePacketProofs({ config, ctx, destinationChainId, minimumHeight, packet }) {
+  let proofAnchor = await requireTrustedProofAnchor({
+    lightClient: ctx.A.lightClient,
+    sourceChainId: destinationChainId,
+    minimumHeight,
+    sourceLabel: "Bank B",
+    destinationLabel: "Bank A",
+  });
+  try {
+    const proofs = await buildPacketProofs({
+      provider: ctx.providerB,
+      packetStoreAddress: config.chains.B.packetStore,
+      packet,
+      sourceChainId: destinationChainId,
+      trustedHeight: proofAnchor.height,
+      stateRoot: proofAnchor.stateRoot,
+    });
+    return { proofAnchor, proofs };
+  } catch (error) {
+    if (!isWorldStateUnavailable(error)) throw error;
+    console.warn("[demo] Bank B proof state unavailable at trusted height; importing a fresher header and retrying reverse packet proof.");
+    await requireReasonableProofRefresh({
+      lightClient: ctx.A.lightClient,
+      provider: ctx.providerB,
+      sourceChainId: destinationChainId,
+      minimumHeight,
+      label: "Bank B reverse packet",
+    });
+    const refreshed = await trustCurrentHeaderForProof({
+      lightClient: ctx.A.lightClient,
+      provider: ctx.providerB,
+      sourceChainId: destinationChainId,
+      minimumHeight,
+    });
+    proofAnchor = {
+      height: refreshed.height,
+      headerHash: refreshed.header.headerUpdate.headerHash,
+      stateRoot: refreshed.header.headerUpdate.stateRoot,
+    };
+    const proofs = await buildPacketProofs({
+      provider: ctx.providerB,
+      packetStoreAddress: config.chains.B.packetStore,
+      packet,
+      sourceChainId: destinationChainId,
+      trustedHeight: proofAnchor.height,
+      stateRoot: proofAnchor.stateRoot,
+    });
+    return { proofAnchor, proofs };
+  }
+}
 
 export async function settleSeizedVoucherStep({ config, ctx, sourceChainId, destinationChainId }) {
   setPhase("step-settle-seized-voucher");
@@ -197,20 +268,12 @@ export async function proveReverseUnlockStep({ config, ctx, sourceChainId, desti
   setPhase("step-prove-reverse");
   await requireOpenHandshake(config, ctx);
   const reverse = await ensureReversePacket(config, ctx, sourceChainId, destinationChainId);
-  const proofAnchor = await requireTrustedProofAnchor({
-    lightClient: ctx.A.lightClient,
-    sourceChainId: destinationChainId,
+  const { proofAnchor, proofs } = await buildReversePacketProofs({
+    config,
+    ctx,
+    destinationChainId,
     minimumHeight: reverse.commitHeight,
-    sourceLabel: "Bank B",
-    destinationLabel: "Bank A",
-  });
-  const proofs = await buildPacketProofs({
-    provider: ctx.providerB,
-    packetStoreAddress: config.chains.B.packetStore,
     packet: reverse.packet,
-    sourceChainId: destinationChainId,
-    trustedHeight: proofAnchor.height,
-    stateRoot: proofAnchor.stateRoot,
   });
   let recvReceipt = null;
   try {
