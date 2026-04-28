@@ -20,7 +20,7 @@ import {
 } from "../context.mjs";
 import { writeTracePatch } from "../trace-writer.mjs";
 import { buildPacketProofs } from "../proof/packet-proof-builder.mjs";
-import { readReverseHeader, requireTrustedProofAnchor, trustCurrentHeaderForProof, trustReverseHeader } from "../proof/header-trust.mjs";
+import { readReverseHeader, trustCurrentHeaderForProof, trustReverseHeader } from "../proof/header-trust.mjs";
 
 async function requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label }) {
   const [trustedHeight, latestHeight] = await Promise.all([
@@ -40,13 +40,28 @@ async function requireReasonableProofRefresh({ lightClient, provider, sourceChai
   }
 }
 
+async function refreshProofAnchor({ lightClient, provider, sourceChainId, minimumHeight, label }) {
+  await requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label });
+  const refreshed = await trustCurrentHeaderForProof({
+    lightClient,
+    provider,
+    sourceChainId,
+    minimumHeight,
+  });
+  return {
+    height: refreshed.height,
+    headerHash: refreshed.header.headerUpdate.headerHash,
+    stateRoot: refreshed.header.headerUpdate.stateRoot,
+  };
+}
+
 async function buildReversePacketProofs({ config, ctx, destinationChainId, minimumHeight, packet }) {
-  let proofAnchor = await requireTrustedProofAnchor({
+  let proofAnchor = await refreshProofAnchor({
     lightClient: ctx.A.lightClient,
+    provider: ctx.providerB,
     sourceChainId: destinationChainId,
     minimumHeight,
-    sourceLabel: "Bank B",
-    destinationLabel: "Bank A",
+    label: "Bank B reverse packet",
   });
   try {
     const proofs = await buildPacketProofs({
@@ -61,24 +76,13 @@ async function buildReversePacketProofs({ config, ctx, destinationChainId, minim
   } catch (error) {
     if (!isWorldStateUnavailable(error)) throw error;
     console.warn("[demo] Bank B proof state unavailable at trusted height; importing a fresher header and retrying reverse packet proof.");
-    await requireReasonableProofRefresh({
+    proofAnchor = await refreshProofAnchor({
       lightClient: ctx.A.lightClient,
       provider: ctx.providerB,
       sourceChainId: destinationChainId,
       minimumHeight,
       label: "Bank B reverse packet",
     });
-    const refreshed = await trustCurrentHeaderForProof({
-      lightClient: ctx.A.lightClient,
-      provider: ctx.providerB,
-      sourceChainId: destinationChainId,
-      minimumHeight,
-    });
-    proofAnchor = {
-      height: refreshed.height,
-      headerHash: refreshed.header.headerUpdate.headerHash,
-      stateRoot: refreshed.header.headerUpdate.stateRoot,
-    };
     const proofs = await buildPacketProofs({
       provider: ctx.providerB,
       packetStoreAddress: config.chains.B.packetStore,

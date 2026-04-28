@@ -23,7 +23,6 @@ import { writeTracePatch } from "../trace-writer.mjs";
 import { buildAcknowledgementProof, buildPacketProofs } from "../proof/packet-proof-builder.mjs";
 import {
   readForwardHeader,
-  requireTrustedProofAnchor,
   trustCurrentHeaderForProof,
   trustForwardHeader,
 } from "../proof/header-trust.mjs";
@@ -46,13 +45,28 @@ async function requireReasonableProofRefresh({ lightClient, provider, sourceChai
   }
 }
 
-async function buildForwardPacketProofs({ config, ctx, sourceChainId, minimumHeight, packet }) {
-  let proofAnchor = await requireTrustedProofAnchor({
-    lightClient: ctx.B.lightClient,
+async function refreshProofAnchor({ lightClient, provider, sourceChainId, minimumHeight, label }) {
+  await requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label });
+  const refreshed = await trustCurrentHeaderForProof({
+    lightClient,
+    provider,
     sourceChainId,
     minimumHeight,
-    sourceLabel: "Bank A",
-    destinationLabel: "Bank B",
+  });
+  return {
+    height: refreshed.height,
+    headerHash: refreshed.header.headerUpdate.headerHash,
+    stateRoot: refreshed.header.headerUpdate.stateRoot,
+  };
+}
+
+async function buildForwardPacketProofs({ config, ctx, sourceChainId, minimumHeight, packet }) {
+  let proofAnchor = await refreshProofAnchor({
+    lightClient: ctx.B.lightClient,
+    provider: ctx.providerA,
+    sourceChainId,
+    minimumHeight,
+    label: "Bank A packet",
   });
   try {
     const proofs = await buildPacketProofs({
@@ -67,24 +81,13 @@ async function buildForwardPacketProofs({ config, ctx, sourceChainId, minimumHei
   } catch (error) {
     if (!isWorldStateUnavailable(error)) throw error;
     console.warn("[demo] Bank A proof state unavailable at trusted height; importing a fresher header and retrying packet proof.");
-    await requireReasonableProofRefresh({
+    proofAnchor = await refreshProofAnchor({
       lightClient: ctx.B.lightClient,
       provider: ctx.providerA,
       sourceChainId,
       minimumHeight,
       label: "Bank A packet",
     });
-    const refreshed = await trustCurrentHeaderForProof({
-      lightClient: ctx.B.lightClient,
-      provider: ctx.providerA,
-      sourceChainId,
-      minimumHeight,
-    });
-    proofAnchor = {
-      height: refreshed.height,
-      headerHash: refreshed.header.headerUpdate.headerHash,
-      stateRoot: refreshed.header.headerUpdate.stateRoot,
-    };
     const proofs = await buildPacketProofs({
       provider: ctx.providerA,
       packetStoreAddress: config.chains.A.packetStore,
@@ -105,6 +108,13 @@ async function buildForwardAcknowledgementProof({
   packetId,
   acknowledgementHash,
 }) {
+  await requireReasonableProofRefresh({
+    lightClient: ctx.A.lightClient,
+    provider: ctx.providerB,
+    sourceChainId: destinationChainId,
+    minimumHeight: receiveHeight,
+    label: "Bank B acknowledgement",
+  });
   let ackAnchor = await trustCurrentHeaderForProof({
     lightClient: ctx.A.lightClient,
     provider: ctx.providerB,
@@ -260,6 +270,13 @@ export async function proveForwardMintStep({ config, ctx, sourceChainId, destina
     minimumHeight: forward.commitHeight,
     packet: forward.packet,
   });
+  await requireReasonableProofRefresh({
+    lightClient: ctx.A.lightClient,
+    provider: ctx.providerB,
+    sourceChainId: destinationChainId,
+    minimumHeight: BigInt(await ctx.providerB.getBlockNumber()),
+    label: "Bank B acknowledgement",
+  });
 
   let recvReceipt = null;
   try {
@@ -335,7 +352,6 @@ export async function replayForwardStep({ config, ctx, sourceChainId, destinatio
   const { proofAnchor, proofs } = await buildForwardPacketProofs({
     config,
     ctx,
-    provider: ctx.providerA,
     sourceChainId,
     minimumHeight: forward.commitHeight,
     packet: forward.packet,

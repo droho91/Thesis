@@ -209,12 +209,34 @@ function isTransientBesuReadError(error) {
     error?.info?.error?.code === -32603 ||
     text.includes("Internal error") ||
     text.includes("missing revert data") ||
-    text.includes("missing response")
+    text.includes("missing response") ||
+    text.includes("invalid BytesLike value")
   );
 }
 
 function isWorldStateUnavailable(error) {
-  return shortError(error).includes("World state unavailable") || error?.error?.message?.includes("World state unavailable");
+  const text = [
+    shortError(error),
+    error?.message,
+    error?.shortMessage,
+    error?.reason,
+    error?.error?.message,
+    error?.info?.error?.message,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const proofRpcError =
+    (error?.error?.code === -32000 || error?.info?.error?.code === -32000) &&
+    (error?.payload?.method === "eth_getProof" || text.includes("proof") || text.includes("state"));
+
+  return (
+    proofRpcError ||
+    text.includes("world state") ||
+    text.includes("state unavailable") ||
+    text.includes("missing trie node") ||
+    text.includes("header not found")
+  );
 }
 
 async function sleep(ms) {
@@ -591,7 +613,9 @@ async function ensureDeploymentCode(config) {
     }
     let code;
     try {
-      code = await providerByChain[chainKey].getCode(ethers.getAddress(address), "latest");
+      code = await readWithRetry(`${chainKey}.${field} contract code`, () =>
+        providerByChain[chainKey].getCode(ethers.getAddress(address), "latest")
+      );
     } catch (error) {
       missingCode.push(`${chainKey}.${field}=${address} (${error.shortMessage || error.message})`);
       continue;

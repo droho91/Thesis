@@ -18,7 +18,7 @@ import {
 import { writeTracePatch } from "../trace-writer.mjs";
 import { buildPacketProofs } from "../proof/packet-proof-builder.mjs";
 import { buildReceiptAbsenceProof } from "../proof/receipt-absence-proof-builder.mjs";
-import { trustCurrentHeaderForProof, trustRemoteHeaderAt } from "../proof/header-trust.mjs";
+import { trustCurrentHeaderForProof } from "../proof/header-trust.mjs";
 
 async function requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label }) {
   const [trustedHeight, latestHeight] = await Promise.all([
@@ -38,27 +38,61 @@ async function requireReasonableProofRefresh({ lightClient, provider, sourceChai
   }
 }
 
+async function preflightOrRefreshTimeoutLightClient({ lightClient, provider, sourceChainId, label }) {
+  const [trustedHeight, latestHeight] = await Promise.all([
+    lightClient.latestTrustedHeight(sourceChainId),
+    provider.getBlockNumber(),
+  ]);
+  const trusted = BigInt(trustedHeight);
+  const latest = BigInt(latestHeight);
+  if (latest === 0n) {
+    throw new Error(`${label} source chain has no usable block for the timeout demo.`);
+  }
+  if (trusted !== 0n && latest > trusted + DEMO_MAX_TIMEOUT_HEADER_GAP) {
+    throw new Error(
+      "Timeout demo light client is too far behind before sending the denied packet. " +
+        `Run Fresh Reset or run the full lifecycle from a clean seeded state. (${label}: trusted=${trusted.toString()}, latest=${latest.toString()})`
+    );
+  }
+
+  return trustCurrentHeaderForProof({
+    lightClient,
+    provider,
+    sourceChainId,
+    minimumHeight: latest,
+  });
+}
+
+async function preflightOrRefreshTimeoutLightClients(ctx, sourceChainId, destinationChainId) {
+  await Promise.all([
+    preflightOrRefreshTimeoutLightClient({
+      lightClient: ctx.B.lightClient,
+      provider: ctx.providerA,
+      sourceChainId,
+      label: "Bank B light client for Bank A",
+    }),
+    preflightOrRefreshTimeoutLightClient({
+      lightClient: ctx.A.lightClient,
+      provider: ctx.providerB,
+      sourceChainId: destinationChainId,
+      label: "Bank A light client for Bank B",
+    }),
+  ]);
+}
+
 export async function executeTimeoutRefundAction(config, ctx, sourceChainId, destinationChainId, options = {}) {
   const phasePrefix = options.phasePrefix || "";
   const labelPrefix = options.labelPrefix || "";
   const phase = (name) => setPhase(`${phasePrefix}${name}`);
-  const ensureDemoFriendlyHeaderGap = async ({ lightClient, chainIdValue, targetHeight, label }) => {
-    const trustedHeight = BigInt(await lightClient.latestTrustedHeight(chainIdValue));
-    const target = BigInt(targetHeight);
-    if (trustedHeight !== 0n && target > trustedHeight + DEMO_MAX_TIMEOUT_HEADER_GAP) {
-      throw new Error(
-        `${label} trusted height is too far behind for the single-click timeout demo ` +
-          `(trusted=${trustedHeight.toString()}, target=${target.toString()}). ` +
-          "Run Fresh Reset or the full lifecycle from a clean seeded state."
-      );
-    }
-  };
 
   phase("prepare-timeout-route");
   if (options.ensureSeeded !== false) {
     await ensureRiskSeeded(config, ctx);
   }
   await openOrReuseHandshake(config, ctx);
+
+  phase("preflight-timeout-light-clients");
+  await preflightOrRefreshTimeoutLightClients(ctx, sourceChainId, destinationChainId);
 
   phase("send-denied-packet");
   const sourceBalanceBefore = await ctx.A.canonicalTokenAdmin.balanceOf(ctx.sourceUserAddress);
@@ -108,20 +142,14 @@ export async function executeTimeoutRefundAction(config, ctx, sourceChainId, des
     const escrowAfterSend = await ctx.A.escrow.totalEscrowed();
 
     phase("prove-denied-packet");
-    await ensureDemoFriendlyHeaderGap({
-      lightClient: ctx.B.lightClient,
-      chainIdValue: sourceChainId,
-      targetHeight: deniedCommitHeight,
-      label: "Bank B light client for Bank A",
-    });
-    let deniedHeader = await trustRemoteHeaderAt({
+    let deniedHeaderResult = await trustCurrentHeaderForProof({
       lightClient: ctx.B.lightClient,
       provider: ctx.providerA,
       sourceChainId,
-      targetHeight: deniedCommitHeight,
-      validatorEpoch: 1n,
+      minimumHeight: deniedCommitHeight,
     });
-    let deniedProofHeight = deniedHeader.headerUpdate.height;
+    let deniedHeader = deniedHeaderResult.header;
+    let deniedProofHeight = deniedHeaderResult.height;
     let deniedProofs;
     try {
       deniedProofs = await buildPacketProofs({
@@ -178,20 +206,14 @@ export async function executeTimeoutRefundAction(config, ctx, sourceChainId, des
     }
 
     phase("timeout-denied-packet");
-    await ensureDemoFriendlyHeaderGap({
-      lightClient: ctx.A.lightClient,
-      chainIdValue: destinationChainId,
-      targetHeight: deniedTimeoutHeight,
-      label: "Bank A light client for Bank B",
-    });
-    let timeoutHeader = await trustRemoteHeaderAt({
+    let timeoutHeaderResult = await trustCurrentHeaderForProof({
       lightClient: ctx.A.lightClient,
       provider: ctx.providerB,
       sourceChainId: destinationChainId,
-      targetHeight: deniedTimeoutHeight,
-      validatorEpoch: 1n,
+      minimumHeight: deniedTimeoutHeight,
     });
-    let timeoutProofHeight = timeoutHeader.headerUpdate.height;
+    let timeoutHeader = timeoutHeaderResult.header;
+    let timeoutProofHeight = timeoutHeaderResult.height;
     let receiptSlot;
     let deniedReceiptAbsenceProof;
     try {
