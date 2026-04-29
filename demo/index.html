@@ -47,6 +47,21 @@
                 <span class="eyebrow">Next step</span>
                 <h2 id="primaryActionTitle">Prepare Demo Account</h2>
                 <p id="primaryActionDescription">Prepare your lending account before moving collateral.</p>
+                <div class="running-guide" id="primaryActionGuide" hidden>
+                  <div>
+                    <span>What is happening now</span>
+                    <strong id="primaryGuideCurrent">-</strong>
+                  </div>
+                  <div>
+                    <span>Visible change to expect</span>
+                    <strong id="primaryGuideExpected">-</strong>
+                  </div>
+                  <div>
+                    <span>Next after success</span>
+                    <strong id="primaryGuideNext">-</strong>
+                  </div>
+                  <small id="primaryGuideController">Waiting for controller status.</small>
+                </div>
               </div>
               <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Prepare Demo Account</button>
               <small id="primaryActionHint">Later steps stay locked until your account is ready.</small>
@@ -75,6 +90,17 @@
             <i></i>
             <span>Bank B credit</span>
           </div>
+
+          <aside class="portal-change-banner" id="portalChangeBanner" aria-live="polite" hidden>
+            <div>
+              <span class="eyebrow" id="portalChangeScope">What changed</span>
+              <h3 id="portalChangeTitle">Latest action</h3>
+              <p id="portalChangeSummary">Visible state changes will appear here after each action.</p>
+            </div>
+            <ul id="portalChangeList">
+              <li>Waiting for the next action.</li>
+            </ul>
+          </aside>
 
           <div class="product-kpis" aria-label="Position summary">
             <article>
@@ -214,9 +240,9 @@
               <p class="validation-message" id="bridgeValidation" aria-live="polite"></p>
             </div>
             <div class="action-buttons action-buttons--primary">
-              <button class="button-secondary" data-action="openRoute" type="button">Start Bridge</button>
-              <button class="button-primary" data-action="lock" data-amount-input="bridgeAmount" type="button">Bridge Collateral</button>
-              <button class="button-run" data-action="proveForwardMint" type="button">Receive Voucher</button>
+              <button class="button-secondary" data-action="openRoute" type="button">Open Bank A to Bank B Route</button>
+              <button class="button-primary" data-action="lock" data-amount-input="bridgeAmount" type="button">Lock aBANK on Bank A</button>
+              <button class="button-run" data-action="proveForwardMint" type="button">Receive Voucher on Bank B</button>
             </div>
           </article>
 
@@ -504,8 +530,8 @@
               <span class="soft-status">Optional</span>
             </div>
             <div class="action-buttons action-buttons--primary">
-              <button class="button-primary-soft" data-action="burn" type="button">Return Collateral</button>
-              <button class="button-run" data-action="proveReverseUnlock" type="button">Complete Release</button>
+              <button class="button-primary-soft" data-action="burn" type="button">Burn Voucher for Bank A Unlock</button>
+              <button class="button-run" data-action="proveReverseUnlock" type="button">Verify Reverse Proof and Unlock</button>
             </div>
           </article>
         </section>
@@ -965,7 +991,7 @@
             </dl>
             <div class="action-buttons action-buttons--settlement">
               <button class="button-primary-soft" data-action="settleSeizedVoucher" type="button">Settle Seized Voucher</button>
-              <button class="button-run" data-action="proveReverseUnlock" type="button">Complete Settlement</button>
+              <button class="button-run" data-action="proveReverseUnlock" type="button">Verify Reverse Proof and Unlock</button>
             </div>
           </article>
         </div>

@@ -45,15 +45,15 @@ const CHANNEL_STATE = Object.freeze({
   Closed: 4,
 });
 
-const FORWARD_AMOUNT = ethers.parseUnits(process.env.DEMO_FORWARD_AMOUNT || "100", 18);
+let FORWARD_AMOUNT = ethers.parseUnits(process.env.DEMO_FORWARD_AMOUNT || "100", 18);
 const DENIED_AMOUNT = ethers.parseUnits(process.env.DEMO_DENIED_AMOUNT || "40", 18);
-const BORROW_AMOUNT_CONFIGURED = process.env.DEMO_BORROW_AMOUNT != null;
-const BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW_AMOUNT || "120", 18);
-const REPAY_AMOUNT = process.env.DEMO_REPAY_AMOUNT ? ethers.parseUnits(process.env.DEMO_REPAY_AMOUNT, 18) : null;
-const WITHDRAW_AMOUNT = process.env.DEMO_WITHDRAW_AMOUNT ? ethers.parseUnits(process.env.DEMO_WITHDRAW_AMOUNT, 18) : null;
-const LIQUIDATION_REPAY_CONFIGURED = process.env.DEMO_LIQUIDATION_REPAY != null;
-const LIQUIDATION_REPAY = ethers.parseUnits(process.env.DEMO_LIQUIDATION_REPAY || "40", 18);
-const SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits(process.env.DEMO_SHOCKED_VOUCHER_PRICE || "0.5", 18);
+let BORROW_AMOUNT_CONFIGURED = process.env.DEMO_BORROW_AMOUNT != null;
+let BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW_AMOUNT || "120", 18);
+let REPAY_AMOUNT = process.env.DEMO_REPAY_AMOUNT ? ethers.parseUnits(process.env.DEMO_REPAY_AMOUNT, 18) : null;
+let WITHDRAW_AMOUNT = process.env.DEMO_WITHDRAW_AMOUNT ? ethers.parseUnits(process.env.DEMO_WITHDRAW_AMOUNT, 18) : null;
+let LIQUIDATION_REPAY_CONFIGURED = process.env.DEMO_LIQUIDATION_REPAY != null;
+let LIQUIDATION_REPAY = ethers.parseUnits(process.env.DEMO_LIQUIDATION_REPAY || "40", 18);
+let SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits(process.env.DEMO_SHOCKED_VOUCHER_PRICE || "0.5", 18);
 const DEMO_TX_GAS_LIMIT = BigInt(process.env.DEMO_TX_GAS_LIMIT || "8000000");
 const DEMO_TX_WAIT_TIMEOUT_MS = Number(process.env.DEMO_TX_WAIT_TIMEOUT_MS || process.env.TX_WAIT_TIMEOUT_MS || 120000);
 const DEMO_REPAY_BUFFER_BPS = BigInt(process.env.DEMO_REPAY_BUFFER_BPS || "1");
@@ -63,6 +63,18 @@ const DEMO_READ_RETRY_ATTEMPTS = Number(process.env.DEMO_READ_RETRY_ATTEMPTS || 
 const DEMO_READ_RETRY_DELAY_MS = Number(process.env.DEMO_READ_RETRY_DELAY_MS || "250");
 
 let CURRENT_PHASE = "bootstrap";
+
+function applyDemoAmountOverrides(overrides = {}) {
+  const env = { ...process.env, ...overrides };
+  FORWARD_AMOUNT = ethers.parseUnits(env.DEMO_FORWARD_AMOUNT || "100", 18);
+  BORROW_AMOUNT_CONFIGURED = env.DEMO_BORROW_AMOUNT != null;
+  BORROW_AMOUNT = ethers.parseUnits(env.DEMO_BORROW_AMOUNT || "120", 18);
+  REPAY_AMOUNT = env.DEMO_REPAY_AMOUNT ? ethers.parseUnits(env.DEMO_REPAY_AMOUNT, 18) : null;
+  WITHDRAW_AMOUNT = env.DEMO_WITHDRAW_AMOUNT ? ethers.parseUnits(env.DEMO_WITHDRAW_AMOUNT, 18) : null;
+  LIQUIDATION_REPAY_CONFIGURED = env.DEMO_LIQUIDATION_REPAY != null;
+  LIQUIDATION_REPAY = ethers.parseUnits(env.DEMO_LIQUIDATION_REPAY || "40", 18);
+  SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits(env.DEMO_SHOCKED_VOUCHER_PRICE || "0.5", 18);
+}
 
 function setPhase(phase) {
   CURRENT_PHASE = phase;
@@ -637,7 +649,100 @@ async function txIfNeeded(label, isReady, send) {
   await txStep(label, send);
 }
 
+async function validateRiskSeeded(config, ctx) {
+  if (ctx.__riskSeedValidated) return;
+  if (!config.seed) {
+    throw new Error("Demo seed metadata is missing. Run Fresh Reset before continuing the live demo.");
+  }
+
+  const sourceChainId = chainId(config, "A");
+  const destinationChainId = chainId(config, "B");
+  const collateralFactorBps = BigInt(config.seed.collateralFactorBps);
+  const liquidationThresholdBps = BigInt(config.seed.liquidationThresholdBps || "8000");
+  const collateralHaircutBps = BigInt(config.seed.collateralHaircutBps);
+  const liquidationCloseFactorBps = BigInt(config.seed.liquidationCloseFactorBps);
+  const liquidationBonusBps = BigInt(config.seed.liquidationBonusBps);
+  const poolLiquidity = BigInt(config.seed.poolLiquidity);
+  const [liquidatorRole, settlementRole] = await Promise.all([
+    ctx.B.lendingPoolAdmin.LIQUIDATOR_ROLE(),
+    ctx.B.transferAppAdmin.SETTLEMENT_OPERATOR_ROLE(),
+  ]);
+
+  const [
+    sourceUserAllowed,
+    sourceLiquidatorAllowed,
+    bankBAllowedOnA,
+    canonicalUnlockAllowed,
+    destinationUserAllowed,
+    bankAAllowedOnB,
+    canonicalMintAllowed,
+    voucherCollateralAllowed,
+    debtAssetAllowed,
+    valuationOracle,
+    collateralFactor,
+    liquidationThreshold,
+    collateralHaircut,
+    closeFactor,
+    liquidationBonus,
+    liquidatorAllowed,
+    settlementAllowed,
+    suppliedLiquidity,
+  ] = await Promise.all([
+    ctx.A.policy.accountAllowed(ctx.sourceUserAddress),
+    ctx.A.policy.accountAllowed(ctx.sourceLiquidatorAddress),
+    ctx.A.policy.sourceChainAllowed(destinationChainId),
+    ctx.A.policy.unlockAssetAllowed(config.chains.A.canonicalToken),
+    ctx.B.policy.accountAllowed(ctx.destinationUserAddress),
+    ctx.B.policy.sourceChainAllowed(sourceChainId),
+    ctx.B.policy.mintAssetAllowed(config.chains.A.canonicalToken),
+    ctx.B.policy.collateralAssetAllowed(config.chains.B.voucherToken),
+    ctx.B.policy.debtAssetAllowed(config.chains.B.debtToken),
+    ctx.B.lendingPoolAdmin.valuationOracle(),
+    ctx.B.lendingPoolAdmin.collateralFactorBps(),
+    ctx.B.lendingPoolAdmin.liquidationThresholdBps(),
+    ctx.B.lendingPoolAdmin.collateralHaircutBps(),
+    ctx.B.lendingPoolAdmin.liquidationCloseFactorBps(),
+    ctx.B.lendingPoolAdmin.liquidationBonusBps(),
+    ctx.B.lendingPoolAdmin.hasRole(liquidatorRole, ctx.liquidatorAddress),
+    ctx.B.transferAppAdmin.hasRole(settlementRole, ctx.liquidatorAddress),
+    ctx.B.lendingPoolAdmin.liquidityBalanceOf(config.chains.B.admin),
+  ]);
+
+  const missing = [];
+  if (!sourceUserAllowed) missing.push("Bank A source user allow-list");
+  if (!sourceLiquidatorAllowed) missing.push("Bank A liquidator recipient allow-list");
+  if (!bankBAllowedOnA) missing.push("Bank A source-chain allow-list");
+  if (!canonicalUnlockAllowed) missing.push("Bank A unlock asset allow-list");
+  if (!destinationUserAllowed) missing.push("Bank B destination user allow-list");
+  if (!bankAAllowedOnB) missing.push("Bank B source-chain allow-list");
+  if (!canonicalMintAllowed) missing.push("Bank B mint asset allow-list");
+  if (!voucherCollateralAllowed) missing.push("Bank B collateral asset allow-list");
+  if (!debtAssetAllowed) missing.push("Bank B debt asset allow-list");
+  if (valuationOracle.toLowerCase() !== config.chains.B.oracle.toLowerCase()) missing.push("lending oracle address");
+  if (collateralFactor !== collateralFactorBps) missing.push("collateral factor");
+  if (liquidationThreshold !== liquidationThresholdBps) missing.push("liquidation threshold");
+  if (collateralHaircut !== collateralHaircutBps) missing.push("collateral haircut");
+  if (closeFactor !== liquidationCloseFactorBps) missing.push("liquidation close factor");
+  if (liquidationBonus !== liquidationBonusBps) missing.push("liquidation bonus");
+  if (!liquidatorAllowed) missing.push("liquidator role");
+  if (!settlementAllowed) missing.push("settlement operator role");
+  if (suppliedLiquidity < poolLiquidity) missing.push("seeded pool liquidity");
+
+  if (missing.length > 0) {
+    throw new Error(
+      "Seeded risk configuration is incomplete. Run Fresh Reset before continuing the live demo. " +
+        `Missing or stale checks: ${missing.join(", ")}.`
+    );
+  }
+  ctx.__riskSeedValidated = true;
+}
+
 async function ensureRiskSeeded(config, ctx) {
+  if (ctx.__demoFastPath && process.env.DEMO_FORCE_RISK_RESEED !== "true") {
+    await validateRiskSeeded(config, ctx);
+    return;
+  }
+
   const sourceChainId = chainId(config, "A");
   const destinationChainId = chainId(config, "B");
   const initialVoucherPrice = BigInt(config.seed.initialVoucherPriceE18);
@@ -1540,16 +1645,21 @@ function amountFromTrace(value, fallback) {
   return value.amountRaw ? BigInt(value.amountRaw) : ethers.parseUnits(value.amount || "0", 18);
 }
 
-async function prepareStepContext() {
+async function prepareStepContext(options = {}) {
   const runtime = normalizeRuntime();
   if (!runtime.besuFirst) {
     throw new Error("run-lending-demo.mjs is a Besu-first entrypoint.");
   }
-  await waitForBesuRuntimeReady();
+  if (!options.skipRuntimeReady) {
+    await waitForBesuRuntimeReady();
+  }
   const config = await loadRuntimeConfig();
   await ensureSeededConfig(config);
-  await ensureDeploymentCode(config);
+  if (!options.skipDeploymentCode) {
+    await ensureDeploymentCode(config);
+  }
   const ctx = await loadContext(config);
+  ctx.__demoFastPath = Boolean(options.fastDemoMode);
   return { config, ctx, sourceChainId: chainId(config, "A"), destinationChainId: chainId(config, "B") };
 }
 
@@ -1755,6 +1865,7 @@ export {
   RUNTIME_CONFIG_PATH,
   SHOCKED_VOUCHER_PRICE_E18,
   WITHDRAW_AMOUNT,
+  applyDemoAmountOverrides,
   amountFromTrace,
   asBigInt,
   baseTrace,

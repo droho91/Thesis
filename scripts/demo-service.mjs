@@ -5,6 +5,8 @@ import { ethers } from "ethers";
 import { loadArtifact, normalizeRuntime } from "./besu-runtime.mjs";
 import { loadRuntimeConfig, providerForChain, RUNTIME_CONFIG_PATH } from "./interchain-config.mjs";
 import { readDemoStatus, readTrace } from "./demo-read-model.mjs";
+import { applyDemoAmountOverrides, getCurrentPhase, prepareStepContext } from "./demo/context.mjs";
+import { runDemoStep } from "./demo/dispatcher.mjs";
 
 // Demo service layer: wraps runtime command execution and composes payloads consumed by the HTTP API.
 const configPath = RUNTIME_CONFIG_PATH;
@@ -16,6 +18,8 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.DEMO_SERVICE_TIMEOUT_MS || 600000)
 const FAST_READY_TIMEOUT_MS = Number(process.env.DEMO_FAST_READY_TIMEOUT_MS || 5000);
 const STATUS_READ_TIMEOUT_MS = Number(process.env.DEMO_STATUS_READ_TIMEOUT_MS || 8000);
 let activeOperation = null;
+let preparedContextCache = null;
+let runtimeReadyConfirmed = false;
 
 async function expectedArtifactFingerprint() {
   const artifacts = {
@@ -119,6 +123,45 @@ function controllerBusyError(requestedAction) {
     controller: controllerState(),
   };
   return error;
+}
+
+function invalidatePreparedContext() {
+  preparedContextCache = null;
+}
+
+async function runtimeConfigFingerprint() {
+  const config = await loadRuntimeConfig();
+  return JSON.stringify({
+    build: config.build,
+    participants: config.participants,
+    seed: config.seed,
+    status: {
+      deployed: Boolean(config.status?.deployed),
+      seeded: Boolean(config.status?.seeded),
+    },
+    chains: {
+      A: config.chains?.A,
+      B: config.chains?.B,
+    },
+  });
+}
+
+async function preparedContextForUiAction() {
+  const fingerprint = await runtimeConfigFingerprint();
+  if (preparedContextCache?.fingerprint === fingerprint) {
+    return preparedContextCache.prepared;
+  }
+
+  const semanticConfigChanged = Boolean(preparedContextCache && preparedContextCache.fingerprint !== fingerprint);
+  const useFastPrepare = runtimeReadyConfirmed && !semanticConfigChanged;
+  const prepared = await prepareStepContext({
+    fastDemoMode: true,
+    skipRuntimeReady: useFastPrepare,
+    skipDeploymentCode: useFastPrepare,
+  });
+  runtimeReadyConfirmed = true;
+  preparedContextCache = { fingerprint, prepared };
+  return prepared;
 }
 
 async function withControllerLock(action, run) {
@@ -364,6 +407,8 @@ async function deployAndSeed({ reset = false } = {}) {
   if (!reset) {
     const fastReady = await fastSeededDeploymentReady();
     if (fastReady.ready) {
+      runtimeReadyConfirmed = true;
+      invalidatePreparedContext();
       return [
         `[controller] ${fastReady.reason}`,
         "[controller] Skipped compile/deploy/seed; use Fresh Reset for a clean redeploy.",
@@ -379,10 +424,14 @@ async function deployAndSeed({ reset = false } = {}) {
     }
   }
 
+  runtimeReadyConfirmed = false;
+  invalidatePreparedContext();
   const scripts = await runtimeScripts();
   const compile = await maybeCompileForDemoReset(scripts);
   const deploy = await runCommand(scripts.deploy.command, scripts.deploy.args);
   const seed = await runCommand(scripts.seed.command, scripts.seed.args);
+  runtimeReadyConfirmed = true;
+  invalidatePreparedContext();
   const freshTrace = {
     version: "interchain-lending",
     generatedAt: new Date().toISOString(),
@@ -400,8 +449,6 @@ async function deployAndSeed({ reset = false } = {}) {
 }
 
 async function runFlowStrict() {
-  let output = "";
-
   if (!(await hasDeploymentConfig())) {
     return {
       ok: false,
@@ -411,18 +458,71 @@ async function runFlowStrict() {
   }
 
   try {
-    const scripts = await runtimeScripts();
-    output += await runCommand(scripts.flow.command, scripts.flow.args);
-    return { ok: true, output };
+    return await runDemoActionInProcess("fullFlow");
   } catch (error) {
+    let output = "";
     output += "\n[controller] Flow failed. No automatic redeploy or retry was performed.\n";
-    output += error.message;
+    error.phase = typeof error?.phase === "string" && error.phase.length > 0 ? error.phase : getCurrentPhase();
+    output += [error.capturedOutput, `run-lending-demo failed during phase: ${error.phase}`, error.stack || error.message]
+      .filter(Boolean)
+      .join("\n");
     return {
       ok: false,
       output,
       error: "Contract flow failed. Inspect the failed path, then redeploy/seed manually if needed.",
     };
   }
+}
+
+async function captureDemoOutput(run) {
+  const original = {
+    log: console.log,
+    warn: console.warn,
+    error: console.error,
+  };
+  const lines = [];
+  const stringify = (value) => {
+    try {
+      return JSON.stringify(value, (_, nested) => (typeof nested === "bigint" ? nested.toString() : nested));
+    } catch {
+      return String(value);
+    }
+  };
+  const capture = (level) => (...args) => {
+    const line = args
+      .map((arg) => (typeof arg === "string" ? arg : arg instanceof Error ? arg.stack || arg.message : stringify(arg)))
+      .join(" ");
+    lines.push(level === "log" ? line : `[${level}] ${line}`);
+    original[level](...args);
+  };
+  console.log = capture("log");
+  console.warn = capture("warn");
+  console.error = capture("error");
+  try {
+    const value = await run();
+    return { value, output: lines.join("\n") };
+  } catch (error) {
+    error.capturedOutput = lines.join("\n");
+    throw error;
+  } finally {
+    console.log = original.log;
+    console.warn = original.warn;
+    console.error = original.error;
+  }
+}
+
+async function runDemoActionInProcess(action, env = {}) {
+  applyDemoAmountOverrides(env);
+  const useCachedContext = action !== "fullFlow" && action !== "riskLifecycle" && action !== "borrowerCloseout";
+  const prepared = useCachedContext ? await preparedContextForUiAction() : null;
+  const result = await captureDemoOutput(() =>
+    useCachedContext ? runDemoStep(action, { prepared }) : runDemoStep(action)
+  );
+  return {
+    ok: true,
+    output: result.output || `[controller] Completed ${operationLabel(action)} in process.`,
+    trace: result.value,
+  };
 }
 
 export async function runActionPayload(actionRequest) {
@@ -459,19 +559,22 @@ export async function runActionPayload(actionRequest) {
       };
     }
 
-    const scripts = await runtimeScripts();
     const env = actionAmountEnv(request);
-    const result =
-      action === "fullFlow"
-        ? await runFlowStrict()
-        : await (async () => {
-            try {
-              const output = await runCommand(scripts.flow.command, [...scripts.flow.args, "--step", action], { env });
-              return { ok: true, output };
-            } catch (error) {
-              return { ok: false, output: error.message, error: `Demo action ${action} failed.` };
-            }
-          })();
+    let result;
+    try {
+      result = action === "fullFlow" ? await runFlowStrict() : await runDemoActionInProcess(action, env);
+    } catch (error) {
+      error.phase = typeof error?.phase === "string" && error.phase.length > 0 ? error.phase : getCurrentPhase();
+      result = {
+        ok: false,
+        output: [
+          error.capturedOutput,
+          `run-lending-demo failed during phase: ${error.phase}`,
+          error.stack || error.message,
+        ].filter(Boolean).join("\n"),
+        error: `Demo action ${action} failed.`,
+      };
+    }
 
     return {
       statusCode: result.ok ? 200 : 500,
@@ -480,6 +583,8 @@ export async function runActionPayload(actionRequest) {
         message:
           result.ok && action === "fullFlow"
             ? "Completed the storage-proof cross-chain lending flow."
+            : result.ok && action === "borrowerCloseout"
+              ? "Completed the borrower closeout lifecycle."
             : result.ok
               ? `Completed demo action: ${operationLabel(action)}${request.amount ? ` (${request.amount}).` : "."}`
               : result.error,
