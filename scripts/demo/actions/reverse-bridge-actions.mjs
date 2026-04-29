@@ -13,6 +13,7 @@ import {
   readExistingTrace,
   readWithRetry,
   requireOpenHandshake,
+  requireTrustedProofAnchor,
   reversePacket,
   setPhase,
   txOptions,
@@ -57,12 +58,12 @@ async function refreshProofAnchor({ lightClient, provider, sourceChainId, minimu
 }
 
 async function buildReversePacketProofs({ config, ctx, destinationChainId, minimumHeight, packet }) {
-  let proofAnchor = await refreshProofAnchor({
+  let proofAnchor = await requireTrustedProofAnchor({
     lightClient: ctx.A.lightClient,
-    provider: ctx.providerB,
     sourceChainId: destinationChainId,
     minimumHeight,
-    label: "Bank B reverse packet",
+    sourceLabel: "Bank B",
+    destinationLabel: "Bank A",
   });
   try {
     const proofs = await buildPacketProofs({
@@ -273,20 +274,38 @@ export async function proveReverseUnlockStep({ config, ctx, sourceChainId, desti
   setPhase("step-prove-reverse");
   await requireOpenHandshake(config, ctx);
   const reverse = await ensureReversePacket(config, ctx, sourceChainId, destinationChainId);
-  const { proofAnchor, proofs } = await buildReversePacketProofs({
-    config,
-    ctx,
-    destinationChainId,
-    minimumHeight: reverse.commitHeight,
-    packet: reverse.packet,
-  });
+  let proofAnchor = null;
+  let proofs = null;
   let recvReceipt = null;
-  try {
-    recvReceipt = await txStep("step receive reverse packet", () =>
-      ctx.A.packetHandler.recvPacketFromStorageProof(reverse.packet, proofs.leafProof, proofs.pathProof, txOptions())
-    );
-  } catch (error) {
-    if (!isKnownReplay(error)) throw error;
+
+  const receivedBefore = await readWithRetry("Bank A reverse packet receipt", () =>
+    ctx.A.packetHandler.packetReceipts(reverse.packetId)
+  ).catch(() => false);
+
+  if (receivedBefore) {
+    proofAnchor = await requireTrustedProofAnchor({
+      lightClient: ctx.A.lightClient,
+      sourceChainId: destinationChainId,
+      minimumHeight: reverse.commitHeight,
+      sourceLabel: "Bank B",
+      destinationLabel: "Bank A",
+    });
+  } else {
+    ({ proofAnchor, proofs } = await buildReversePacketProofs({
+      config,
+      ctx,
+      destinationChainId,
+      minimumHeight: reverse.commitHeight,
+      packet: reverse.packet,
+    }));
+    try {
+      recvReceipt = await txStep("step receive reverse packet", () =>
+        ctx.A.packetHandler.recvPacketFromStorageProof(reverse.packet, proofs.leafProof, proofs.pathProof, txOptions())
+      );
+    } catch (error) {
+      const receivedAfterError = await ctx.A.packetHandler.packetReceipts(reverse.packetId).catch(() => false);
+      if (!isKnownReplay(error) && !receivedAfterError) throw error;
+    }
   }
   const [finalSourceBalance, finalRecipientBalance] = await Promise.all([
     ctx.A.canonicalTokenAdmin.balanceOf(ctx.sourceUserAddress),
@@ -298,9 +317,9 @@ export async function proveReverseUnlockStep({ config, ctx, sourceChainId, desti
     ctx,
     {
       reverse: {
-        packetLeafSlot: proofs.leafSlot,
-        packetPathSlot: proofs.pathSlot,
-        receiveTxHash: recvReceipt?.hash,
+        packetLeafSlot: proofs?.leafSlot ?? reverse.trace?.reverse?.packetLeafSlot,
+        packetPathSlot: proofs?.pathSlot ?? reverse.trace?.reverse?.packetPathSlot,
+        receiveTxHash: recvReceipt?.hash ?? reverse.trace?.reverse?.receiveTxHash,
         trustedHeight: proofAnchor.height.toString(),
         trustedHeaderHash: proofAnchor.headerHash,
         trustedStateRoot: proofAnchor.stateRoot,

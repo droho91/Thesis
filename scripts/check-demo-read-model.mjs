@@ -23,6 +23,7 @@ const demoRunner = await readFile(resolve(process.cwd(), "scripts", "run-lending
 const lendingActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "lending-actions.mjs"), "utf8");
 const timeoutActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "timeout-actions.mjs"), "utf8");
 const borrowerScenario = await readFile(resolve(process.cwd(), "scripts", "demo", "scenarios", "borrower-closeout.mjs"), "utf8");
+const demoApp = await readFile(resolve(process.cwd(), "demo", "app.js"), "utf8");
 
 const repayBlock = functionBlock(lendingActions, "repayStep");
 assert.match(repayBlock, /debtBeforeRepay/, "repay should record debtBeforeRepay");
@@ -55,6 +56,27 @@ assert.match(demoHtml, /data-workflow-panel="return redeem"/, "redeem panel shou
 assert.match(demoHtml, /data-action="executeTimeoutRefund"/, "UI should expose the real timeout refund action");
 assert.doesNotMatch(demoHtml, /data-action="verifyTimeoutAbsence"/, "UI should not expose the legacy timeout marker");
 assert.doesNotMatch(demoHtml, /Show Timeout/, "UI timeout CTA should execute the refund instead of showing an explanation-only model");
+
+const returnReadyBranch = demoApp.indexOf(
+  "if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher && !lifecycle.borrowerReverseStarted)"
+);
+const activateBranch = demoApp.indexOf("if (voucherReady && !collateralActive && !debtActive &&");
+assert.ok(returnReadyBranch !== -1, "workflow model should detect withdrawn collateral ready to return");
+assert.ok(activateBranch !== -1, "workflow model should retain initial voucher activation step");
+assert.ok(
+  returnReadyBranch < activateBranch,
+  "workflow model should prioritize return after withdraw before treating free voucher as a new deposit"
+);
+assert.match(
+  demoApp,
+  /if \(bridgeStarted && !voucherReady && !collateralActive && !debtActive && !lifecycle\.returnStarted\)/,
+  "bridge-in-progress should not mask the reverse return flow after burn"
+);
+assert.match(
+  demoApp,
+  /if \(voucherReady && !collateralActive && !debtActive && !lifecycle\.borrowerCollateralWithdrawn && !lifecycle\.debtWasOpened\)/,
+  "activate should only handle newly bridged vouchers, not withdrawn closeout collateral"
+);
 
 assert.match(borrowerScenario, /runBorrowerCloseoutScenario/, "demo modules should include a borrower closeout lifecycle");
 assert.match(demoRunner, /--scenario/, "demo runner should support explicit scenario selection");

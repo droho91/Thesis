@@ -608,7 +608,7 @@ function workflowModel(status) {
     };
   }
 
-  if (bridgeStarted && !voucherReady && !collateralActive && !debtActive) {
+  if (bridgeStarted && !voucherReady && !collateralActive && !debtActive && !lifecycle.returnStarted) {
     return {
       step: "bridge",
       title: "Bridge in progress",
@@ -619,20 +619,6 @@ function workflowModel(status) {
       hint: "This may take more than one confirmation step depending on the current bridge state.",
       steps,
       risk: "waiting",
-    };
-  }
-
-  if (voucherReady && !collateralActive && !debtActive) {
-    return {
-      step: "activate",
-      title: "Activate collateral",
-      status: "Ready",
-      summary: "Your collateral is available. Activate it to unlock borrowing power.",
-      cta: { type: "action", action: "depositCollateral", label: "Use as Collateral" },
-      description: "Deposit available collateral into the lending account.",
-      hint: `${formatAmount(state.voucher, "vA")} available to activate.`,
-      steps,
-      risk: "safe",
     };
   }
 
@@ -659,6 +645,20 @@ function workflowModel(status) {
       cta: { type: "action", action: "burn", label: "Return Collateral" },
       description: "Burn voucher collateral on Bank B and create the reverse settlement packet.",
       hint: `${formatAmount(state.voucher, "vA")} free voucher available to return.`,
+      steps,
+      risk: "safe",
+    };
+  }
+
+  if (voucherReady && !collateralActive && !debtActive && !lifecycle.borrowerCollateralWithdrawn && !lifecycle.debtWasOpened) {
+    return {
+      step: "activate",
+      title: "Activate collateral",
+      status: "Ready",
+      summary: "Your collateral is available. Activate it to unlock borrowing power.",
+      cta: { type: "action", action: "depositCollateral", label: "Use as Collateral" },
+      description: "Deposit available collateral into the lending account.",
+      hint: `${formatAmount(state.voucher, "vA")} available to activate.`,
       steps,
       risk: "safe",
     };

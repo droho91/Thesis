@@ -779,7 +779,9 @@ async function ensureRiskSeeded(config, ctx) {
     async () =>
       ctx.B.transferAppAdmin.grantRole(await ctx.B.transferAppAdmin.SETTLEMENT_OPERATOR_ROLE(), ctx.liquidatorAddress, txOptions())
   );
-  const suppliedLiquidity = await ctx.B.lendingPoolAdmin.liquidityBalanceOf(config.chains.B.admin);
+  const suppliedLiquidity = await readWithRetry("Bank B supplier liquidity balance", () =>
+    ctx.B.lendingPoolAdmin.liquidityBalanceOf(config.chains.B.admin)
+  );
   if (suppliedLiquidity < poolLiquidity) {
     const depositAmount = poolLiquidity - suppliedLiquidity;
     const supplierBalance = await ctx.B.debtAdmin.balanceOf(config.chains.B.admin);
