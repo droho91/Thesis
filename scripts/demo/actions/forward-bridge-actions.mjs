@@ -24,9 +24,30 @@ import { writeTracePatch } from "../trace-writer.mjs";
 import { buildAcknowledgementProof, buildPacketProofs } from "../proof/packet-proof-builder.mjs";
 import {
   readForwardHeader,
-  trustCurrentHeaderForProof,
   trustForwardHeader,
+  trustProofHeaderAt,
 } from "../proof/header-trust.mjs";
+
+async function timedDemoStage(label, run) {
+  const startedAt = Date.now();
+  console.log(`[timing] ${label} started`);
+  try {
+    const value = await run();
+    console.log(`[timing] ${label} completed in ${Date.now() - startedAt}ms`);
+    return value;
+  } catch (error) {
+    console.warn(`[timing] ${label} failed after ${Date.now() - startedAt}ms: ${error.shortMessage || error.message}`);
+    throw error;
+  }
+}
+
+function proofStateUnavailableError(label, proofHeight) {
+  return new Error(
+    `${label} proof state at height ${BigInt(proofHeight).toString()} is no longer available from the local Besu RPC. ` +
+      "Run Fresh Reset shortly before the live demo, then rerun the guided flow. " +
+      "This avoids a long header catch-up while keeping the proof-checked route intact."
+  );
+}
 
 async function requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label }) {
   const [trustedHeight, latestHeight] = await Promise.all([
@@ -35,25 +56,32 @@ async function requireReasonableProofRefresh({ lightClient, provider, sourceChai
   ]);
   const trusted = BigInt(trustedHeight);
   const latest = BigInt(latestHeight);
-  if (trusted !== 0n && latest > trusted + DEMO_MAX_TIMEOUT_HEADER_GAP) {
+  const required = BigInt(minimumHeight);
+  console.log(`[timing] ${label} proof target=${required.toString()} trusted=${trusted.toString()} latest=${latest.toString()}`);
+  if (trusted !== 0n && required > trusted + DEMO_MAX_TIMEOUT_HEADER_GAP) {
     throw new Error(
-      `${label} proof state is unavailable at trusted height ${trusted.toString()}, and refreshing to latest ` +
-        `${latest.toString()} would require a large header catch-up. Run Fresh Reset or rerun the guided lifecycle from a clean seeded state.`
+      `${label} proof target ${required.toString()} is too far ahead of trusted height ${trusted.toString()}. ` +
+        "Run Fresh Reset or rerun the guided lifecycle from a clean seeded state."
     );
   }
-  if (latest < BigInt(minimumHeight)) {
-    throw new Error(`${label} source head ${latest.toString()} is below required proof height ${BigInt(minimumHeight).toString()}.`);
+  if (latest < required) {
+    throw new Error(`${label} source head ${latest.toString()} is below required proof height ${required.toString()}.`);
   }
 }
 
 async function refreshProofAnchor({ lightClient, provider, sourceChainId, minimumHeight, label }) {
-  await requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label });
-  const refreshed = await trustCurrentHeaderForProof({
-    lightClient,
-    provider,
-    sourceChainId,
-    minimumHeight,
-  });
+  const required = BigInt(minimumHeight);
+  await timedDemoStage(`${label}: validate proof height`, () =>
+    requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight: required, label })
+  );
+  const refreshed = await timedDemoStage(`${label}: trust proof header ${required.toString()}`, () =>
+    trustProofHeaderAt({
+      lightClient,
+      provider,
+      sourceChainId,
+      proofHeight: required,
+    })
+  );
   return {
     height: refreshed.height,
     headerHash: refreshed.header.headerUpdate.headerHash,
@@ -62,6 +90,7 @@ async function refreshProofAnchor({ lightClient, provider, sourceChainId, minimu
 }
 
 async function buildForwardPacketProofs({ config, ctx, sourceChainId, minimumHeight, packet }) {
+  setPhase("step-prove-forward-packet-proof-anchor");
   let proofAnchor = await refreshProofAnchor({
     lightClient: ctx.B.lightClient,
     provider: ctx.providerA,
@@ -70,18 +99,21 @@ async function buildForwardPacketProofs({ config, ctx, sourceChainId, minimumHei
     label: "Bank A packet",
   });
   try {
-    const proofs = await buildPacketProofs({
-      provider: ctx.providerA,
-      packetStoreAddress: config.chains.A.packetStore,
-      packet,
-      sourceChainId,
-      trustedHeight: proofAnchor.height,
-      stateRoot: proofAnchor.stateRoot,
-    });
+    setPhase("step-prove-forward-packet-proof-build");
+    const proofs = await timedDemoStage("Bank A packet: build storage proof", () =>
+      buildPacketProofs({
+        provider: ctx.providerA,
+        packetStoreAddress: config.chains.A.packetStore,
+        packet,
+        sourceChainId,
+        trustedHeight: proofAnchor.height,
+        stateRoot: proofAnchor.stateRoot,
+      })
+    );
     return { proofAnchor, proofs };
   } catch (error) {
     if (!isWorldStateUnavailable(error)) throw error;
-    console.warn("[demo] Bank A proof state unavailable at trusted height; importing a fresher header and retrying packet proof.");
+    console.warn("[demo] Bank A proof state unavailable at target height; retrying the exact packet proof anchor once.");
     proofAnchor = await refreshProofAnchor({
       lightClient: ctx.B.lightClient,
       provider: ctx.providerA,
@@ -89,14 +121,23 @@ async function buildForwardPacketProofs({ config, ctx, sourceChainId, minimumHei
       minimumHeight,
       label: "Bank A packet",
     });
-    const proofs = await buildPacketProofs({
-      provider: ctx.providerA,
-      packetStoreAddress: config.chains.A.packetStore,
-      packet,
-      sourceChainId,
-      trustedHeight: proofAnchor.height,
-      stateRoot: proofAnchor.stateRoot,
-    });
+    setPhase("step-prove-forward-packet-proof-build");
+    let proofs = null;
+    try {
+      proofs = await timedDemoStage("Bank A packet: rebuild storage proof", () =>
+        buildPacketProofs({
+          provider: ctx.providerA,
+          packetStoreAddress: config.chains.A.packetStore,
+          packet,
+          sourceChainId,
+          trustedHeight: proofAnchor.height,
+          stateRoot: proofAnchor.stateRoot,
+        })
+      );
+    } catch (retryError) {
+      if (isWorldStateUnavailable(retryError)) throw proofStateUnavailableError("Bank A packet", proofAnchor.height);
+      throw retryError;
+    }
     return { proofAnchor, proofs };
   }
 }
@@ -109,55 +150,79 @@ async function buildForwardAcknowledgementProof({
   packetId,
   acknowledgementHash,
 }) {
-  await requireReasonableProofRefresh({
-    lightClient: ctx.A.lightClient,
-    provider: ctx.providerB,
-    sourceChainId: destinationChainId,
-    minimumHeight: receiveHeight,
-    label: "Bank B acknowledgement",
-  });
-  let ackAnchor = await trustCurrentHeaderForProof({
-    lightClient: ctx.A.lightClient,
-    provider: ctx.providerB,
-    sourceChainId: destinationChainId,
-    minimumHeight: receiveHeight,
-  });
-  try {
-    const result = await buildAcknowledgementProof({
-      provider: ctx.providerB,
-      packetHandlerAddress: config.chains.B.packetHandler,
-      packetIdValue: packetId,
-      acknowledgementHash,
-      sourceChainId: destinationChainId,
-      trustedHeight: ackAnchor.height,
-      stateRoot: ackAnchor.header.headerUpdate.stateRoot,
-    });
-    return { ackAnchor, ...result };
-  } catch (error) {
-    if (!isWorldStateUnavailable(error)) throw error;
-    console.warn("[demo] Bank B acknowledgement state unavailable at trusted height; importing a fresher header and retrying acknowledgement proof.");
-    await requireReasonableProofRefresh({
+  setPhase("step-prove-forward-ack-proof-anchor");
+  await timedDemoStage("Bank B acknowledgement: validate proof height", () =>
+    requireReasonableProofRefresh({
       lightClient: ctx.A.lightClient,
       provider: ctx.providerB,
       sourceChainId: destinationChainId,
       minimumHeight: receiveHeight,
       label: "Bank B acknowledgement",
-    });
-    ackAnchor = await trustCurrentHeaderForProof({
+    })
+  );
+  let ackAnchor = await timedDemoStage(`Bank B acknowledgement: trust proof header ${BigInt(receiveHeight).toString()}`, () =>
+    trustProofHeaderAt({
       lightClient: ctx.A.lightClient,
       provider: ctx.providerB,
       sourceChainId: destinationChainId,
-      minimumHeight: receiveHeight,
-    });
-    const result = await buildAcknowledgementProof({
-      provider: ctx.providerB,
-      packetHandlerAddress: config.chains.B.packetHandler,
-      packetIdValue: packetId,
-      acknowledgementHash,
-      sourceChainId: destinationChainId,
-      trustedHeight: ackAnchor.height,
-      stateRoot: ackAnchor.header.headerUpdate.stateRoot,
-    });
+      proofHeight: receiveHeight,
+    })
+  );
+  try {
+    setPhase("step-prove-forward-ack-proof-build");
+    const result = await timedDemoStage("Bank B acknowledgement: build storage proof", () =>
+      buildAcknowledgementProof({
+        provider: ctx.providerB,
+        packetHandlerAddress: config.chains.B.packetHandler,
+        packetIdValue: packetId,
+        acknowledgementHash,
+        sourceChainId: destinationChainId,
+        trustedHeight: ackAnchor.height,
+        stateRoot: ackAnchor.header.headerUpdate.stateRoot,
+      })
+    );
+    return { ackAnchor, ...result };
+  } catch (error) {
+    if (!isWorldStateUnavailable(error)) throw error;
+    console.warn("[demo] Bank B acknowledgement state unavailable at target height; retrying the exact acknowledgement proof anchor once.");
+    setPhase("step-prove-forward-ack-proof-anchor");
+    await timedDemoStage("Bank B acknowledgement: revalidate proof height", () =>
+      requireReasonableProofRefresh({
+        lightClient: ctx.A.lightClient,
+        provider: ctx.providerB,
+        sourceChainId: destinationChainId,
+        minimumHeight: receiveHeight,
+        label: "Bank B acknowledgement",
+      })
+    );
+    ackAnchor = await timedDemoStage(`Bank B acknowledgement: retrust proof header ${BigInt(receiveHeight).toString()}`, () =>
+      trustProofHeaderAt({
+        lightClient: ctx.A.lightClient,
+        provider: ctx.providerB,
+        sourceChainId: destinationChainId,
+        proofHeight: receiveHeight,
+      })
+    );
+    setPhase("step-prove-forward-ack-proof-build");
+    let result = null;
+    try {
+      result = await timedDemoStage("Bank B acknowledgement: rebuild storage proof", () =>
+        buildAcknowledgementProof({
+          provider: ctx.providerB,
+          packetHandlerAddress: config.chains.B.packetHandler,
+          packetIdValue: packetId,
+          acknowledgementHash,
+          sourceChainId: destinationChainId,
+          trustedHeight: ackAnchor.height,
+          stateRoot: ackAnchor.header.headerUpdate.stateRoot,
+        })
+      );
+    } catch (retryError) {
+      if (isWorldStateUnavailable(retryError)) {
+        throw proofStateUnavailableError("Bank B acknowledgement", ackAnchor.height);
+      }
+      throw retryError;
+    }
     return { ackAnchor, ...result };
   }
 }
@@ -261,9 +326,11 @@ export async function updateForwardClientStep({ config, ctx, sourceChainId, dest
 }
 
 export async function proveForwardMintStep({ config, ctx, sourceChainId, destinationChainId }) {
-  setPhase("step-prove-forward");
-  await requireOpenHandshake(config, ctx);
-  const forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
+  setPhase("step-prove-forward-check-route");
+  await timedDemoStage("Forward receive: check open route", () => requireOpenHandshake(config, ctx));
+  const forward = await timedDemoStage("Forward receive: load packet commitment", () =>
+    ensureForwardPacket(config, ctx, sourceChainId, destinationChainId)
+  );
   const { proofAnchor, proofs } = await buildForwardPacketProofs({
     config,
     ctx,
@@ -271,18 +338,14 @@ export async function proveForwardMintStep({ config, ctx, sourceChainId, destina
     minimumHeight: forward.commitHeight,
     packet: forward.packet,
   });
-  await requireReasonableProofRefresh({
-    lightClient: ctx.A.lightClient,
-    provider: ctx.providerB,
-    sourceChainId: destinationChainId,
-    minimumHeight: BigInt(await ctx.providerB.getBlockNumber()),
-    label: "Bank B acknowledgement",
-  });
 
   let recvReceipt = null;
   try {
-    recvReceipt = await txStep("step receive forward packet", () =>
-      ctx.B.packetHandler.recvPacketFromStorageProof(forward.packet, proofs.leafProof, proofs.pathProof, txOptions())
+    setPhase("step-prove-forward-receive-tx");
+    recvReceipt = await timedDemoStage("Forward receive: submit storage proof tx", () =>
+      txStep("step receive forward packet", () =>
+        ctx.B.packetHandler.recvPacketFromStorageProof(forward.packet, proofs.leafProof, proofs.pathProof, txOptions())
+      )
     );
   } catch (error) {
     if (!isKnownReplay(error)) throw error;
@@ -301,18 +364,22 @@ export async function proveForwardMintStep({ config, ctx, sourceChainId, destina
       acknowledgementHash: ackHash,
     });
     try {
-      await txStep("step acknowledge forward packet", () =>
-        ctx.A.packetHandler.acknowledgePacketFromStorageProof(
-          forward.packet,
-          acknowledgement,
-          config.chains.B.packetHandler,
-          ackProof,
-          txOptions()
+      setPhase("step-prove-forward-ack-tx");
+      await timedDemoStage("Forward receive: submit acknowledgement proof tx", () =>
+        txStep("step acknowledge forward packet", () =>
+          ctx.A.packetHandler.acknowledgePacketFromStorageProof(
+            forward.packet,
+            acknowledgement,
+            config.chains.B.packetHandler,
+            ackProof,
+            txOptions()
+          )
         )
       );
     } catch (error) {
       if (!isKnownReplay(error)) throw error;
     }
+    setPhase("step-prove-forward-refresh");
     const voucherBalance = await ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress);
     const sourceAckHash = await ctx.A.transferAppUser.acknowledgementHashByPacket(forward.packetId);
     const trace = await writeTracePatch(

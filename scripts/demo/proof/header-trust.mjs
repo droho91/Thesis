@@ -4,6 +4,7 @@ export {
   requireTrustedProofAnchor,
   trustCurrentHeaderForProof,
   trustForwardHeader,
+  trustProofHeaderAt,
   trustRemoteHeaderAt,
   trustReverseHeader,
   trustedAnchorFromHeader,

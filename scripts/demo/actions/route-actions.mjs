@@ -9,8 +9,9 @@ import {
 import { writeTracePatch } from "../trace-writer.mjs";
 
 export async function openRouteStep({ config, ctx }) {
-  setPhase("step-open-route");
+  setPhase("step-open-route-check");
   const { connectionHandshake, channelHandshake } = await openOrReuseHandshake(config, ctx);
+  setPhase("step-open-route-status");
   const routeStatus = await robustCurrentRouteStatus(config, ctx);
   return writeTracePatch(
     config,

@@ -1,4 +1,4 @@
-import { markControllerOffline, renderLatestActivity, renderRoadmap, renderStatus, setText } from "./demo-status-view.js";
+import { markControllerOffline, renderRoadmap, renderStatus, setText } from "./demo-status-view.js";
 
 const buttons = [...document.querySelectorAll("button")];
 const actionButtons = [...document.querySelectorAll("[data-action]")];
@@ -33,7 +33,6 @@ const portalButtons = [...document.querySelectorAll("[data-portal-tab]")];
 buttons.forEach((button) => {
   button.dataset.originalTitle = button.getAttribute("title") || "";
 });
-const ACTIVITY_STORAGE_KEY = "interchain-lending-latest-activity";
 const FOCUS_MODE_STORAGE_KEY = "interchain-lending-focus-mode";
 const PORTAL_STORAGE_KEY = "interchain-lending-active-portal";
 const CLIENT_STATUS = ["Uninitialized", "Active", "Frozen", "Recovering"];
@@ -89,8 +88,8 @@ const ACTION_GUIDE = {
   },
   openRoute: {
     runningTitle: "Open Bank A to Bank B Route",
-    currentAction: "Opening or reusing the proof-checked connection and channel between the two permissioned banks.",
-    expectedVisibleChange: "The route timeline marks the channel ready and the bridge step remains ready for collateral.",
+    currentAction: "Opening or reusing the proof-checked connection and channel. A first-time route performs several handshake transactions and storage proofs.",
+    expectedVisibleChange: "The route timeline marks connection/channel ready; if already open, this should complete quickly.",
     nextAfterSuccess: "Lock aBANK on Bank A to create the forward packet.",
     affectedPortal: "borrower",
     affectedMetrics: ["routeEscrow", "routeHeader", "visualEscrowState", "deploymentStatus"],
@@ -633,8 +632,11 @@ function renderPrimaryGuide(actionState) {
         : actionState.phase === "success"
           ? "Completed"
           : "Processing";
-  const elapsed = actionState.startedAtMs ? Math.max(0, Math.round((Date.now() - actionState.startedAtMs) / 1000)) : 0;
   const controller = actionState.controller;
+  const elapsed =
+    actionState.completedElapsedSeconds ??
+    controller?.elapsedSeconds ??
+    (actionState.startedAtMs ? Math.max(0, Math.round((Date.now() - actionState.startedAtMs) / 1000)) : 0);
   let stage = controller?.stage || fallbackStage(actionState.action, elapsed);
   if (actionState.phase === "success") stage = "Rendering visible changes";
   if (actionState.phase === "warning") stage = "Fast readiness probe did not confirm runtime";
@@ -656,7 +658,7 @@ function renderPrimaryGuide(actionState) {
   setText("primaryGuideMode", prefix);
   setText("primaryGuideProcessing", guide.runningTitle);
   setText("primaryGuideStage", stage);
-  setText("primaryGuideElapsed", `${controller?.elapsedSeconds ?? elapsed}s`);
+  setText("primaryGuideElapsed", `${elapsed}s`);
   setText("primaryGuideCurrent", guide.currentAction);
   setText("primaryGuideExpected", guide.expectedVisibleChange);
   setText(
@@ -1975,21 +1977,6 @@ function actionTitle(action) {
   return titles[action] || action;
 }
 
-function persistActivity(activity) {
-  try {
-    sessionStorage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(activity));
-  } catch {}
-}
-
-function loadPersistedActivity() {
-  try {
-    const raw = sessionStorage.getItem(ACTIVITY_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
 function renderPortalChanges(action, activity, guide = guideForAction(action)) {
   const banner = document.getElementById("portalChangeBanner");
   const list = document.getElementById("portalChangeList");
@@ -2048,18 +2035,6 @@ function renderPortalFailure(action, error, guide = guideForAction(action)) {
   list.appendChild(li);
 }
 
-function activityFromStatus(status) {
-  const operation = status?.trace?.latestOperation;
-  if (!operation) return null;
-  return {
-    title: operation.label || "Latest demo operation",
-    summary: operation.summary || "The latest trace was loaded from the local demo run output.",
-    time: status.trace?.generatedAt,
-    timeLabel: formatClock(status.trace?.generatedAt),
-    changes: [{ value: operation.phase ? `phase: ${operation.phase}` : "Trace loaded from the latest demo run." }],
-  };
-}
-
 function pushActivity(action, summary, nextStatus) {
   const changes = collectChanges(snapshotStatus(currentStatus), snapshotStatus(nextStatus));
   const activity = {
@@ -2069,8 +2044,6 @@ function pushActivity(action, summary, nextStatus) {
     timeLabel: formatClock(new Date().toISOString()),
     changes,
   };
-  persistActivity(activity);
-  renderLatestActivity(activity);
   renderPortalChanges(action, activity);
   const changedIds = changes.flatMap((change) => FACT_ELEMENT_IDS[change.key] || []);
   highlightNodeIds([...new Set([...changedIds, ...(guideForAction(action).affectedMetrics || [])])], "success");
@@ -2085,8 +2058,6 @@ function pushWarningActivity(action, summary, nextStatus) {
     timeLabel: formatClock(new Date().toISOString()),
     changes: [{ value: "No protocol state was modified." }],
   };
-  persistActivity(activity);
-  renderLatestActivity(activity);
   renderPortalWarning(action, summary);
   highlightNodeIds(guideForAction(action).affectedMetrics || [], "running");
   return activity;
@@ -2101,8 +2072,6 @@ function pushFailedActivity(action, error) {
     timeLabel: formatClock(new Date().toISOString()),
     changes: [{ value: "No state change was committed." }],
   };
-  persistActivity(activity);
-  renderLatestActivity(activity);
   renderPortalFailure(action, error);
   return activity;
 }
@@ -2188,6 +2157,10 @@ function completeActionUi(action, ok, error = null, phaseOverride = null) {
   stopActionPolling();
   if (!currentRunningAction || currentRunningAction.action !== action) return;
   const phase = phaseOverride || (ok ? "success" : "failed");
+  currentRunningAction.completedAtMs = Date.now();
+  currentRunningAction.completedElapsedSeconds =
+    currentRunningAction.controller?.elapsedSeconds ??
+    Math.max(0, Math.round((currentRunningAction.completedAtMs - currentRunningAction.startedAtMs) / 1000));
   currentRunningAction.phase = phase;
   currentRunningAction.controller = null;
   renderPrimaryGuide(currentRunningAction);
@@ -2492,15 +2465,11 @@ try {
 
 setLoanTab(currentLoanTab);
 setActiveActionCard("bridge");
-renderLatestActivity(loadPersistedActivity());
 
 refreshStatus()
   .then((status) => {
     currentStatus = status;
     applyActionAvailability(status);
-    if (!loadPersistedActivity()) {
-      renderLatestActivity(activityFromStatus(status));
-    }
   })
   .catch((error) => {
   markControllerOffline();

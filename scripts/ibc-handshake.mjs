@@ -19,6 +19,11 @@ function debugHandshake() {
   return process.env.DEBUG_HANDSHAKE === "true" || process.env.DEBUG_DEMO_FLOW === "true";
 }
 
+function emitStage(onStage, stage) {
+  if (typeof onStage === "function") onStage(stage);
+  if (debugHandshake()) console.log(`[ibc handshake] stage=${stage}`);
+}
+
 function txOptions() {
   return { gasLimit: HANDSHAKE_TX_GAS_LIMIT };
 }
@@ -286,6 +291,7 @@ export async function trustRemoteHeaderAt({
   sourceChainId,
   targetHeight,
   validatorEpoch = 1n,
+  exactTarget = false,
 }) {
   const height = BigInt(targetHeight);
   if (height === 0n) {
@@ -321,12 +327,19 @@ export async function trustRemoteHeaderAt({
   }
 
   if (currentHeight === 0n) {
-    const target = await buildVerifiableBesuHeaderUpdate({
-      provider,
-      minimumHeight: height,
-      sourceChainId,
-      validatorEpoch,
-    });
+    const target = exactTarget
+      ? await buildVerifiableBesuHeaderAt({
+          provider,
+          height,
+          sourceChainId,
+          validatorEpoch,
+        })
+      : await buildVerifiableBesuHeaderUpdate({
+          provider,
+          minimumHeight: height,
+          sourceChainId,
+          validatorEpoch,
+        });
     const anchorHeight = target.headerUpdate.height - 1n;
     if (anchorHeight === 0n) {
       throw new Error("Cannot initialize a Besu trust anchor from block zero.");
@@ -389,11 +402,12 @@ async function buildConnectionCommitmentProof({
   trustedHeight,
   stateRoot,
 }) {
+  const blockTag = ethers.toQuantity(trustedHeight);
   return buildWordStorageProof({
     provider,
     account: keeperAddress,
     storageKey: await keeper.connectionCommitmentStorageSlot(connectionId),
-    expectedWord: await keeper.connectionCommitments(connectionId),
+    expectedWord: await keeper.connectionCommitments(connectionId, { blockTag }),
     sourceChainId,
     trustedHeight,
     stateRoot,
@@ -409,11 +423,12 @@ async function buildChannelCommitmentProof({
   trustedHeight,
   stateRoot,
 }) {
+  const blockTag = ethers.toQuantity(trustedHeight);
   return buildWordStorageProof({
     provider,
     account: keeperAddress,
     storageKey: await keeper.channelCommitmentStorageSlot(channelId),
-    expectedWord: await keeper.channelCommitments(channelId),
+    expectedWord: await keeper.channelCommitments(channelId, { blockTag }),
     sourceChainId,
     trustedHeight,
     stateRoot,
@@ -435,7 +450,9 @@ export async function openProofCheckedConnection({
   destinationConnectionId,
   prefix,
   validatorEpoch = 1n,
+  onStage = null,
 }) {
+  emitStage(onStage, "step-open-route-connection-init");
   const sourceInitReceipt = await txStep("connection open init on source", () =>
     sourceConnectionKeeper.connectionOpenInit(
       sourceConnectionId,
@@ -447,12 +464,14 @@ export async function openProofCheckedConnection({
     )
   );
   const sourceInitHeight = BigInt(sourceInitReceipt.blockNumber);
+  emitStage(onStage, "step-open-route-connection-source-proof");
   const sourceInitHeader = await trustRemoteHeaderAt({
     lightClient: destinationLightClient,
     provider: sourceProvider,
     sourceChainId,
     targetHeight: sourceInitHeight,
     validatorEpoch,
+    exactTarget: true,
   });
   const sourceInitProof = await buildConnectionCommitmentProof({
     provider: sourceProvider,
@@ -464,6 +483,7 @@ export async function openProofCheckedConnection({
     stateRoot: sourceInitHeader.headerUpdate.stateRoot,
   });
 
+  emitStage(onStage, "step-open-route-connection-try");
   const destinationTryReceipt = await txStep("connection open try on destination", () =>
     destinationConnectionKeeper.connectionOpenTry(
       destinationConnectionId,
@@ -478,12 +498,14 @@ export async function openProofCheckedConnection({
     )
   );
   const destinationTryHeight = BigInt(destinationTryReceipt.blockNumber);
+  emitStage(onStage, "step-open-route-connection-destination-proof");
   const destinationTryHeader = await trustRemoteHeaderAt({
     lightClient: sourceLightClient,
     provider: destinationProvider,
     sourceChainId: destinationChainId,
     targetHeight: destinationTryHeight,
     validatorEpoch,
+    exactTarget: true,
   });
   const destinationTryProof = await buildConnectionCommitmentProof({
     provider: destinationProvider,
@@ -495,6 +517,7 @@ export async function openProofCheckedConnection({
     stateRoot: destinationTryHeader.headerUpdate.stateRoot,
   });
 
+  emitStage(onStage, "step-open-route-connection-ack");
   const sourceAckReceipt = await txStep("connection open ack on source", () =>
     sourceConnectionKeeper.connectionOpenAck(
       sourceConnectionId,
@@ -505,12 +528,14 @@ export async function openProofCheckedConnection({
     )
   );
   const sourceAckHeight = BigInt(sourceAckReceipt.blockNumber);
+  emitStage(onStage, "step-open-route-connection-source-open-proof");
   const sourceAckHeader = await trustRemoteHeaderAt({
     lightClient: destinationLightClient,
     provider: sourceProvider,
     sourceChainId,
     targetHeight: sourceAckHeight,
     validatorEpoch,
+    exactTarget: true,
   });
   const sourceAckProof = await buildConnectionCommitmentProof({
     provider: sourceProvider,
@@ -522,6 +547,7 @@ export async function openProofCheckedConnection({
     stateRoot: sourceAckHeader.headerUpdate.stateRoot,
   });
 
+  emitStage(onStage, "step-open-route-connection-confirm");
   const destinationConfirmReceipt = await txStep("connection open confirm on destination", () =>
     destinationConnectionKeeper.connectionOpenConfirm(
       destinationConnectionId,
@@ -562,7 +588,9 @@ export async function openProofCheckedChannel({
   ordering,
   version,
   validatorEpoch = 1n,
+  onStage = null,
 }) {
+  emitStage(onStage, "step-open-route-channel-init");
   const sourceInitReceipt = await txStep("channel open init on source", () =>
     sourceChannelKeeper.channelOpenInit(
       sourceChannelId,
@@ -576,12 +604,14 @@ export async function openProofCheckedChannel({
     )
   );
   const sourceInitHeight = BigInt(sourceInitReceipt.blockNumber);
+  emitStage(onStage, "step-open-route-channel-source-proof");
   const sourceInitHeader = await trustRemoteHeaderAt({
     lightClient: destinationLightClient,
     provider: sourceProvider,
     sourceChainId,
     targetHeight: sourceInitHeight,
     validatorEpoch,
+    exactTarget: true,
   });
   const sourceInitProof = await buildChannelCommitmentProof({
     provider: sourceProvider,
@@ -593,6 +623,7 @@ export async function openProofCheckedChannel({
     stateRoot: sourceInitHeader.headerUpdate.stateRoot,
   });
 
+  emitStage(onStage, "step-open-route-channel-try");
   const destinationTryReceipt = await txStep("channel open try on destination", () =>
     destinationChannelKeeper.channelOpenTry(
       destinationChannelId,
@@ -609,12 +640,14 @@ export async function openProofCheckedChannel({
     )
   );
   const destinationTryHeight = BigInt(destinationTryReceipt.blockNumber);
+  emitStage(onStage, "step-open-route-channel-destination-proof");
   const destinationTryHeader = await trustRemoteHeaderAt({
     lightClient: sourceLightClient,
     provider: destinationProvider,
     sourceChainId: destinationChainId,
     targetHeight: destinationTryHeight,
     validatorEpoch,
+    exactTarget: true,
   });
   const destinationTryProof = await buildChannelCommitmentProof({
     provider: destinationProvider,
@@ -626,6 +659,7 @@ export async function openProofCheckedChannel({
     stateRoot: destinationTryHeader.headerUpdate.stateRoot,
   });
 
+  emitStage(onStage, "step-open-route-channel-ack");
   const sourceAckReceipt = await txStep("channel open ack on source", () =>
     sourceChannelKeeper.channelOpenAck(
       sourceChannelId,
@@ -636,12 +670,14 @@ export async function openProofCheckedChannel({
     )
   );
   const sourceAckHeight = BigInt(sourceAckReceipt.blockNumber);
+  emitStage(onStage, "step-open-route-channel-source-open-proof");
   const sourceAckHeader = await trustRemoteHeaderAt({
     lightClient: destinationLightClient,
     provider: sourceProvider,
     sourceChainId,
     targetHeight: sourceAckHeight,
     validatorEpoch,
+    exactTarget: true,
   });
   const sourceAckProof = await buildChannelCommitmentProof({
     provider: sourceProvider,
@@ -653,6 +689,7 @@ export async function openProofCheckedChannel({
     stateRoot: sourceAckHeader.headerUpdate.stateRoot,
   });
 
+  emitStage(onStage, "step-open-route-channel-confirm");
   const destinationConfirmReceipt = await txStep("channel open confirm on destination", () =>
     destinationChannelKeeper.channelOpenConfirm(
       destinationChannelId,

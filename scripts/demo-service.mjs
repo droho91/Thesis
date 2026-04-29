@@ -93,14 +93,24 @@ function operationLabel(action) {
 
 function publicActiveOperation() {
   if (!activeOperation) return null;
+  const phase = getCurrentPhase();
+  const phaseStage = phaseBelongsToAction(activeOperation.action, phase) ? stageFromDemoPhase(phase) : null;
   return {
     id: activeOperation.id,
     action: activeOperation.action,
     label: activeOperation.label,
-    stage: activeOperation.stage,
+    stage: phaseStage || activeOperation.stage,
+    phase,
     startedAt: activeOperation.startedAt,
     elapsedSeconds: Math.max(0, Math.round((Date.now() - activeOperation.startedAtMs) / 1000)),
   };
+}
+
+function phaseBelongsToAction(action, phase) {
+  if (!phase) return false;
+  if (action === "openRoute") return phase.startsWith("step-open-route");
+  if (action === "proveForwardMint" || action === "replayForward") return phase.startsWith("step-prove-forward");
+  return false;
 }
 
 function controllerState() {
@@ -151,6 +161,36 @@ function actionExecutionStage(action) {
   }
   if (action === "freezeClient") return "Submitting conflicting-header evidence";
   return "Submitting transaction";
+}
+
+function stageFromDemoPhase(phase) {
+  const stages = {
+    "step-open-route-check": "Checking existing connection and channel",
+    "step-open-route-connection-init": "Submitting Bank A connection init",
+    "step-open-route-connection-source-proof": "Generating Bank A connection proof",
+    "step-open-route-connection-try": "Submitting Bank B connection try",
+    "step-open-route-connection-destination-proof": "Generating Bank B connection proof",
+    "step-open-route-connection-ack": "Submitting Bank A connection acknowledgement",
+    "step-open-route-connection-source-open-proof": "Generating Bank A open-connection proof",
+    "step-open-route-connection-confirm": "Submitting Bank B connection confirmation",
+    "step-open-route-channel-init": "Submitting Bank A channel init",
+    "step-open-route-channel-source-proof": "Generating Bank A channel proof",
+    "step-open-route-channel-try": "Submitting Bank B channel try",
+    "step-open-route-channel-destination-proof": "Generating Bank B channel proof",
+    "step-open-route-channel-ack": "Submitting Bank A channel acknowledgement",
+    "step-open-route-channel-source-open-proof": "Generating Bank A open-channel proof",
+    "step-open-route-channel-confirm": "Submitting Bank B channel confirmation",
+    "step-open-route-status": "Reading final route readiness",
+    "step-prove-forward-check-route": "Checking route and packet commitment",
+    "step-prove-forward-packet-proof-anchor": "Trusting Bank A proof header",
+    "step-prove-forward-packet-proof-build": "Generating Bank A packet storage proof",
+    "step-prove-forward-receive-tx": "Submitting voucher mint proof transaction",
+    "step-prove-forward-ack-proof-anchor": "Trusting Bank B acknowledgement header",
+    "step-prove-forward-ack-proof-build": "Generating acknowledgement storage proof",
+    "step-prove-forward-ack-tx": "Submitting acknowledgement proof transaction",
+    "step-prove-forward-refresh": "Reading refreshed voucher state",
+  };
+  return stages[phase] || null;
 }
 
 async function runtimeConfigFingerprint() {

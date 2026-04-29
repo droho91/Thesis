@@ -472,11 +472,12 @@ async function buildConnectionCommitmentProof({
   trustedHeight,
   stateRoot,
 }) {
+  const blockTag = ethers.toQuantity(trustedHeight);
   return buildWordStorageProof({
     provider,
     account: keeperAddress,
     storageKey: await keeper.connectionCommitmentStorageSlot(connectionId),
-    expectedWord: await keeper.connectionCommitments(connectionId),
+    expectedWord: await keeper.connectionCommitments(connectionId, { blockTag }),
     sourceChainId,
     trustedHeight,
     stateRoot,
@@ -492,11 +493,12 @@ async function buildChannelCommitmentProof({
   trustedHeight,
   stateRoot,
 }) {
+  const blockTag = ethers.toQuantity(trustedHeight);
   return buildWordStorageProof({
     provider,
     account: keeperAddress,
     storageKey: await keeper.channelCommitmentStorageSlot(channelId),
-    expectedWord: await keeper.channelCommitments(channelId),
+    expectedWord: await keeper.channelCommitments(channelId, { blockTag }),
     sourceChainId,
     trustedHeight,
     stateRoot,
@@ -1032,6 +1034,7 @@ async function openOrRepairConnectionHandshake(config, ctx, params) {
         sourceConnectionId,
         destinationConnectionId,
         prefix,
+        onStage: setPhase,
       })),
     };
   }
@@ -1218,6 +1221,7 @@ async function openOrRepairChannelHandshake(config, ctx, params) {
         destinationPort: config.chains.B.transferApp,
         ordering,
         version,
+        onStage: setPhase,
       })),
     };
   }
@@ -1814,6 +1818,32 @@ async function trustCurrentHeaderForProof({ lightClient, provider, sourceChainId
   return { height: trustedHeight, header };
 }
 
+async function trustProofHeaderAt({ lightClient, provider, sourceChainId, proofHeight, validatorEpoch = 1n }) {
+  const targetHeight = BigInt(proofHeight);
+  const latestHeight = BigInt(await provider.getBlockNumber());
+  if (latestHeight < targetHeight) {
+    throw new Error(
+      `Source-chain head ${latestHeight.toString()} is below required proof height ${targetHeight.toString()}.`
+    );
+  }
+
+  const header = await trustRemoteHeaderAt({
+    lightClient,
+    provider,
+    sourceChainId,
+    targetHeight,
+    validatorEpoch,
+    exactTarget: true,
+  });
+  const trustedHeight = BigInt(header.headerUpdate.height);
+  if (trustedHeight < targetHeight) {
+    throw new Error(
+      `Trusted source height ${trustedHeight.toString()} is below required proof height ${targetHeight.toString()}.`
+    );
+  }
+  return { height: trustedHeight, header };
+}
+
 function isKnownReplay(error) {
   const text = shortError(error);
   return text.includes("PACKET_ALREADY_RECEIVED") || text.includes("PACKET_ALREADY_ACKNOWLEDGED");
@@ -1926,6 +1956,7 @@ export {
   transferPacket,
   trustCurrentHeaderForProof,
   trustForwardHeader,
+  trustProofHeaderAt,
   trustRemoteHeaderAt,
   trustReverseHeader,
   trustedAnchorFromHeader,
