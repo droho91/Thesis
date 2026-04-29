@@ -541,8 +541,14 @@ function renderScenarioState(status) {
   );
   setStatusBadge(
     "scenarioReplayStatus",
-    security.replayBlocked ? "Verified" : trace.forward?.packetId ? "Ready" : "Not Started",
-    security.replayBlocked ? "verified" : "pending"
+    security.explicitReplayAttackRejected
+      ? "Verified"
+      : security.receiptReplayGuardLive
+        ? "Guard live"
+        : trace.forward?.packetId
+          ? "Ready"
+          : "Not Started",
+    security.explicitReplayAttackRejected ? "verified" : "pending"
   );
   setStatusBadge(
     "scenarioTimeoutStatus",
@@ -573,7 +579,7 @@ function renderScenarioState(status) {
   );
   setText("scenarioReplayBefore", proof.packetId ? `Packet ${compact(proof.packetId)} / receipt ${proof.receiptStatus}` : "Needs packet");
   setText("scenarioReplayAction", "Attempt duplicate packet proof");
-  setText("scenarioReplayAfter", proof.replayProtectionStatus || "Replay pending");
+  setText("scenarioReplayAfter", proof.explicitReplayStatus || proof.replayProtectionStatus || "Replay pending");
   setText(
     "scenarioTimeoutBefore",
     proof.deniedPacketId ? `Denied ${compact(proof.deniedPacketId)}` : "Needs denied packet from script"
@@ -609,7 +615,7 @@ export function renderStatus(status) {
     setText("borrowPreviewLiquidity", "-");
     setText("riskStatusText", "Prepare account");
     setText("positionRiskCopy", "Prepare the local demo account first; later lending actions stay locked until the route is ready.");
-    setText("positionRiskAction", "Prepare Demo Account to begin.");
+    setText("positionRiskAction", "Prepare Fast Demo Session to begin.");
     setText("verificationSummaryStatus", "Pending");
     setText("verificationSummaryOracle", "Waiting");
     setText("verificationSummaryClient", "Waiting");
@@ -726,11 +732,12 @@ export function renderStatus(status) {
   setText("headerHeightB", status.progress.headerHeightB);
   setText("trustedBOnA", status.progress.trustedBOnA);
   setText("forwardConsumedState", security.forwardConsumed ? "yes" : "no");
+  setText("replayGuardState", security.receiptReplayGuardLive ? "live" : "pending");
   setText(
-    "replayBlockedState",
-    security.replayBlocked
-      ? `blocked${security.replayProofHeight ? ` @ ${security.replayProofHeight}` : ""}`
-      : "pending"
+    "replayAttackState",
+    security.explicitReplayAttackRejected
+      ? `rejected${security.replayProofHeight ? ` @ ${security.replayProofHeight}` : ""}`
+      : "not tested"
   );
   const timeoutAbsence = security.timeoutAbsence || security.nonMembership;
   setText(

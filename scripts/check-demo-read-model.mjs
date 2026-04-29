@@ -209,6 +209,29 @@ const reverseSettlementTrace = normalizeTraceForUi({
 assert.equal(reverseSettlementTrace.reverse.packetId, "0xsettlement", "reverse settlement packet should not be overwritten by denied timeout packet");
 assert.equal(reverseSettlementTrace.reverse.proofMode, "storage", "reverse settlement proof mode should be preserved");
 
+const receiptOnlyTrace = normalizeTraceForUi({
+  forward: {
+    receiveTxHash: "0xreceive",
+  },
+});
+assert.equal(receiptOnlyTrace.security.receiptReplayGuardLive, true, "receipt-only trace should expose live replay guard");
+assert.equal(
+  receiptOnlyTrace.security.explicitReplayAttackRejected,
+  false,
+  "receipt-only trace must not claim an explicit replay attack was rejected"
+);
+
+const explicitReplayTrace = normalizeTraceForUi({
+  security: {
+    replayBlocked: true,
+  },
+});
+assert.equal(
+  explicitReplayTrace.security.explicitReplayAttackRejected,
+  true,
+  "legacy replayBlocked trace should map to explicit replay rejection"
+);
+
 const afterLiquidation = afterLiquidationState({
   traceRisk: {
     liquidationTxHash: "0xabc",

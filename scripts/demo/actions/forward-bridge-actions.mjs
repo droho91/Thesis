@@ -435,6 +435,7 @@ export async function replayForwardStep({ config, ctx, sourceChainId, destinatio
     ctx,
     {
       security: {
+        explicitReplayAttackRejected: true,
         replayBlocked: true,
         replayCheckedAt: new Date().toISOString(),
         replayProofHeight: proofAnchor.height.toString(),

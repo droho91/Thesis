@@ -45,8 +45,8 @@
             <aside class="primary-action-card" aria-live="polite">
               <div>
                 <span class="eyebrow">Next step</span>
-                <h2 id="primaryActionTitle">Prepare Demo Account</h2>
-                <p id="primaryActionDescription">Prepare your lending account before moving collateral.</p>
+                <h2 id="primaryActionTitle">Prepare Fast Demo Session</h2>
+                <p id="primaryActionDescription">Confirm the current Besu/QBFT runtime before moving collateral.</p>
                 <div class="running-guide live-action-card" id="primaryActionGuide" hidden>
                   <div class="live-action-head">
                     <span class="processing-chip" id="primaryGuideMode">Processing</span>
@@ -78,7 +78,7 @@
                   <small id="primaryGuideController">Waiting for controller status.</small>
                 </div>
               </div>
-              <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Prepare Demo Account</button>
+              <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Prepare Fast Demo Session</button>
               <small id="primaryActionHint">Later steps stay locked until your account is ready.</small>
             </aside>
           </div>
@@ -200,9 +200,9 @@
           <article class="product-card action-card workflow-panel" data-workflow-panel="connect">
             <div class="empty-state-card">
               <span class="action-index">Step 1</span>
-              <h3>Prepare Demo Account</h3>
-              <p id="connectPanelCopy">Prepare the borrower account to unlock bridge and lending actions.</p>
-              <button class="button-primary" id="deploySeed" type="button">Prepare Demo Account</button>
+              <h3>Prepare Fast Demo Session</h3>
+              <p id="connectPanelCopy">Reuse the current deployed contracts and seeded accounts when valid. This does not reset oracle price, liquidation state, balances, or previous demo actions.</p>
+              <button class="button-primary" id="deploySeed" type="button">Prepare Fast Demo Session</button>
             </div>
           </article>
 
@@ -1052,8 +1052,8 @@
             </article>
             <article data-proof-step="replay-rejected">
               <span>7</span>
-              <strong>Replay rejected</strong>
-              <small>Duplicate proof is blocked by contract state.</small>
+              <strong>Replay attack rejected</strong>
+              <small>Shown only after an explicit duplicate proof attempt.</small>
             </article>
             <article data-proof-step="timeout-refund">
               <span>8</span>
@@ -1126,7 +1126,7 @@
               <dd id="proofTimeoutStatus">-</dd>
             </div>
             <div>
-              <dt>Replay protection</dt>
+              <dt>Replay status</dt>
               <dd id="proofReplayStatus">-</dd>
             </div>
             <div>
@@ -1320,7 +1320,7 @@
             <button class="utility-button" data-drawer-close="demoToolsDrawer" type="button">Close</button>
           </div>
           <p class="drawer-copy">
-            These controls prepare the thesis runtime or run scripted support flows. They stay available without competing with borrower actions.
+            These controls prepare the thesis runtime or run scripted support flows. Fresh Reset redeploys and reseeds a clean baseline; Prepare Fast Demo Session only reuses a valid current runtime.
           </p>
           <div class="runtime-tool-actions">
             <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
@@ -1449,8 +1449,12 @@
                   <dd id="forwardConsumedState">-</dd>
                 </div>
                 <div>
-                  <dt>Replay protection</dt>
-                  <dd id="replayBlockedState">-</dd>
+                  <dt>Replay guard</dt>
+                  <dd id="replayGuardState">-</dd>
+                </div>
+                <div>
+                  <dt>Explicit replay</dt>
+                  <dd id="replayAttackState">-</dd>
                 </div>
                 <div>
                   <dt>Timeout absence</dt>
@@ -1609,7 +1613,7 @@
               <span class="eyebrow">Latest runtime message</span>
               <h3 id="lastMessage">Ready</h3>
             </div>
-            <pre id="contractOutput">Start the Besu bank chains, then press Prepare Demo Account.</pre>
+            <pre id="contractOutput">Start the Besu bank chains, then press Prepare Fast Demo Session.</pre>
           </div>
         </aside>
       </div>

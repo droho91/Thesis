@@ -285,8 +285,9 @@ export function normalizeTraceForUi(trace) {
       ...(trace.misbehaviour || {}),
     },
     security: {
-      replayBlocked: true,
       ...security,
+      receiptReplayGuardLive: Boolean(security.receiptReplayGuardLive || trace.forward?.receiveTxHash),
+      explicitReplayAttackRejected: Boolean(security.explicitReplayAttackRejected || security.replayBlocked),
       timeoutAbsenceImplemented: security.timeoutAbsenceImplemented ?? security.nonMembershipImplemented ?? true,
       timeoutAbsence: security.timeoutAbsence || security.nonMembership || null,
     },
@@ -364,7 +365,7 @@ export async function localHealth() {
       label: "No deployment",
       stackVersion: "besu-light-client",
       runtime,
-      message: "Start the Besu bank chains with npm run besu:generate and npm run besu:up, then press Prepare Demo Account or Fresh Reset.",
+      message: "Start the Besu bank chains with npm run besu:generate and npm run besu:up, then press Prepare Fast Demo Session or Fresh Reset.",
     };
   }
   return readLocalHealth(runtime);
@@ -733,6 +734,10 @@ async function readOnchainDemoStatus(health) {
   const deniedTimedOutLive = Boolean(deniedTimedOut || trace?.denied?.timedOut);
   const forwardProofVerified = Boolean(forwardConsumed || trace?.forward?.receiveTxHash);
   const forwardCollateralObserved = Boolean(forwardProofVerified || voucherBalance > 0n || poolCollateral > 0n);
+  const receiptReplayGuardLive = Boolean(forwardConsumed);
+  const explicitReplayAttackRejected = Boolean(
+    traceSecurity.explicitReplayAttackRejected || traceSecurity.replayBlocked
+  );
   const traceRisk = trace?.risk || {};
   const afterLiquidation = afterLiquidationState({
     traceRisk,
@@ -896,12 +901,14 @@ async function readOnchainDemoStatus(health) {
       bOnA: trustedBOnASummary,
     },
     security: {
-      forwardConsumed: Boolean(forwardConsumed || trace?.forward?.receiveTxHash),
+      forwardConsumed: Boolean(forwardConsumed),
       forwardCollateralObserved,
       reverseConsumed: Boolean(trace?.reverse?.receiveTxHash),
       forwardAcknowledged,
       deniedTimedOut,
-      replayBlocked: Boolean(forwardConsumed || traceSecurity.replayBlocked),
+      receiptReplayGuardLive,
+      explicitReplayAttackRejected,
+      replayBlocked: explicitReplayAttackRejected,
       replayProofHeight: traceSecurity.replayProofHeight || null,
       timeoutAbsenceImplemented: traceSecurity.timeoutAbsenceImplemented ?? traceSecurity.nonMembershipImplemented ?? true,
       timeoutAbsence: traceSecurity.timeoutAbsence || traceSecurity.nonMembership || null,
@@ -933,7 +940,13 @@ async function readOnchainDemoStatus(health) {
         : traceSecurity.timeoutAbsence || traceSecurity.nonMembership
           ? traceSecurity.timeoutAbsence?.status || traceSecurity.nonMembership?.status || "Receipt absence ready"
           : "Pending",
-      replayProtectionStatus: traceSecurity.replayBlocked || forwardConsumed ? "Protected" : "Pending",
+      replayProtectionStatus: explicitReplayAttackRejected
+        ? "Replay attack rejected"
+        : receiptReplayGuardLive
+          ? "Replay guard live"
+          : "Pending",
+      receiptReplayGuardStatus: receiptReplayGuardLive ? "Replay guard live" : "Pending receipt",
+      explicitReplayStatus: explicitReplayAttackRejected ? "Replay attack rejected" : "Not tested",
       lightClientStatus: {
         bankAOnBankB: clientStatusName(statusAOnBNumber),
         bankBOnBankA: clientStatusName(statusBOnANumber),

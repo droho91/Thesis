@@ -69,13 +69,13 @@ const ACTION_CARD_BY_ACTION = {
 };
 const ACTION_GUIDE = {
   deploySeed: {
-    runningTitle: "Prepare Demo Account",
-    currentAction: "Checking for an existing seeded Besu/QBFT runtime, then preparing contracts only if needed.",
-    expectedVisibleChange: "If the fast probe confirms the runtime, the account moves to Ready, balances fill in, and borrower actions unlock.",
+    runningTitle: "Prepare Fast Demo Session",
+    currentAction: "Checking whether the existing seeded Besu/QBFT runtime can be reused. This does not reset oracle price, liquidation state, balances, or previous actions.",
+    expectedVisibleChange: "If the fast probe confirms the runtime, the account moves to Ready and keeps the current on-chain state.",
     nextAfterSuccess: "Open the Bank A to Bank B route, then lock aBANK collateral.",
     affectedPortal: "borrower",
     affectedMetrics: ["deploymentStatus", "bankABalance", "workflowStepConnect"],
-    failureRecovery: "Start the local Besu runtime. If a saved config exists but the fast probe fails, run Fresh Reset deliberately before the live demo.",
+    failureRecovery: "Start the local Besu runtime. If a saved config exists but the fast probe fails, run Fresh Reset deliberately to redeploy and reseed.",
   },
   resetSeeded: {
     runningTitle: "Fresh Reset",
@@ -242,10 +242,10 @@ const ACTION_GUIDE = {
   replayForward: {
     runningTitle: "Attempt Replay",
     currentAction: "Submitting an already received forward packet proof to demonstrate replay rejection.",
-    expectedVisibleChange: "Replay protection changes to blocked while the original receipt remains consumed once.",
+    expectedVisibleChange: "Explicit replay status changes to rejected while the receipt guard remains live.",
     nextAfterSuccess: "Use the proof inspector to review the packet receipt that prevents duplicate execution.",
     affectedPortal: "technical",
-    affectedMetrics: ["proofReplayStatus", "replayBlockedState", "proofReceiptStatus", "forwardConsumedState"],
+    affectedMetrics: ["proofReplayStatus", "replayAttackState", "replayGuardState", "proofReceiptStatus", "forwardConsumedState"],
     failureRecovery: "Receive the forward voucher first so a packet receipt exists to replay against.",
   },
   executeTimeoutRefund: {
@@ -373,7 +373,7 @@ const THESIS_MEANING = {
   proveReverseUnlock:
     "Origin collateral unlock is contract-verified from a reverse packet proof, not decided by the local script.",
   replayForward:
-    "Duplicate packet execution is rejected by on-chain receipt state, so replay protection does not depend on an honest relayer.",
+    "The explicit duplicate-packet attempt is rejected by on-chain receipt state, so replay defense does not depend on an honest relayer.",
   executeTimeoutRefund:
     "A timeout refund is backed by receipt absence under a trusted destination state root.",
   freezeClient:
@@ -976,12 +976,12 @@ function workflowModel(status) {
   if (!deployed) {
     return {
       step: "connect",
-      title: "Prepare demo account",
+      title: "Prepare fast demo session",
       status: "Start here",
-      summary: "Prepare the local Besu runtime and demo borrower before collateral transfer and borrowing actions.",
-      cta: { type: "deploySeed", label: "Prepare Demo Account" },
-      description: "Prepare the borrower account and reuse an existing seeded runtime when available.",
-      hint: "Later steps stay locked until the demo account is ready.",
+      summary: "Confirm the local Besu runtime before collateral transfer and borrowing actions.",
+      cta: { type: "deploySeed", label: "Prepare Fast Demo Session" },
+      description: "Reuse the existing seeded runtime when valid. Use Fresh Reset when you need the clean post-seed baseline.",
+      hint: "This fast prepare does not undo oracle shocks, liquidations, repayments, or previous demo actions.",
       steps,
       risk: "waiting",
     };
@@ -1343,10 +1343,15 @@ function proofDoneSteps(status) {
   ) {
     steps.add("packet-verified");
   }
-  if (security.forwardConsumed || security.reverseConsumed || textIncludes(proof.receiptStatus, "consumed", "received", "executed")) {
+  if (
+    security.receiptReplayGuardLive ||
+    security.forwardConsumed ||
+    security.reverseConsumed ||
+    textIncludes(proof.receiptStatus, "consumed", "received", "executed")
+  ) {
     steps.add("receipt-consumed");
   }
-  if (security.replayBlocked || textIncludes(proof.replayProtectionStatus, "reject", "blocked")) {
+  if (security.explicitReplayAttackRejected || textIncludes(proof.explicitReplayStatus, "reject")) {
     steps.add("replay-rejected");
   }
   if (
@@ -1854,9 +1859,10 @@ function snapshotStatus(status) {
       : status.security?.recovering
         ? "Recovering"
         : `${statusAOnB}/${statusBOnA}`,
-    replayBlocked: status.security?.replayBlocked
-      ? `blocked${status.security?.replayProofHeight ? ` @ ${status.security.replayProofHeight}` : ""}`
-      : "pending",
+    receiptReplayGuardLive: status.security?.receiptReplayGuardLive ? "live" : "pending",
+    explicitReplayAttackRejected: status.security?.explicitReplayAttackRejected
+      ? `rejected${status.security?.replayProofHeight ? ` @ ${status.security.replayProofHeight}` : ""}`
+      : "not tested",
     timeoutAbsence: timeoutAbsence ? `seq ${timeoutAbsence.absentSequence || "-"}` : null,
     timeoutRefund: timeoutAbsence?.refundObserved
       ? `refunded ${timeoutAbsence.packetId ? timeoutAbsence.packetId.slice(0, 10) : ""}`
@@ -1894,7 +1900,8 @@ const FACT_LABELS = {
   settlementPacketId: "Settlement packet id",
   settlementUnlocked: "Seized-voucher settlement",
   safetyState: "Light-client safety state",
-  replayBlocked: "Replay protection",
+  receiptReplayGuardLive: "Replay guard",
+  explicitReplayAttackRejected: "Replay attack test",
   timeoutAbsence: "Receipt absence timeout proof",
   timeoutRefund: "Timeout refund",
   misbehaviour: "Conflicting-header evidence",
@@ -1925,7 +1932,8 @@ const FACT_ELEMENT_IDS = {
   settlementPacketId: ["riskSettlementPacket", "proofPacketId"],
   settlementUnlocked: ["riskSettlementStatus"],
   safetyState: ["proofLightClientStatus", "statusAOnB", "statusBOnA", "routeSafety"],
-  replayBlocked: ["proofReplayStatus", "replayBlockedState"],
+  receiptReplayGuardLive: ["proofReplayStatus", "replayGuardState"],
+  explicitReplayAttackRejected: ["proofReplayStatus", "replayAttackState"],
   timeoutAbsence: ["proofTimeoutStatus", "proofTimeoutKey", "timeoutAbsenceState"],
   timeoutRefund: ["proofTimeoutTx", "proofTimeoutStatus"],
   misbehaviour: ["proofFreezeEvidence", "misbehaviourState"],
@@ -1970,7 +1978,7 @@ function actionTitle(action) {
     verifyTimeoutAbsence: "Marked legacy timeout explanation",
     fullFlow: "Completed risk/liquidation lifecycle",
     borrowerCloseout: "Completed borrower closeout lifecycle",
-    deploySeed: "Prepared demo account",
+    deploySeed: "Prepared fast demo session",
     resetSeeded: "Reset account baseline",
     refresh: "Refreshed account state",
   };
@@ -2028,7 +2036,7 @@ function renderPortalFailure(action, error, guide = guideForAction(action)) {
   banner.classList.add("is-visible", "is-failed");
   setText("portalChangeScope", `Recovery / ${guide.affectedPortal}`);
   setText("portalChangeTitle", `${guide.runningTitle} failed`);
-  setText("portalChangeSummary", error?.message || "The action failed before the expected visible change completed.");
+  setText("portalChangeSummary", error?.userMessage || error?.message || "The action failed before the expected visible change completed.");
   list.innerHTML = "";
   const li = document.createElement("li");
   li.textContent = guide.failureRecovery;
@@ -2064,7 +2072,7 @@ function pushWarningActivity(action, summary, nextStatus) {
 }
 
 function pushFailedActivity(action, error) {
-  const summary = error?.message || "The action failed before any contract state changed.";
+  const summary = error?.userMessage || error?.message || "The action failed before any contract state changed.";
   const activity = {
     title: `${actionTitle(action)} failed`,
     summary,
@@ -2086,6 +2094,7 @@ async function requestJson(path, options = {}) {
     const error = new Error([payload.error, payload.output].filter(Boolean).join("\n\n"));
     error.statusCode = response.status;
     error.payload = payload;
+    error.userMessage = payload.message || payload.error;
     throw error;
   }
   return payload;
@@ -2171,7 +2180,7 @@ function completeActionUi(action, ok, error = null, phaseOverride = null) {
     phase === "warning" ? "Needs Reset" : ok ? "Success" : "Failed"
   );
   if (phase === "warning") {
-    renderPortalWarning(action, error?.message, currentRunningAction.guide);
+    renderPortalWarning(action, error?.userMessage || error?.message, currentRunningAction.guide);
     highlightNodeIds(currentRunningAction.guide.affectedMetrics, "running");
   } else if (!ok) {
     renderPortalFailure(action, error, currentRunningAction.guide);
@@ -2193,7 +2202,7 @@ async function runDeploySeed(button = deploySeedButton) {
     selectedWorkflowStep = null;
     syncWorkflowUi(currentStatus);
     if (payload.ready) {
-      pushActivity("deploySeed", payload.message || "The interchain lending runtime is confirmed ready for live demo actions.", payload.status);
+      pushActivity("deploySeed", payload.message || "The interchain lending runtime is confirmed for live demo actions.", payload.status);
       completeActionUi("deploySeed", true);
       setText("lastMessage", payload.message || "Demo runtime confirmed ready.");
     } else {
@@ -2206,7 +2215,7 @@ async function runDeploySeed(button = deploySeedButton) {
     setOutput(payload.output);
   } catch (error) {
     completeActionUi("deploySeed", false, error);
-    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Prepare Demo Account failed.");
+    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Prepare Fast Demo Session failed.");
     setOutput(error.message);
     pushFailedActivity("deploySeed", error);
   } finally {
@@ -2295,7 +2304,8 @@ async function runAction(action, { button = null } = {}) {
     setOutput(payload.output || payload.message);
   } catch (error) {
     completeActionUi(action, false, error);
-    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : `${title} failed.`);
+    const staleCache = String(error.payload?.error || error.message || "").includes("Cached deployment is no longer valid");
+    setText("lastMessage", error.statusCode === 409 && !staleCache ? "Controller is busy." : error.payload?.error || `${title} failed.`);
     setOutput(error.message);
     pushFailedActivity(action, error);
   } finally {

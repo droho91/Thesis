@@ -21,6 +21,29 @@ let activeOperation = null;
 let preparedContextCache = null;
 let runtimeReadyConfirmed = false;
 
+const CRITICAL_DEPLOYMENT_CONTRACTS = Object.freeze([
+  ["A", "lightClient"],
+  ["A", "connectionKeeper"],
+  ["A", "channelKeeper"],
+  ["A", "packetHandler"],
+  ["A", "packetStore"],
+  ["A", "policyEngine"],
+  ["A", "canonicalToken"],
+  ["A", "escrowVault"],
+  ["A", "transferApp"],
+  ["B", "lightClient"],
+  ["B", "connectionKeeper"],
+  ["B", "channelKeeper"],
+  ["B", "packetHandler"],
+  ["B", "packetStore"],
+  ["B", "policyEngine"],
+  ["B", "voucherToken"],
+  ["B", "debtToken"],
+  ["B", "oracle"],
+  ["B", "lendingPool"],
+  ["B", "transferApp"],
+]);
+
 async function expectedArtifactFingerprint() {
   const artifacts = {
     lightClient: await loadArtifact("clients/BesuLightClient.sol", "BesuLightClient"),
@@ -60,7 +83,7 @@ async function expectedArtifactFingerprint() {
 
 function operationLabel(action) {
   const labels = {
-    deploySeed: "Prepare Demo Account",
+    deploySeed: "Prepare Fast Demo Session",
     resetSeeded: "Fresh Reset",
     fullFlow: "Run Risk/Liquidation Lifecycle",
     borrowerCloseout: "Run Borrower Closeout Lifecycle",
@@ -140,6 +163,70 @@ function invalidatePreparedContext() {
   preparedContextCache = null;
 }
 
+function staleCachedDeploymentError(reason) {
+  const message = "Cached deployment is no longer valid. Please run Fresh Reset to redeploy and reseed the demo environment.";
+  const error = new Error(message);
+  error.statusCode = 409;
+  error.demoSafeMessage = message;
+  error.healthReason = reason;
+  return error;
+}
+
+async function assertOnChainDeploymentHealth(config, timeoutMs = FAST_READY_TIMEOUT_MS) {
+  const missingFields = CRITICAL_DEPLOYMENT_CONTRACTS
+    .filter(([chainKey, field]) => !config.chains?.[chainKey]?.[field])
+    .map(([chainKey, field]) => `${chainKey}.${field}`);
+  for (const chainKey of ["A", "B"]) {
+    if (config.chains?.[chainKey]?.chainId == null) missingFields.push(`${chainKey}.chainId`);
+  }
+  if (missingFields.length > 0) {
+    throw new Error(`runtime config is missing critical fields: ${missingFields.join(", ")}`);
+  }
+
+  const providerByChain = {
+    A: providerForChain(config, "A"),
+    B: providerForChain(config, "B"),
+  };
+  const codeRequests = CRITICAL_DEPLOYMENT_CONTRACTS.map(([chainKey, field]) => {
+    const address = config.chains[chainKey][field];
+    if (!ethers.isAddress(address)) {
+      return Promise.resolve({ chainKey, field, address, code: "0x", invalid: true });
+    }
+    return providerByChain[chainKey]
+      .getCode(ethers.getAddress(address), "latest")
+      .then((code) => ({ chainKey, field, address, code }));
+  });
+  const [networkA, networkB, ...codeChecks] = await withTimeout(
+    Promise.all([providerByChain.A.getNetwork(), providerByChain.B.getNetwork(), ...codeRequests]),
+    timeoutMs,
+    "on-chain cached deployment health check"
+  );
+
+  const chainMismatches = [
+    ["A", networkA.chainId],
+    ["B", networkB.chainId],
+  ].flatMap(([chainKey, actual]) => {
+    const expected = BigInt(config.chains[chainKey].chainId);
+    return BigInt(actual) === expected ? [] : [`${chainKey}.chainId expected ${expected.toString()} got ${actual.toString()}`];
+  });
+  const missingCode = codeChecks
+    .filter((check) => check.invalid || check.code === "0x")
+    .map((check) => `${check.chainKey}.${check.field}=${check.address ?? "missing"}`);
+  const problems = [...chainMismatches, ...missingCode];
+  if (problems.length > 0) {
+    throw new Error(problems.join("; "));
+  }
+}
+
+async function probeOnChainDeploymentHealth(config, timeoutMs = FAST_READY_TIMEOUT_MS) {
+  try {
+    await assertOnChainDeploymentHealth(config, timeoutMs);
+    return { ready: true, reason: "Configured deployment code and chain ids are present on-chain." };
+  } catch (error) {
+    return { ready: false, reason: error.message };
+  }
+}
+
 function setActiveOperationStage(stage) {
   if (activeOperation) activeOperation.stage = stage;
 }
@@ -214,6 +301,13 @@ async function preparedContextForUiAction() {
   setActiveOperationStage("Preparing context");
   const fingerprint = await runtimeConfigFingerprint();
   if (preparedContextCache?.fingerprint === fingerprint) {
+    setActiveOperationStage("Checking cached deployment");
+    const health = await probeOnChainDeploymentHealth(preparedContextCache.prepared.config);
+    if (!health.ready) {
+      runtimeReadyConfirmed = false;
+      invalidatePreparedContext();
+      throw staleCachedDeploymentError(health.reason);
+    }
     return preparedContextCache.prepared;
   }
 
@@ -224,6 +318,15 @@ async function preparedContextForUiAction() {
     skipRuntimeReady: useFastPrepare,
     skipDeploymentCode: useFastPrepare,
   });
+  if (useFastPrepare) {
+    setActiveOperationStage("Checking prepared deployment");
+    const health = await probeOnChainDeploymentHealth(prepared.config);
+    if (!health.ready) {
+      runtimeReadyConfirmed = false;
+      invalidatePreparedContext();
+      throw staleCachedDeploymentError(health.reason);
+    }
+  }
   runtimeReadyConfirmed = true;
   preparedContextCache = { fingerprint, prepared };
   return prepared;
@@ -387,47 +490,9 @@ async function fastSeededDeploymentReady() {
     };
   }
 
-  const required = [
-    ["A", "lightClient"],
-    ["A", "packetHandler"],
-    ["A", "packetStore"],
-    ["A", "transferApp"],
-    ["B", "lightClient"],
-    ["B", "packetHandler"],
-    ["B", "packetStore"],
-    ["B", "transferApp"],
-    ["B", "lendingPool"],
-  ];
-  const missingFields = required
-    .filter(([chainKey, field]) => !config.chains?.[chainKey]?.[field])
-    .map(([chainKey, field]) => `${chainKey}.${field}`);
-  if (missingFields.length > 0) {
-    return { ready: false, reason: `Seeded runtime config is missing: ${missingFields.join(", ")}.` };
-  }
-
-  try {
-    const providerA = providerForChain(config, "A");
-    const providerB = providerForChain(config, "B");
-    const codeChecks = await withTimeout(
-      Promise.all([
-        providerA.getCode(config.chains.A.lightClient),
-        providerA.getCode(config.chains.A.packetHandler),
-        providerA.getCode(config.chains.A.transferApp),
-        providerB.getCode(config.chains.B.lightClient),
-        providerB.getCode(config.chains.B.packetHandler),
-        providerB.getCode(config.chains.B.transferApp),
-        providerB.getCode(config.chains.B.lendingPool),
-      ]),
-      FAST_READY_TIMEOUT_MS,
-      "fast interchain lending deployment probe"
-    );
-    if (codeChecks.some((code) => code === "0x")) {
-      return { ready: false, reason: "Seeded runtime config points at one or more addresses with no code." };
-    }
-    return { ready: true, reason: "Existing interchain lending deployment is already deployed and seeded." };
-  } catch (error) {
-    return { ready: false, reason: error.message };
-  }
+  const health = await probeOnChainDeploymentHealth(config);
+  if (!health.ready) return health;
+  return { ready: true, reason: "Existing interchain lending deployment is already deployed, seeded, and present on-chain." };
 }
 
 async function maybeCompileForDemoReset(scripts) {
@@ -479,10 +544,11 @@ async function deployAndSeed({ reset = false } = {}) {
       return {
         ready: true,
         mode: "confirmed-existing",
-        message: "Existing seeded runtime confirmed ready.",
+        message: "Existing seeded runtime confirmed ready and reused. No clean reset was performed.",
         output: [
           `[controller] ${fastReady.reason}`,
-          "[controller] Skipped compile/deploy/seed; use Fresh Reset for a clean redeploy.",
+          "[controller] Reused current on-chain state; oracle, liquidation, balances, and previous demo actions were not reset.",
+          "[controller] Use Fresh Reset for a clean redeploy and seeded baseline.",
         ].join("\n"),
       };
     }
@@ -497,7 +563,7 @@ async function deployAndSeed({ reset = false } = {}) {
         output: [
           "[controller] Existing runtime config is not confirmed ready by the fast probe.",
           `[controller] ${fastReady.reason}`,
-          "[controller] Skipped automatic redeploy to keep Prepare Demo Account fast.",
+          "[controller] Skipped automatic redeploy to keep Prepare Fast Demo Session fast.",
           "[controller] Use Fresh Reset before the demo window if you need a clean deployment.",
         ].join("\n"),
       };
@@ -540,7 +606,7 @@ async function runFlowStrict() {
   if (!(await hasDeploymentConfig())) {
     return {
       ok: false,
-      output: "[controller] No .interchain-lending.local.json found. Press Prepare Demo Account or Fresh Reset before running the flow.\n",
+      output: "[controller] No .interchain-lending.local.json found. Press Prepare Fast Demo Session or Fresh Reset before running the flow.\n",
       error: "No local deployment config.",
     };
   }
@@ -640,7 +706,7 @@ export async function runActionPayload(actionRequest) {
         statusCode: 400,
         body: {
           ok: false,
-          output: "[controller] No .interchain-lending.local.json found. Press Prepare Demo Account or Fresh Reset before running demo actions.\n",
+          output: "[controller] No .interchain-lending.local.json found. Press Prepare Fast Demo Session or Fresh Reset before running demo actions.\n",
           error: "No local deployment config.",
           message: "No local deployment config.",
           trace: await readTrace(),
@@ -655,19 +721,22 @@ export async function runActionPayload(actionRequest) {
       result = action === "fullFlow" ? await runFlowStrict() : await runDemoActionInProcess(action, env);
     } catch (error) {
       error.phase = typeof error?.phase === "string" && error.phase.length > 0 ? error.phase : getCurrentPhase();
+      const safeMessage = error.demoSafeMessage || `Demo action ${action} failed.`;
       result = {
         ok: false,
+        statusCode: error.statusCode || 500,
         output: [
           error.capturedOutput,
           `run-lending-demo failed during phase: ${error.phase}`,
+          error.healthReason ? `[controller] ${error.healthReason}` : null,
           error.stack || error.message,
         ].filter(Boolean).join("\n"),
-        error: `Demo action ${action} failed.`,
+        error: safeMessage,
       };
     }
 
     return {
-      statusCode: result.ok ? 200 : 500,
+      statusCode: result.ok ? 200 : result.statusCode || 500,
       body: {
         ...result,
         message:
