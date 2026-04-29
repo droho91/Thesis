@@ -47,19 +47,34 @@
                 <span class="eyebrow">Next step</span>
                 <h2 id="primaryActionTitle">Prepare Demo Account</h2>
                 <p id="primaryActionDescription">Prepare your lending account before moving collateral.</p>
-                <div class="running-guide" id="primaryActionGuide" hidden>
-                  <div>
-                    <span>What is happening now</span>
-                    <strong id="primaryGuideCurrent">-</strong>
+                <div class="running-guide live-action-card" id="primaryActionGuide" hidden>
+                  <div class="live-action-head">
+                    <span class="processing-chip" id="primaryGuideMode">Processing</span>
+                    <strong id="primaryGuideProcessing">-</strong>
                   </div>
-                  <div>
-                    <span>Visible change to expect</span>
-                    <strong id="primaryGuideExpected">-</strong>
-                  </div>
-                  <div>
-                    <span>Next after success</span>
-                    <strong id="primaryGuideNext">-</strong>
-                  </div>
+                  <div class="live-progress-strip" aria-hidden="true"><i></i></div>
+                  <dl class="live-action-grid">
+                    <div>
+                      <dt>Current stage</dt>
+                      <dd id="primaryGuideStage">-</dd>
+                    </div>
+                    <div>
+                      <dt>Elapsed</dt>
+                      <dd id="primaryGuideElapsed">0s</dd>
+                    </div>
+                    <div>
+                      <dt>What is happening now</dt>
+                      <dd id="primaryGuideCurrent">-</dd>
+                    </div>
+                    <div>
+                      <dt>Expected visible change</dt>
+                      <dd id="primaryGuideExpected">-</dd>
+                    </div>
+                    <div>
+                      <dt>Next after success</dt>
+                      <dd id="primaryGuideNext">-</dd>
+                    </div>
+                  </dl>
                   <small id="primaryGuideController">Waiting for controller status.</small>
                 </div>
               </div>
@@ -217,7 +232,6 @@
             <div class="transaction-panel transaction-panel--bridge">
               <div class="transaction-panel-head">
                 <div>
-                  <strong>Bridge amount</strong>
                   <span>Available on Bank A <b id="bridgeSourceBalance">-</b></span>
                 </div>
               </div>
@@ -1026,6 +1040,59 @@
           <p class="proof-copy">
             This panel shows what the proof proves: Bank B accepts the packet only when a storage proof matches a packet commitment under a trusted Bank A state root. The backend relays data, but it does not get to decide whether the voucher is minted.
           </p>
+          <div class="proof-lifecycle" aria-label="Proof lifecycle">
+            <article data-proof-step="packet-committed">
+              <span>1</span>
+              <strong>Packet committed</strong>
+              <small>Bank A writes the packet commitment.</small>
+            </article>
+            <article data-proof-step="header-fetched">
+              <span>2</span>
+              <strong>Header fetched</strong>
+              <small>Controller reads the relevant Besu header.</small>
+            </article>
+            <article data-proof-step="light-client-updated">
+              <span>3</span>
+              <strong>Light client updated</strong>
+              <small>Destination imports the trusted state root.</small>
+            </article>
+            <article data-proof-step="storage-proof">
+              <span>4</span>
+              <strong>Storage proof generated</strong>
+              <small>Packet path is proven under the state root.</small>
+            </article>
+            <article data-proof-step="packet-verified">
+              <span>5</span>
+              <strong>Packet verified</strong>
+              <small>Contract executes the receive or unlock.</small>
+            </article>
+            <article data-proof-step="receipt-consumed">
+              <span>6</span>
+              <strong>Receipt consumed once</strong>
+              <small>Packet receipt prevents duplicate execution.</small>
+            </article>
+            <article data-proof-step="replay-rejected">
+              <span>7</span>
+              <strong>Replay rejected</strong>
+              <small>Duplicate proof is blocked by contract state.</small>
+            </article>
+            <article data-proof-step="timeout-refund">
+              <span>8</span>
+              <strong>Timeout/refund verified</strong>
+              <small>Receipt absence proves refund eligibility.</small>
+            </article>
+            <article data-proof-step="client-safety">
+              <span>9</span>
+              <strong>Client frozen/recovered</strong>
+              <small>Safety controls handle conflicting evidence.</small>
+            </article>
+          </div>
+          <aside class="thesis-meaning" aria-live="polite">
+            <span class="eyebrow">Thesis meaning</span>
+            <p id="proofThesisMeaning">
+              Proof-checked collateral representation lets the lending pool accept cross-chain collateral without trusting the relayer as a balance oracle.
+            </p>
+          </aside>
           <dl class="metric-grid metric-grid--three">
             <div>
               <dt>Model</dt>
@@ -1142,10 +1209,10 @@
               <div><span>Action</span><strong id="scenarioHealthyAction">Borrow -</strong></div>
               <div><span>After</span><strong id="scenarioHealthyAfter">Debt - / health -</strong></div>
             </div>
+            <div class="scenario-amount-summary" id="scenarioHealthyAmountSummary">Amount source: Borrower Portal borrow amount.</div>
             <dl>
-              <div><dt>Before</dt><dd>User has voucher collateral and safe health.</dd></div>
-              <div><dt>Action</dt><dd>Borrow bCASH within available capacity.</dd></div>
-              <div><dt>After</dt><dd>Debt increases and health factor decreases but remains above threshold.</dd></div>
+              <div><dt>Protocol meaning</dt><dd>Voucher collateral is already active inside the lending pool.</dd></div>
+              <div><dt>Risk control</dt><dd>Borrowing is bounded by available capacity, pool liquidity, policy, and oracle valuation.</dd></div>
               <div><dt>What this proves</dt><dd>Collateralized borrowing is risk-limited by policy and oracle valuation.</dd></div>
             </dl>
             <button class="button-run" data-action="borrow" type="button">Run Borrow Step</button>
@@ -1161,10 +1228,10 @@
               <div><span>Action</span><strong id="scenarioRepayAction">Repay / withdraw selected amount</strong></div>
               <div><span>After</span><strong id="scenarioRepayAfter">Remaining debt -</strong></div>
             </div>
+            <div class="scenario-amount-summary" id="scenarioRepayAmountSummary">Amount source: Borrower Portal repay and withdraw amounts.</div>
             <dl>
-              <div><dt>Before</dt><dd>User has debt backed by voucher collateral.</dd></div>
-              <div><dt>Action</dt><dd>Repay debt, then withdraw collateral if the position remains healthy.</dd></div>
-              <div><dt>After</dt><dd>Debt falls and more collateral becomes withdrawable.</dd></div>
+              <div><dt>Protocol meaning</dt><dd>Debt and collateral accounting stay inside the lending pool.</dd></div>
+              <div><dt>Risk control</dt><dd>Withdrawal remains subject to the same health checks as borrowing.</dd></div>
               <div><dt>What this proves</dt><dd>The pool enforces health checks on withdrawals, not just borrowing.</dd></div>
             </dl>
             <div class="scenario-actions">
@@ -1187,10 +1254,10 @@
               <div><span>Action</span><strong id="scenarioLiquidationAction">Shock price / liquidate</strong></div>
               <div><span>After</span><strong id="scenarioLiquidationAfter">No liquidation executed yet</strong></div>
             </div>
+            <div class="scenario-amount-summary" id="scenarioLiquidationAmountSummary">Amount source: Risk Admin shock price and liquidation repay amount.</div>
             <dl>
-              <div><dt>Before</dt><dd>Health factor is above the liquidation trigger.</dd></div>
-              <div><dt>Action</dt><dd>Governed demo oracle drops collateral price, then authorized liquidator repays debt.</dd></div>
-              <div><dt>After</dt><dd>Collateral is seized; residual debt can become reserve-covered bad debt.</dd></div>
+              <div><dt>Protocol meaning</dt><dd>A governed demo oracle update changes the executable risk state.</dd></div>
+              <div><dt>Risk control</dt><dd>Only an authorized liquidator can repay and seize collateral in this prototype.</dd></div>
               <div><dt>What this proves</dt><dd>The risk layer reacts to adverse price movement and records pool losses.</dd></div>
             </dl>
             <div class="scenario-actions">
@@ -1211,9 +1278,8 @@
               <div><span>After</span><strong id="scenarioReplayAfter">Replay pending</strong></div>
             </div>
             <dl>
-              <div><dt>Before</dt><dd>A packet has already been received on Bank B.</dd></div>
-              <div><dt>Action</dt><dd>Submit the same packet proof again.</dd></div>
-              <div><dt>After</dt><dd>Packet receipt prevents a second execution.</dd></div>
+              <div><dt>Protocol meaning</dt><dd>The same packet proof can be resubmitted, but the packet receipt is already consumed.</dd></div>
+              <div><dt>Defense talking point</dt><dd>Replay rejection is contract state, not controller discretion.</dd></div>
               <div><dt>What this proves</dt><dd>Replay protection lives in contract state, not in the relayer.</dd></div>
             </dl>
             <button class="button-danger" data-action="replayForward" type="button">Attempt Replay</button>
@@ -1234,9 +1300,8 @@
               <div><span>After</span><strong id="scenarioTimeoutAfter">Timeout pending</strong></div>
             </div>
             <dl>
-              <div><dt>Before</dt><dd>A policy-denied packet has no destination receipt.</dd></div>
-              <div><dt>Action</dt><dd>Submit a receipt absence proof to execute the on-chain timeout refund path.</dd></div>
-              <div><dt>After</dt><dd>Source chain records timeout and refund state after the Execute Timeout Refund action succeeds.</dd></div>
+              <div><dt>Protocol meaning</dt><dd>A policy-denied packet should not leave collateral stuck forever.</dd></div>
+              <div><dt>Defense talking point</dt><dd>The refund path depends on proof of missing receipt under a trusted destination root.</dd></div>
               <div><dt>What this proves</dt><dd>Timeouts rely on receipt absence under a trusted destination state root.</dd></div>
             </dl>
             <button class="button-run" data-action="executeTimeoutRefund" type="button">Execute Timeout Refund</button>
@@ -1253,9 +1318,8 @@
               <div><span>After</span><strong id="scenarioFreezeAfter">Recovery status -</strong></div>
             </div>
             <dl>
-              <div><dt>Before</dt><dd>Bank B trusts a Bank A Besu header.</dd></div>
-              <div><dt>Action</dt><dd>Submit conflicting finalized-header evidence, then recover with a new anchor.</dd></div>
-              <div><dt>After</dt><dd>Client freezes, blocks proof execution, and returns active after recovery.</dd></div>
+              <div><dt>Protocol meaning</dt><dd>Bank B relies on imported Bank A headers for packet proof verification.</dd></div>
+              <div><dt>Defense talking point</dt><dd>Conflicting evidence can pause proof execution before recovery re-anchors the client.</dd></div>
               <div><dt>What this proves</dt><dd>The light client has safety controls for conflicting header evidence.</dd></div>
             </dl>
             <div class="scenario-actions">

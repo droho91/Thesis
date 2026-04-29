@@ -97,6 +97,7 @@ function publicActiveOperation() {
     id: activeOperation.id,
     action: activeOperation.action,
     label: activeOperation.label,
+    stage: activeOperation.stage,
     startedAt: activeOperation.startedAt,
     elapsedSeconds: Math.max(0, Math.round((Date.now() - activeOperation.startedAtMs) / 1000)),
   };
@@ -129,6 +130,29 @@ function invalidatePreparedContext() {
   preparedContextCache = null;
 }
 
+function setActiveOperationStage(stage) {
+  if (activeOperation) activeOperation.stage = stage;
+}
+
+function actionExecutionStage(action) {
+  if (action === "fullFlow" || action === "borrowerCloseout") return "Running scripted lifecycle";
+  if (action === "openRoute") return "Opening proof-checked route";
+  if (action === "finalizeForwardHeader" || action === "finalizeReverseHeader") return "Reading finalized Besu header";
+  if (action === "updateForwardClient" || action === "updateReverseClient" || action === "recoverClient") {
+    return "Importing trusted header";
+  }
+  if (
+    action === "proveForwardMint" ||
+    action === "proveReverseUnlock" ||
+    action === "replayForward" ||
+    action === "executeTimeoutRefund"
+  ) {
+    return "Generating storage proof";
+  }
+  if (action === "freezeClient") return "Submitting conflicting-header evidence";
+  return "Submitting transaction";
+}
+
 async function runtimeConfigFingerprint() {
   const config = await loadRuntimeConfig();
   return JSON.stringify({
@@ -147,6 +171,7 @@ async function runtimeConfigFingerprint() {
 }
 
 async function preparedContextForUiAction() {
+  setActiveOperationStage("Preparing context");
   const fingerprint = await runtimeConfigFingerprint();
   if (preparedContextCache?.fingerprint === fingerprint) {
     return preparedContextCache.prepared;
@@ -171,6 +196,7 @@ async function withControllerLock(action, run) {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     action,
     label: operationLabel(action),
+    stage: "Preparing controller",
     startedAt: new Date().toISOString(),
     startedAtMs: Date.now(),
   };
@@ -405,30 +431,47 @@ export async function runtimeScripts() {
 
 async function deployAndSeed({ reset = false } = {}) {
   if (!reset) {
+    setActiveOperationStage("Checking seeded runtime");
     const fastReady = await fastSeededDeploymentReady();
     if (fastReady.ready) {
       runtimeReadyConfirmed = true;
       invalidatePreparedContext();
-      return [
-        `[controller] ${fastReady.reason}`,
-        "[controller] Skipped compile/deploy/seed; use Fresh Reset for a clean redeploy.",
-      ].join("\n");
+      return {
+        ready: true,
+        mode: "confirmed-existing",
+        message: "Existing seeded runtime confirmed ready.",
+        output: [
+          `[controller] ${fastReady.reason}`,
+          "[controller] Skipped compile/deploy/seed; use Fresh Reset for a clean redeploy.",
+        ].join("\n"),
+      };
     }
     if (await hasDeploymentConfig()) {
-      return [
-        "[controller] Existing runtime config is not confirmed ready by the fast probe.",
-        `[controller] ${fastReady.reason}`,
-        "[controller] Skipped automatic redeploy to keep Prepare Demo Account fast.",
-        "[controller] Use Fresh Reset before the demo window if you need a clean deployment.",
-      ].join("\n");
+      runtimeReadyConfirmed = false;
+      invalidatePreparedContext();
+      return {
+        ready: false,
+        warning: true,
+        mode: "fast-probe-failed",
+        message: "Existing runtime config was not confirmed ready. Run Fresh Reset before the live demo.",
+        output: [
+          "[controller] Existing runtime config is not confirmed ready by the fast probe.",
+          `[controller] ${fastReady.reason}`,
+          "[controller] Skipped automatic redeploy to keep Prepare Demo Account fast.",
+          "[controller] Use Fresh Reset before the demo window if you need a clean deployment.",
+        ].join("\n"),
+      };
     }
   }
 
   runtimeReadyConfirmed = false;
   invalidatePreparedContext();
   const scripts = await runtimeScripts();
+  setActiveOperationStage("Checking artifacts");
   const compile = await maybeCompileForDemoReset(scripts);
+  setActiveOperationStage("Deploying contracts");
   const deploy = await runCommand(scripts.deploy.command, scripts.deploy.args);
+  setActiveOperationStage("Seeding policy and liquidity");
   const seed = await runCommand(scripts.seed.command, scripts.seed.args);
   runtimeReadyConfirmed = true;
   invalidatePreparedContext();
@@ -445,7 +488,12 @@ async function deployAndSeed({ reset = false } = {}) {
   };
   await writeFile(traceJsonPath, `${JSON.stringify(freshTrace, null, 2)}\n`);
   await writeFile(traceJsPath, `window.InterchainLendingLatestRun = ${JSON.stringify(freshTrace, null, 2)};\n`);
-  return `${compile}\n${deploy}\n${seed}`;
+  return {
+    ready: true,
+    mode: reset ? "fresh-reset" : "fresh-deploy",
+    message: reset ? "Fresh reset completed and seeded." : "Fresh deployment and seed completed.",
+    output: `${compile}\n${deploy}\n${seed}`,
+  };
 }
 
 async function runFlowStrict() {
@@ -515,9 +563,11 @@ async function runDemoActionInProcess(action, env = {}) {
   applyDemoAmountOverrides(env);
   const useCachedContext = action !== "fullFlow" && action !== "riskLifecycle" && action !== "borrowerCloseout";
   const prepared = useCachedContext ? await preparedContextForUiAction() : null;
+  setActiveOperationStage(actionExecutionStage(action));
   const result = await captureDemoOutput(() =>
     useCachedContext ? runDemoStep(action, { prepared }) : runDemoStep(action)
   );
+  setActiveOperationStage("Reading refreshed state");
   return {
     ok: true,
     output: result.output || `[controller] Completed ${operationLabel(action)} in process.`,
@@ -621,10 +671,15 @@ export async function statusPayload() {
 
 export async function deploySeedPayload() {
   return withControllerLock("deploySeed", async () => {
-    const output = await deployAndSeed();
+    const result = await deployAndSeed();
+    setActiveOperationStage("Reading refreshed state");
     return {
       ok: true,
-      output,
+      ready: result.ready,
+      warning: Boolean(result.warning),
+      mode: result.mode,
+      message: result.message,
+      output: result.output,
       trace: await readTrace(),
       status: await readDemoStatusForPayload(),
     };
@@ -633,10 +688,14 @@ export async function deploySeedPayload() {
 
 export async function resetSeededPayload() {
   return withControllerLock("resetSeeded", async () => {
-    const output = await deployAndSeed({ reset: true });
+    const result = await deployAndSeed({ reset: true });
+    setActiveOperationStage("Reading refreshed state");
     return {
       ok: true,
-      output,
+      ready: result.ready,
+      mode: result.mode,
+      message: result.message,
+      output: result.output,
       trace: await readTrace(),
       status: await readDemoStatusForPayload(),
     };
