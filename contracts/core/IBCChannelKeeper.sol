@@ -153,6 +153,7 @@ contract IBCChannelKeeper is AccessControl, IBCEVMProofBoundary {
     ) external onlyRole(CHANNEL_ADMIN_ROLE) {
         require(connectionKeeper.isConnectionOpen(connectionId), "CONNECTION_NOT_OPEN");
         require(channels[channelId].state == IBCChannelTypes.State.Uninitialized, "CHANNEL_EXISTS");
+        require(counterpartyChainId == counterpartyInitProof.sourceChainId, "COUNTERPARTY_CHAIN_MISMATCH");
         IBCConnectionTypes.ConnectionEnd memory connectionEnd = connectionKeeper.connection(connectionId);
         bytes32 expectedCounterpartyCommitment = channelCommitment(
             counterpartyInitProof.sourceChainId,
@@ -194,6 +195,7 @@ contract IBCChannelKeeper is AccessControl, IBCEVMProofBoundary {
         require(channelEnd.state == IBCChannelTypes.State.Init, "CHANNEL_NOT_INIT");
         PacketRoute memory route = routesByChannel[channelId];
         require(route.exists, "CHANNEL_ROUTE_MISSING");
+        require(route.counterpartyChainId == counterpartyTryProof.sourceChainId, "COUNTERPARTY_CHAIN_MISMATCH");
         IBCConnectionTypes.ConnectionEnd memory connectionEnd = connectionKeeper.connection(route.connectionId);
         bytes32 expectedCounterpartyCommitment = channelCommitment(
             counterpartyTryProof.sourceChainId,
@@ -242,6 +244,7 @@ contract IBCChannelKeeper is AccessControl, IBCEVMProofBoundary {
         require(channelEnd.state == IBCChannelTypes.State.TryOpen, "CHANNEL_NOT_TRYOPEN");
         PacketRoute memory route = routesByChannel[channelId];
         require(route.exists, "CHANNEL_ROUTE_MISSING");
+        require(route.counterpartyChainId == counterpartyOpenProof.sourceChainId, "COUNTERPARTY_CHAIN_MISMATCH");
         IBCConnectionTypes.ConnectionEnd memory connectionEnd = connectionKeeper.connection(route.connectionId);
         bytes32 counterpartyChannelId = channelEnd.counterparty.channelId;
         bytes32 expectedCounterpartyCommitment = channelCommitment(

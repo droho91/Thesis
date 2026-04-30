@@ -360,4 +360,297 @@ contract PacketHandshakeTest is PacketHandlerFixture {
             fakeProof
         );
     }
+
+    function testConnectionOpenTryRejectsClientChainMismatch() public {
+        MockBesuLightClient lightClientOnA = new MockBesuLightClient();
+        MockBesuLightClient lightClientOnB = new MockBesuLightClient();
+        IBCConnectionKeeper keeperA = new IBCConnectionKeeper(CHAIN_A, address(lightClientOnA), address(this));
+        IBCConnectionKeeper keeperB = new IBCConnectionKeeper(CHAIN_B, address(lightClientOnB), address(this));
+        keeperB.setTrustedRemoteConnectionKeeper(CHAIN_A, address(keeperA));
+        bytes32 connectionA = bytes32("connection-a");
+        bytes memory prefix = bytes("ibc");
+
+        keeperA.connectionOpenInit(connectionA, bytes32(uint256(CHAIN_B)), bytes32(uint256(CHAIN_A)), 0, prefix);
+        BuiltSingleStorageProof memory initBuilt = _buildSingleStorageProof(
+            address(keeperA),
+            keeperA.connectionCommitmentStorageSlot(connectionA),
+            keeperA.connectionCommitments(connectionA)
+        );
+        IBCEVMTypes.StorageProof memory proof =
+            _singleProof(CHAIN_A, TRUSTED_HEIGHT_A, address(keeperA), keeperA.connectionCommitmentStorageSlot(connectionA), initBuilt);
+
+        vm.expectRevert(bytes("CLIENT_CHAIN_MISMATCH"));
+        keeperB.connectionOpenTry(
+            bytes32("connection-b"),
+            bytes32(uint256(CHAIN_B)),
+            bytes32(uint256(CHAIN_B)),
+            connectionA,
+            0,
+            prefix,
+            address(keeperA),
+            proof
+        );
+    }
+
+    function testConnectionOpenTryRejectsCounterpartyClientChainMismatch() public {
+        MockBesuLightClient lightClientOnA = new MockBesuLightClient();
+        MockBesuLightClient lightClientOnB = new MockBesuLightClient();
+        IBCConnectionKeeper keeperA = new IBCConnectionKeeper(CHAIN_A, address(lightClientOnA), address(this));
+        IBCConnectionKeeper keeperB = new IBCConnectionKeeper(CHAIN_B, address(lightClientOnB), address(this));
+        keeperB.setTrustedRemoteConnectionKeeper(CHAIN_A, address(keeperA));
+        bytes32 connectionA = bytes32("connection-a");
+        bytes memory prefix = bytes("ibc");
+
+        keeperA.connectionOpenInit(connectionA, bytes32(uint256(CHAIN_B)), bytes32(uint256(CHAIN_A)), 0, prefix);
+        BuiltSingleStorageProof memory initBuilt = _buildSingleStorageProof(
+            address(keeperA),
+            keeperA.connectionCommitmentStorageSlot(connectionA),
+            keeperA.connectionCommitments(connectionA)
+        );
+        IBCEVMTypes.StorageProof memory proof =
+            _singleProof(CHAIN_A, TRUSTED_HEIGHT_A, address(keeperA), keeperA.connectionCommitmentStorageSlot(connectionA), initBuilt);
+
+        vm.expectRevert(bytes("COUNTERPARTY_CLIENT_CHAIN_MISMATCH"));
+        keeperB.connectionOpenTry(
+            bytes32("connection-b"),
+            bytes32(uint256(CHAIN_A)),
+            bytes32(uint256(CHAIN_A)),
+            connectionA,
+            0,
+            prefix,
+            address(keeperA),
+            proof
+        );
+    }
+
+    function testConnectionOpenAckRejectsClientChainMismatch() public {
+        MockBesuLightClient lightClientOnA = new MockBesuLightClient();
+        MockBesuLightClient lightClientOnB = new MockBesuLightClient();
+        IBCConnectionKeeper keeperA = new IBCConnectionKeeper(CHAIN_A, address(lightClientOnA), address(this));
+        IBCConnectionKeeper keeperB = new IBCConnectionKeeper(CHAIN_B, address(lightClientOnB), address(this));
+        bytes32 connectionA = bytes32("connection-a");
+        bytes32 connectionB = bytes32("connection-b");
+        bytes memory prefix = bytes("ibc");
+
+        keeperA.connectionOpenInit(connectionA, bytes32(uint256(CHAIN_B)), bytes32(uint256(CHAIN_A)), 0, prefix);
+        BuiltSingleStorageProof memory tryBuilt = _buildSingleStorageProof(
+            address(keeperB),
+            keeperB.connectionCommitmentStorageSlot(connectionB),
+            bytes32("try-open")
+        );
+        IBCEVMTypes.StorageProof memory wrongSourceProof =
+            _singleProof(CHAIN_A, TRUSTED_HEIGHT_A, address(keeperB), keeperB.connectionCommitmentStorageSlot(connectionB), tryBuilt);
+
+        vm.expectRevert(bytes("CLIENT_CHAIN_MISMATCH"));
+        keeperA.connectionOpenAck(connectionA, connectionB, address(keeperB), wrongSourceProof);
+    }
+
+    function testConnectionOpenConfirmRejectsClientChainMismatch() public {
+        MockBesuLightClient lightClientOnA = new MockBesuLightClient();
+        MockBesuLightClient lightClientOnB = new MockBesuLightClient();
+        IBCConnectionKeeper keeperA = new IBCConnectionKeeper(CHAIN_A, address(lightClientOnA), address(this));
+        IBCConnectionKeeper keeperB = new IBCConnectionKeeper(CHAIN_B, address(lightClientOnB), address(this));
+        keeperA.setTrustedRemoteConnectionKeeper(CHAIN_B, address(keeperB));
+        keeperB.setTrustedRemoteConnectionKeeper(CHAIN_A, address(keeperA));
+        bytes32 connectionA = bytes32("connection-a");
+        bytes32 connectionB = bytes32("connection-b");
+        bytes memory prefix = bytes("ibc");
+
+        keeperA.connectionOpenInit(connectionA, bytes32(uint256(CHAIN_B)), bytes32(uint256(CHAIN_A)), 0, prefix);
+        BuiltSingleStorageProof memory initBuilt = _buildSingleStorageProof(
+            address(keeperA),
+            keeperA.connectionCommitmentStorageSlot(connectionA),
+            keeperA.connectionCommitments(connectionA)
+        );
+        lightClientOnB.setTrustedStateRoot(CHAIN_A, TRUSTED_HEIGHT_A, initBuilt.stateRoot);
+        keeperB.connectionOpenTry(
+            connectionB,
+            bytes32(uint256(CHAIN_A)),
+            bytes32(uint256(CHAIN_B)),
+            connectionA,
+            0,
+            prefix,
+            address(keeperA),
+            _singleProof(CHAIN_A, TRUSTED_HEIGHT_A, address(keeperA), keeperA.connectionCommitmentStorageSlot(connectionA), initBuilt)
+        );
+
+        BuiltSingleStorageProof memory openBuilt = _buildSingleStorageProof(
+            address(keeperA),
+            keeperA.connectionCommitmentStorageSlot(connectionA),
+            bytes32("open")
+        );
+        IBCEVMTypes.StorageProof memory wrongSourceProof =
+            _singleProof(CHAIN_B, TRUSTED_HEIGHT_B, address(keeperA), keeperA.connectionCommitmentStorageSlot(connectionA), openBuilt);
+
+        vm.expectRevert(bytes("CLIENT_CHAIN_MISMATCH"));
+        keeperB.connectionOpenConfirm(connectionB, address(keeperA), wrongSourceProof);
+    }
+
+    function testChannelOpenTryRejectsCounterpartyChainMismatch() public {
+        MockBesuLightClient lightClientOnA = new MockBesuLightClient();
+        MockBesuLightClient lightClientOnB = new MockBesuLightClient();
+        IBCConnectionKeeper keeperA = new IBCConnectionKeeper(CHAIN_A, address(lightClientOnA), address(this));
+        IBCConnectionKeeper keeperB = new IBCConnectionKeeper(CHAIN_B, address(lightClientOnB), address(this));
+        keeperA.setUnsafeLocalDemoMode(true);
+        keeperB.setUnsafeLocalDemoMode(true);
+        keeperA.openConnectionUnsafe(
+            bytes32("connection-a"),
+            bytes32(uint256(CHAIN_B)),
+            bytes32(uint256(CHAIN_A)),
+            bytes32("connection-b"),
+            0,
+            bytes("ibc")
+        );
+        keeperB.openConnectionUnsafe(
+            bytes32("connection-b"),
+            bytes32(uint256(CHAIN_A)),
+            bytes32(uint256(CHAIN_B)),
+            bytes32("connection-a"),
+            0,
+            bytes("ibc")
+        );
+        IBCChannelKeeper channelsA = new IBCChannelKeeper(CHAIN_A, address(keeperA), address(this));
+        IBCChannelKeeper channelsB = new IBCChannelKeeper(CHAIN_B, address(keeperB), address(this));
+        bytes32 channelA = bytes32("channel-a");
+        bytes memory version = bytes("ics-004");
+
+        channelsA.channelOpenInit(
+            channelA,
+            bytes32("connection-a"),
+            CHAIN_B,
+            address(receiver),
+            address(sourceApp),
+            IBCChannelTypes.Order.Unordered,
+            version
+        );
+        BuiltSingleStorageProof memory initBuilt = _buildSingleStorageProof(
+            address(channelsA),
+            channelsA.channelCommitmentStorageSlot(channelA),
+            channelsA.channelCommitments(channelA)
+        );
+        IBCEVMTypes.StorageProof memory wrongSourceProof =
+            _singleProof(CHAIN_B, TRUSTED_HEIGHT_B, address(channelsA), channelsA.channelCommitmentStorageSlot(channelA), initBuilt);
+
+        vm.expectRevert(bytes("COUNTERPARTY_CHAIN_MISMATCH"));
+        channelsB.channelOpenTry(
+            bytes32("channel-b"),
+            bytes32("connection-b"),
+            CHAIN_A,
+            address(sourceApp),
+            address(receiver),
+            channelA,
+            IBCChannelTypes.Order.Unordered,
+            version,
+            address(channelsA),
+            wrongSourceProof
+        );
+    }
+
+    function testChannelOpenAckRejectsCounterpartyChainMismatch() public {
+        MockBesuLightClient lightClientOnA = new MockBesuLightClient();
+        IBCConnectionKeeper keeperA = new IBCConnectionKeeper(CHAIN_A, address(lightClientOnA), address(this));
+        keeperA.setUnsafeLocalDemoMode(true);
+        keeperA.openConnectionUnsafe(
+            bytes32("connection-a"),
+            bytes32(uint256(CHAIN_B)),
+            bytes32(uint256(CHAIN_A)),
+            bytes32("connection-b"),
+            0,
+            bytes("ibc")
+        );
+        IBCChannelKeeper channelsA = new IBCChannelKeeper(CHAIN_A, address(keeperA), address(this));
+        bytes32 channelA = bytes32("channel-a");
+        bytes32 channelB = bytes32("channel-b");
+        bytes memory version = bytes("ics-004");
+
+        channelsA.channelOpenInit(
+            channelA,
+            bytes32("connection-a"),
+            CHAIN_B,
+            address(receiver),
+            address(sourceApp),
+            IBCChannelTypes.Order.Unordered,
+            version
+        );
+        BuiltSingleStorageProof memory tryBuilt = _buildSingleStorageProof(
+            address(0xCAFE),
+            channelsA.channelCommitmentStorageSlot(channelB),
+            bytes32("try-open")
+        );
+        IBCEVMTypes.StorageProof memory wrongSourceProof =
+            _singleProof(CHAIN_A, TRUSTED_HEIGHT_A, address(0xCAFE), channelsA.channelCommitmentStorageSlot(channelB), tryBuilt);
+
+        vm.expectRevert(bytes("COUNTERPARTY_CHAIN_MISMATCH"));
+        channelsA.channelOpenAck(channelA, channelB, address(0xCAFE), wrongSourceProof);
+    }
+
+    function testChannelOpenConfirmRejectsCounterpartyChainMismatch() public {
+        MockBesuLightClient lightClientOnA = new MockBesuLightClient();
+        MockBesuLightClient lightClientOnB = new MockBesuLightClient();
+        IBCConnectionKeeper keeperA = new IBCConnectionKeeper(CHAIN_A, address(lightClientOnA), address(this));
+        IBCConnectionKeeper keeperB = new IBCConnectionKeeper(CHAIN_B, address(lightClientOnB), address(this));
+        keeperA.setUnsafeLocalDemoMode(true);
+        keeperB.setUnsafeLocalDemoMode(true);
+        keeperA.openConnectionUnsafe(
+            bytes32("connection-a"),
+            bytes32(uint256(CHAIN_B)),
+            bytes32(uint256(CHAIN_A)),
+            bytes32("connection-b"),
+            0,
+            bytes("ibc")
+        );
+        keeperB.openConnectionUnsafe(
+            bytes32("connection-b"),
+            bytes32(uint256(CHAIN_A)),
+            bytes32(uint256(CHAIN_B)),
+            bytes32("connection-a"),
+            0,
+            bytes("ibc")
+        );
+        IBCChannelKeeper channelsA = new IBCChannelKeeper(CHAIN_A, address(keeperA), address(this));
+        IBCChannelKeeper channelsB = new IBCChannelKeeper(CHAIN_B, address(keeperB), address(this));
+        channelsB.setTrustedRemoteChannelKeeper(CHAIN_A, address(channelsA));
+        bytes32 channelA = bytes32("channel-a");
+        bytes32 channelB = bytes32("channel-b");
+        bytes memory version = bytes("ics-004");
+
+        channelsA.channelOpenInit(
+            channelA,
+            bytes32("connection-a"),
+            CHAIN_B,
+            address(receiver),
+            address(sourceApp),
+            IBCChannelTypes.Order.Unordered,
+            version
+        );
+        BuiltSingleStorageProof memory initBuilt = _buildSingleStorageProof(
+            address(channelsA),
+            channelsA.channelCommitmentStorageSlot(channelA),
+            channelsA.channelCommitments(channelA)
+        );
+        lightClientOnB.setTrustedStateRoot(CHAIN_A, TRUSTED_HEIGHT_A, initBuilt.stateRoot);
+        channelsB.channelOpenTry(
+            channelB,
+            bytes32("connection-b"),
+            CHAIN_A,
+            address(sourceApp),
+            address(receiver),
+            channelA,
+            IBCChannelTypes.Order.Unordered,
+            version,
+            address(channelsA),
+            _singleProof(CHAIN_A, TRUSTED_HEIGHT_A, address(channelsA), channelsA.channelCommitmentStorageSlot(channelA), initBuilt)
+        );
+
+        BuiltSingleStorageProof memory openBuilt = _buildSingleStorageProof(
+            address(channelsA),
+            channelsA.channelCommitmentStorageSlot(channelA),
+            bytes32("open")
+        );
+        IBCEVMTypes.StorageProof memory wrongSourceProof =
+            _singleProof(CHAIN_B, TRUSTED_HEIGHT_B, address(channelsA), channelsA.channelCommitmentStorageSlot(channelA), openBuilt);
+
+        vm.expectRevert(bytes("COUNTERPARTY_CHAIN_MISMATCH"));
+        channelsB.channelOpenConfirm(channelB, address(channelsA), wrongSourceProof);
+    }
 }

@@ -122,6 +122,8 @@ contract IBCConnectionKeeper is AccessControl, IBCEVMProofBoundary {
         require(counterpartyClientId != bytes32(0), "COUNTERPARTY_CLIENT_ID_ZERO");
         require(counterpartyConnectionId != bytes32(0), "COUNTERPARTY_CONNECTION_ID_ZERO");
         require(connections[connectionId].state == IBCConnectionTypes.State.Uninitialized, "CONNECTION_EXISTS");
+        require(clientId == _chainClientId(counterpartyInitProof.sourceChainId), "CLIENT_CHAIN_MISMATCH");
+        require(counterpartyClientId == _chainClientId(localChainId), "COUNTERPARTY_CLIENT_CHAIN_MISMATCH");
 
         bytes32 expectedCounterpartyCommitment = connectionCommitment(
             counterpartyInitProof.sourceChainId,
@@ -157,6 +159,8 @@ contract IBCConnectionKeeper is AccessControl, IBCEVMProofBoundary {
         IBCConnectionTypes.ConnectionEnd memory localConnection = connections[connectionId];
         require(localConnection.state == IBCConnectionTypes.State.Init, "CONNECTION_NOT_INIT");
         require(counterpartyConnectionId != bytes32(0), "COUNTERPARTY_CONNECTION_ID_ZERO");
+        require(localConnection.clientId == _chainClientId(counterpartyTryProof.sourceChainId), "CLIENT_CHAIN_MISMATCH");
+        require(localConnection.counterparty.clientId == _chainClientId(localChainId), "COUNTERPARTY_CLIENT_CHAIN_MISMATCH");
 
         bytes32 expectedCounterpartyCommitment = connectionCommitment(
             counterpartyTryProof.sourceChainId,
@@ -190,6 +194,8 @@ contract IBCConnectionKeeper is AccessControl, IBCEVMProofBoundary {
     ) external onlyRole(CONNECTION_ADMIN_ROLE) {
         IBCConnectionTypes.ConnectionEnd memory localConnection = connections[connectionId];
         require(localConnection.state == IBCConnectionTypes.State.TryOpen, "CONNECTION_NOT_TRYOPEN");
+        require(localConnection.clientId == _chainClientId(counterpartyOpenProof.sourceChainId), "CLIENT_CHAIN_MISMATCH");
+        require(localConnection.counterparty.clientId == _chainClientId(localChainId), "COUNTERPARTY_CLIENT_CHAIN_MISMATCH");
         bytes32 counterpartyConnectionId = localConnection.counterparty.connectionId;
 
         bytes32 expectedCounterpartyCommitment = connectionCommitment(
@@ -284,6 +290,10 @@ contract IBCConnectionKeeper is AccessControl, IBCEVMProofBoundary {
             localChainId, connectionId, state, clientId, counterpartyClientId, counterpartyConnectionId, delayPeriod, prefix
         );
         emit ConnectionHandshakeState(connectionId, state);
+    }
+
+    function _chainClientId(uint256 chainId) internal pure returns (bytes32) {
+        return bytes32(uint256(chainId));
     }
 
     function _requireCounterpartyConnectionProof(
