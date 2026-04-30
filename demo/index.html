@@ -43,10 +43,24 @@
               </p>
             </div>
             <aside class="primary-action-card" aria-live="polite">
+              <div class="advisor-main">
+                <div class="advisor-copy">
+                  <span class="eyebrow">Linky's recommendation</span>
+                  <h2 id="primaryActionTitle">Prepare Fast Demo Session</h2>
+                  <p id="primaryActionDescription">Confirm the current Besu/QBFT runtime before moving collateral.</p>
+                </div>
+                <figure class="linky linky--advisor" id="primaryLinky" data-variant="wave" aria-hidden="true">
+                  <img
+                    id="primaryLinkyImage"
+                    data-linky-img
+                    data-linky-variant="wave"
+                    src="./assets/linky/linky-wave.png"
+                    alt=""
+                  />
+                  <span class="linky-fallback">L</span>
+                </figure>
+              </div>
               <div>
-                <span class="eyebrow">Next step</span>
-                <h2 id="primaryActionTitle">Prepare Fast Demo Session</h2>
-                <p id="primaryActionDescription">Confirm the current Besu/QBFT runtime before moving collateral.</p>
                 <div class="running-guide live-action-card" id="primaryActionGuide" hidden>
                   <div class="live-action-head">
                     <span class="processing-chip" id="primaryGuideMode">Processing</span>
@@ -79,7 +93,7 @@
                 </div>
               </div>
               <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Prepare Fast Demo Session</button>
-              <small id="primaryActionHint">Later steps stay locked until your account is ready.</small>
+              <small id="primaryActionHint">Use the recommendation, or choose any enabled action below.</small>
             </aside>
           </div>
 
@@ -179,7 +193,7 @@
             <button class="journey-step" data-workflow-step="return" type="button">
               <span class="journey-step-number">6</span>
               <div>
-                <strong>Return / Settle</strong>
+                <strong>Close Position / Return Collateral</strong>
                 <small id="workflowStepReturn">Locked</small>
               </div>
             </button>
@@ -187,22 +201,65 @@
         </div>
       </section>
 
+      <section class="available-actions portal-section portal-borrower" aria-label="Available borrower actions">
+        <div class="available-actions-head">
+          <div>
+            <p class="eyebrow">Available actions</p>
+            <h2>Choose the next borrower move</h2>
+          </div>
+          <p>The recommendation above is advisory. These buttons stay visible and are enabled only when their on-chain prerequisites are satisfied.</p>
+        </div>
+        <div class="available-action-grid">
+          <article>
+            <span class="action-index">Collateral</span>
+            <div class="available-action-buttons">
+              <button class="button-secondary" data-action="openRoute" type="button">Open route</button>
+              <button class="button-primary-soft" data-action="lock" data-amount-input="bridgeAmount" type="button">Bridge more</button>
+              <button class="button-run" data-action="proveForwardMint" type="button">Receive voucher</button>
+              <button class="button-primary" data-action="depositCollateral" data-amount-input="depositAmount" type="button">Deposit more</button>
+              <button class="button-secondary" data-action="withdrawCollateral" data-amount-input="withdrawAmount" type="button">Withdraw safe collateral</button>
+            </div>
+          </article>
+          <article>
+            <span class="action-index">Credit</span>
+            <div class="available-action-buttons">
+              <button class="button-run" data-action="borrow" data-amount-input="borrowAmount" type="button">Borrow</button>
+              <button class="button-secondary" data-action="repay" data-amount-input="repayAmount" type="button">Repay</button>
+              <button class="button-primary-soft" data-action="topUpRepayCash" type="button">Get demo bCASH</button>
+            </div>
+          </article>
+          <article>
+            <span class="action-index">Closeout</span>
+            <div class="available-action-buttons">
+              <button class="button-primary-soft" data-action="burn" type="button">Burn voucher</button>
+              <button class="button-run" data-action="proveReverseUnlock" type="button">Verify reverse proof and unlock</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section class="workflow-layout portal-section portal-borrower" aria-label="Guided lending workflow">
         <section class="workflow-main" aria-label="Current workflow">
           <div class="workflow-panel-head">
             <div>
-              <p class="eyebrow">Guided Workflow</p>
+              <p class="eyebrow">Guided dashboard</p>
               <h2 id="workflowPanelTitle">Prepare demo account</h2>
             </div>
             <span class="soft-status" id="workflowPanelStatus">Current step</span>
           </div>
 
           <article class="product-card action-card workflow-panel" data-workflow-panel="connect">
-            <div class="empty-state-card">
-              <span class="action-index">Step 1</span>
-              <h3>Prepare Fast Demo Session</h3>
-              <p id="connectPanelCopy">Reuse the current deployed contracts and seeded accounts when valid. This does not reset oracle price, liquidation state, balances, or previous demo actions.</p>
-              <button class="button-primary" id="deploySeed" type="button">Prepare Fast Demo Session</button>
+            <div class="empty-state-card empty-state-card--linky">
+              <figure class="linky linky--empty" aria-hidden="true">
+                <img data-linky-img data-linky-variant="wave" src="./assets/linky/linky-wave.png" alt="" />
+                <span class="linky-fallback">L</span>
+              </figure>
+              <div>
+                <span class="action-index">Step 1</span>
+                <h3>Prepare Fast Demo Session</h3>
+                <p id="connectPanelCopy">Reuse the current deployed contracts and seeded accounts when valid. This does not reset oracle price, liquidation state, balances, or previous demo actions.</p>
+                <button class="button-primary" id="deploySeed" type="button">Prepare Fast Demo Session</button>
+              </div>
             </div>
           </article>
 
@@ -277,7 +334,36 @@
                 <strong>Available collateral</strong>
                 <span id="depositCollateralHint">Waiting for voucher collateral.</span>
               </div>
-              <button class="button-primary" data-action="depositCollateral" type="button">Use as Collateral</button>
+              <button class="button-primary" data-action="depositCollateral" data-amount-input="depositAmount" type="button">Deposit Voucher</button>
+            </div>
+            <div class="transaction-panel">
+              <div class="transaction-panel-head">
+                <div>
+                  <strong>Deposit amount</strong>
+                  <span>Free voucher balance is used unless you choose less.</span>
+                </div>
+                <button class="amount-fill" data-fill-target="depositAmount" data-fill-source="voucher" type="button">Max</button>
+              </div>
+              <label class="amount-field" for="depositAmount">
+                <span>Amount</span>
+                <input id="depositAmount" type="number" min="0" step="0.0001" inputmode="decimal" autocomplete="off" placeholder="0.0" />
+                <em>vA</em>
+              </label>
+              <div class="decision-preview">
+                <div>
+                  <span>Depositing</span>
+                  <strong id="depositDecisionAmount">-</strong>
+                </div>
+                <div>
+                  <span>Active collateral after</span>
+                  <strong id="depositProjectedCollateral">-</strong>
+                </div>
+                <div>
+                  <span>Available borrow after</span>
+                  <strong id="depositProjectedAvailable">-</strong>
+                </div>
+              </div>
+              <p class="validation-message" id="depositValidation" aria-live="polite"></p>
             </div>
           </article>
 
@@ -596,6 +682,10 @@
                   </div>
                 </div>
                 <div class="position-health">
+                  <figure class="linky linky--risk" aria-hidden="true">
+                    <img data-linky-img data-linky-variant="risk" src="./assets/linky/linky-risk.png" alt="" />
+                    <span class="linky-fallback">L</span>
+                  </figure>
                   <div class="position-health-head">
                     <div>
                       <span>Current focus</span>
@@ -609,7 +699,7 @@
                   <div class="meter-track meter-track--position"><i id="collateralHealthBar"></i></div>
                   <div class="position-risk-guidance">
                     <span>Recommended action</span>
-                    <strong id="positionRiskAction">Follow the next step above.</strong>
+                    <strong id="positionRiskAction">Follow Linky's recommendation or pick an enabled action.</strong>
                   </div>
                 </div>
               </div>
@@ -1066,11 +1156,17 @@
               <small>Safety controls handle conflicting evidence.</small>
             </article>
           </div>
-          <aside class="thesis-meaning" aria-live="polite">
-            <span class="eyebrow">Thesis meaning</span>
-            <p id="proofThesisMeaning">
-              Proof-checked collateral representation lets the lending pool accept cross-chain collateral without trusting the relayer as a balance oracle.
-            </p>
+          <aside class="thesis-meaning linky-callout linky-callout--technical" aria-live="polite">
+            <figure class="linky linky--callout" aria-hidden="true">
+              <img data-linky-img data-linky-variant="thinking" src="./assets/linky/linky-thinking.png" alt="" />
+              <span class="linky-fallback">L</span>
+            </figure>
+            <div>
+              <span class="eyebrow">Thesis meaning</span>
+              <p id="proofThesisMeaning">
+                Proof-checked collateral representation lets the lending pool accept cross-chain collateral without trusting the relayer as a balance oracle.
+              </p>
+            </div>
           </aside>
           <dl class="metric-grid metric-grid--three">
             <div>

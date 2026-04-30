@@ -103,14 +103,14 @@ function positionRiskGuidance(status, health) {
     return {
       focus: "Monitor loan",
       copy: "Your loan is active and currently inside the healthy range.",
-      action: "Monitor safety, repay when ready, or withdraw only if health remains strong.",
+      action: "Borrow more only within the displayed limit, repay when ready, or withdraw only if health remains strong.",
     };
   }
   if (activeCollateral > 0) {
     return {
-      focus: "Borrow ready",
-      copy: "Collateral is active and no debt is open yet.",
-      action: "Borrow within your limit when you are ready.",
+      focus: "Flexible position",
+      copy: "Collateral is active and no debt is open. You can keep borrowing power available or close out deliberately.",
+      action: "Borrow again, deposit more voucher, withdraw safe collateral, bridge more, or close the position.",
     };
   }
   if (voucher > 0) {

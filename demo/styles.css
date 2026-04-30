@@ -507,6 +507,146 @@ a.button-secondary {
   line-height: 1.5;
 }
 
+.advisor-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px;
+  gap: 14px;
+  align-items: start;
+}
+
+.advisor-copy {
+  min-width: 0;
+}
+
+.linky {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  margin: 0;
+  border: 1px solid rgba(20, 184, 166, 0.2);
+  border-radius: 999px;
+  background:
+    linear-gradient(145deg, rgba(236, 253, 245, 0.94), rgba(239, 246, 255, 0.94)),
+    #ffffff;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.linky img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.linky-fallback {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--blue);
+  font-size: 1rem;
+  font-weight: 950;
+}
+
+.linky.is-fallback .linky-fallback {
+  display: flex;
+}
+
+.linky--advisor {
+  width: 78px;
+  height: 78px;
+}
+
+.linky--empty {
+  width: 118px;
+  height: 118px;
+  border-radius: 28px;
+}
+
+.linky--risk {
+  display: none;
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 58px;
+  height: 58px;
+}
+
+body[data-workflow-risk="risk"] .linky--risk {
+  display: inline-grid;
+}
+
+.linky--callout {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+}
+
+.empty-state-card--linky {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.available-actions {
+  margin-top: 22px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-soft);
+}
+
+.available-actions-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 440px);
+  gap: 18px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.available-actions-head p:last-child {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.available-action-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr 1fr;
+  gap: 12px;
+}
+
+.available-action-grid article {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(29, 78, 216, 0.1);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 0.98)),
+    var(--surface);
+}
+
+.available-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.available-action-buttons button {
+  flex: 1 1 130px;
+  min-height: 40px;
+}
+
+.linky-callout {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
 .live-action-card {
   display: grid;
   gap: 12px;
@@ -914,8 +1054,8 @@ h3 {
 }
 
 .journey-step.is-locked {
-  cursor: not-allowed;
-  opacity: 0.52;
+  cursor: pointer;
+  opacity: 0.72;
 }
 
 .journey-step:disabled {
@@ -1539,7 +1679,7 @@ body[data-active-portal="scenarios"] .portal-section:not(.portal-scenarios) {
 }
 
 .workflow-panel {
-  min-height: 360px;
+  min-height: auto;
 }
 
 .workflow-panel.is-active {
@@ -2076,6 +2216,7 @@ body[data-active-portal="scenarios"] .portal-section:not(.portal-scenarios) {
 }
 
 .position-health {
+  position: relative;
   display: grid;
   gap: 16px;
   margin: 16px 0 18px;
@@ -2908,6 +3049,9 @@ body.product-dashboard.is-focus-mode .drawer-panel--technical {
 
   .product-kpis,
   .portal-tabs,
+  .advisor-main,
+  .available-actions-head,
+  .available-action-grid,
   .risk-admin-console,
   .metric-grid--four,
   .metric-grid--three,
@@ -2940,6 +3084,7 @@ body.product-dashboard.is-focus-mode .drawer-panel--technical {
   }
 
   .collateral-use-row,
+  .empty-state-card--linky,
   .amount-field {
     grid-template-columns: 1fr;
     grid-template-areas:

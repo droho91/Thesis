@@ -1,12 +1,10 @@
 import {
   BORROW_AMOUNT,
   BORROW_AMOUNT_CONFIGURED,
-  FORWARD_AMOUNT,
+  DEPOSIT_AMOUNT,
   REPAY_AMOUNT,
   WITHDRAW_AMOUNT,
-  amountFromTrace,
   ensureRiskSeeded,
-  readExistingTrace,
   repayCloseBuffer,
   repayCloseTarget,
   setPhase,
@@ -19,29 +17,28 @@ import { writeTracePatch } from "../trace-writer.mjs";
 export async function depositCollateralStep({ config, ctx }) {
   setPhase("step-deposit-collateral");
   await ensureRiskSeeded(config, ctx);
-  const trace = await readExistingTrace();
-  const desiredCollateral = amountFromTrace(trace.forward, FORWARD_AMOUNT);
   const balance = await ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress);
-  if (balance < desiredCollateral) throw new Error("Bank B user needs a proven voucher before depositing collateral.");
-  const currentCollateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
-  if (currentCollateral < desiredCollateral) {
-    const depositAmount = desiredCollateral - currentCollateral;
-    await txStep("step approve voucher collateral", () =>
-      ctx.B.voucherUser.approve(config.chains.B.lendingPool, depositAmount, txOptions())
-    );
-    await txStep("step deposit collateral", () =>
-      ctx.B.lendingPoolUser.depositCollateral(depositAmount, txOptions())
-    );
+  if (balance === 0n) throw new Error("Bank B user needs free proven voucher collateral before depositing.");
+  const depositAmount = DEPOSIT_AMOUNT ?? balance;
+  if (depositAmount <= 0n) throw new Error("Deposit amount must be greater than zero.");
+  if (depositAmount > balance) {
+    throw new Error(`DEPOSIT_LIMIT: free voucher balance is ${units(balance)} vA, requested ${units(depositAmount)} vA.`);
   }
+  await txStep("step approve voucher collateral", () =>
+    ctx.B.voucherUser.approve(config.chains.B.lendingPool, depositAmount, txOptions())
+  );
+  await txStep("step deposit collateral", () =>
+    ctx.B.lendingPoolUser.depositCollateral(depositAmount, txOptions())
+  );
   const collateral = await ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress);
   return writeTracePatch(
     config,
     ctx,
-    { risk: { collateralDeposited: units(collateral) } },
+    { risk: { collateralDeposited: units(collateral), collateralDepositAmount: units(depositAmount) } },
     {
       phase: "collateral-deposited",
       label: "Deposited proven voucher collateral",
-      summary: `Bank B lending pool now holds ${units(collateral)} vA as collateral.`,
+      summary: `Deposited ${units(depositAmount)} vA; Bank B lending pool now holds ${units(collateral)} vA as collateral.`,
     }
   );
 }

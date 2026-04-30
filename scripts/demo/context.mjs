@@ -47,6 +47,7 @@ const CHANNEL_STATE = Object.freeze({
 
 let FORWARD_AMOUNT = ethers.parseUnits(process.env.DEMO_FORWARD_AMOUNT || "100", 18);
 const DENIED_AMOUNT = ethers.parseUnits(process.env.DEMO_DENIED_AMOUNT || "40", 18);
+let DEPOSIT_AMOUNT = process.env.DEMO_DEPOSIT_AMOUNT ? ethers.parseUnits(process.env.DEMO_DEPOSIT_AMOUNT, 18) : null;
 let BORROW_AMOUNT_CONFIGURED = process.env.DEMO_BORROW_AMOUNT != null;
 let BORROW_AMOUNT = ethers.parseUnits(process.env.DEMO_BORROW_AMOUNT || "120", 18);
 let REPAY_AMOUNT = process.env.DEMO_REPAY_AMOUNT ? ethers.parseUnits(process.env.DEMO_REPAY_AMOUNT, 18) : null;
@@ -67,6 +68,7 @@ let CURRENT_PHASE = "bootstrap";
 function applyDemoAmountOverrides(overrides = {}) {
   const env = { ...process.env, ...overrides };
   FORWARD_AMOUNT = ethers.parseUnits(env.DEMO_FORWARD_AMOUNT || "100", 18);
+  DEPOSIT_AMOUNT = env.DEMO_DEPOSIT_AMOUNT ? ethers.parseUnits(env.DEMO_DEPOSIT_AMOUNT, 18) : null;
   BORROW_AMOUNT_CONFIGURED = env.DEMO_BORROW_AMOUNT != null;
   BORROW_AMOUNT = ethers.parseUnits(env.DEMO_BORROW_AMOUNT || "120", 18);
   REPAY_AMOUNT = env.DEMO_REPAY_AMOUNT ? ethers.parseUnits(env.DEMO_REPAY_AMOUNT, 18) : null;
@@ -1881,6 +1883,7 @@ export {
   CHANNEL_STATE,
   CONNECTION_STATE,
   DEMO_MAX_TIMEOUT_HEADER_GAP,
+  DEPOSIT_AMOUNT,
   DENIED_AMOUNT,
   FORWARD_AMOUNT,
   LIQUIDATION_REPAY,

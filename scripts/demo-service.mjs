@@ -429,6 +429,7 @@ function normalizeActionRequest(request) {
 function actionAmountEnv(request) {
   if (!request.amount) return {};
   if (request.action === "lock") return { DEMO_FORWARD_AMOUNT: request.amount };
+  if (request.action === "depositCollateral") return { DEMO_DEPOSIT_AMOUNT: request.amount };
   if (request.action === "borrow") return { DEMO_BORROW_AMOUNT: request.amount };
   if (request.action === "repay") return { DEMO_REPAY_AMOUNT: request.amount };
   if (request.action === "withdrawCollateral") return { DEMO_WITHDRAW_AMOUNT: request.amount };
