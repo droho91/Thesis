@@ -528,21 +528,21 @@ contract PacketHandshakeTest is PacketHandlerFixture {
             channelsA.channelCommitmentStorageSlot(channelA),
             channelsA.channelCommitments(channelA)
         );
-        IBCEVMTypes.StorageProof memory wrongSourceProof =
-            _singleProof(CHAIN_B, TRUSTED_HEIGHT_B, address(channelsA), channelsA.channelCommitmentStorageSlot(channelA), initBuilt);
+        IBCEVMTypes.StorageProof memory proofFromChainA =
+            _singleProof(CHAIN_A, TRUSTED_HEIGHT_A, address(channelsA), channelsA.channelCommitmentStorageSlot(channelA), initBuilt);
 
         vm.expectRevert(bytes("COUNTERPARTY_CHAIN_MISMATCH"));
         channelsB.channelOpenTry(
             bytes32("channel-b"),
             bytes32("connection-b"),
-            CHAIN_A,
+            99_999,
             address(sourceApp),
             address(receiver),
             channelA,
             IBCChannelTypes.Order.Unordered,
             version,
             address(channelsA),
-            wrongSourceProof
+            proofFromChainA
         );
     }
 

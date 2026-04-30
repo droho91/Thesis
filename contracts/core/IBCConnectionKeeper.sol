@@ -293,6 +293,7 @@ contract IBCConnectionKeeper is AccessControl, IBCEVMProofBoundary {
     }
 
     function _chainClientId(uint256 chainId) internal pure returns (bytes32) {
+        require(chainId != 0, "CHAIN_ID_ZERO");
         return bytes32(uint256(chainId));
     }
 
