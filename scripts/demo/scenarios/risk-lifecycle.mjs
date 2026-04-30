@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import {
   DENIED_AMOUNT,
+  DEMO_PACKET_TIMEOUT_HEIGHT,
   FORWARD_AMOUNT,
   BORROW_AMOUNT,
   LIQUIDATION_REPAY,
@@ -71,7 +72,14 @@ export async function runRiskScenario() {
   setPhase("send-forward-packet");
   const approvedSequence = asBigInt(await ctx.A.packetStore.nextSequence());
   const approvedSendReceipt = await txStep("send forward packet", () =>
-    ctx.A.transferAppUser.sendTransfer(destinationChainId, ctx.destinationUserAddress, FORWARD_AMOUNT, 0, 0, txOptions())
+    ctx.A.transferAppUser.sendTransfer(
+      destinationChainId,
+      ctx.destinationUserAddress,
+      FORWARD_AMOUNT,
+      DEMO_PACKET_TIMEOUT_HEIGHT,
+      0,
+      txOptions()
+    )
   );
   const approvedCommitHeight = BigInt(approvedSendReceipt.blockNumber);
   const approvedPacket = transferPacket({
@@ -82,6 +90,7 @@ export async function runRiskScenario() {
     sender: ctx.sourceUserAddress,
     recipient: ctx.destinationUserAddress,
     amount: FORWARD_AMOUNT,
+    timeoutHeight: DEMO_PACKET_TIMEOUT_HEIGHT,
   });
   const approvedPacketId = await ctx.A.packetStore.packetIdAt(approvedSequence);
 
@@ -288,7 +297,7 @@ export async function runRiskScenario() {
       sourceChainId,
       ctx.sourceLiquidatorAddress,
       liquidatorVoucherBalance,
-      0,
+      DEMO_PACKET_TIMEOUT_HEIGHT,
       0,
       txOptions()
     )
@@ -302,6 +311,7 @@ export async function runRiskScenario() {
     sender: ctx.liquidatorAddress,
     recipient: ctx.sourceLiquidatorAddress,
     amount: liquidatorVoucherBalance,
+    timeoutHeight: DEMO_PACKET_TIMEOUT_HEIGHT,
   });
   const settlementPacketId = await ctx.B.packetStore.packetIdAt(settlementSequence);
   let settlementHeader = await trustRemoteHeaderAt({

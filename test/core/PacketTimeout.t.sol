@@ -11,7 +11,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
     function testTimeoutPacketFromStorageProofMarksTimedOutAndCallsSourceApp() public {
         IBCPacketLib.Packet memory packet = _packet();
         bytes32 packetId = IBCPacketLib.packetId(packet);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built = _buildSingleStorageProof(
             remotePacketHandler,
@@ -35,10 +35,32 @@ contract PacketTimeoutTest is PacketHandlerFixture {
         assertEq(sourceApp.lastTimedOutPacketId(), packetId);
     }
 
+    function testTimeoutPacketFromStorageProofRejectsUntrustedRemoteHandler() public {
+        IBCPacketLib.Packet memory packet = _packet();
+        bytes32 packetId = IBCPacketLib.packetId(packet);
+        address fakeRemotePacketHandler = address(0xB0B);
+
+        BuiltSingleStorageProof memory built = _buildSingleStorageProof(
+            fakeRemotePacketHandler,
+            IBCPacketHandlerSlots.acknowledgementHash(packetId),
+            keccak256("unrelated-existing-slot")
+        );
+        IBCEVMTypes.StorageProof memory receiptAbsenceProof = _singleProof(
+            CHAIN_B,
+            TRUSTED_HEIGHT_B,
+            fakeRemotePacketHandler,
+            IBCPacketHandlerSlots.packetReceipt(packetId),
+            built
+        );
+
+        vm.expectRevert(bytes("UNTRUSTED_REMOTE_PACKET_HANDLER"));
+        handlerA.timeoutPacketFromStorageProof(packet, fakeRemotePacketHandler, receiptAbsenceProof);
+    }
+
     function testTimeoutPacketFromStorageProofRejectsExistingReceipt() public {
         IBCPacketLib.Packet memory packet = _packet();
         bytes32 packetId = IBCPacketLib.packetId(packet);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built = _buildSingleStorageProof(
             remotePacketHandler,
@@ -62,7 +84,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
     function testTimeoutPacketFromStorageProofRejectsFrozenClient() public {
         IBCPacketLib.Packet memory packet = _packet();
         bytes32 packetId = IBCPacketLib.packetId(packet);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built = _buildSingleStorageProof(
             remotePacketHandler,
@@ -87,7 +109,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
     function testTimeoutPacketFromStorageProofRejectsWrongTrustedHeight() public {
         IBCPacketLib.Packet memory packet = _packet();
         bytes32 packetId = IBCPacketLib.packetId(packet);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built = _buildSingleStorageProof(
             remotePacketHandler,
@@ -115,7 +137,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
         bytes32 packetId = IBCPacketLib.packetId(packet);
         vm.prank(address(sourceApp));
         localPacketStore.commitPacket(packet);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built = _buildSingleStorageProof(
             remotePacketHandler,
@@ -144,7 +166,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
         bytes32 packetId = IBCPacketLib.packetId(packet);
         vm.prank(address(sourceApp));
         localPacketStore.commitPacket(packet);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built = _buildSingleStorageProof(
             remotePacketHandler,
@@ -177,7 +199,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
         bytes32 packetId = IBCPacketLib.packetId(packet);
         vm.prank(address(sourceApp));
         localPacketStore.commitPacket(packet);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built = _buildSingleStorageProof(
             remotePacketHandler,
@@ -202,7 +224,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
     function testTimeoutPacketFromStorageProofBlocksReplayAndLateAck() public {
         IBCPacketLib.Packet memory packet = _packet();
         bytes32 packetId = IBCPacketLib.packetId(packet);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory absenceBuilt = _buildSingleStorageProof(
             remotePacketHandler,
@@ -246,7 +268,7 @@ contract PacketTimeoutTest is PacketHandlerFixture {
         IBCPacketLib.Packet memory packet = _packet();
         packet.sequence = 2;
         bytes32 packetId = IBCPacketLib.packetId(packet);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built = _buildSingleStorageProof(
             remotePacketHandler,

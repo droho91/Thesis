@@ -24,7 +24,7 @@ contract PacketAcknowledgementTest is PacketHandlerFixture {
         bytes32 packetId = IBCPacketLib.packetId(packet);
         bytes memory acknowledgement = abi.encodePacked("ok:", packetId);
         bytes32 acknowledgementHash = keccak256(acknowledgement);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built =
             _buildSingleStorageProof(remotePacketHandler, IBCPacketHandlerSlots.acknowledgementHash(packetId), acknowledgementHash);
@@ -47,12 +47,38 @@ contract PacketAcknowledgementTest is PacketHandlerFixture {
         assertEq(sourceApp.lastAcknowledgementHash(), acknowledgementHash);
     }
 
+    function testAcknowledgePacketFromStorageProofRejectsUntrustedRemoteHandler() public {
+        IBCPacketLib.Packet memory packet = _packet();
+        bytes32 packetId = IBCPacketLib.packetId(packet);
+        bytes memory acknowledgement = abi.encodePacked("ok:", packetId);
+        bytes32 acknowledgementHash = keccak256(acknowledgement);
+        address fakeRemotePacketHandler = address(0xB0B);
+
+        BuiltSingleStorageProof memory built = _buildSingleStorageProof(
+            fakeRemotePacketHandler,
+            IBCPacketHandlerSlots.acknowledgementHash(packetId),
+            acknowledgementHash
+        );
+        IBCEVMTypes.StorageProof memory acknowledgementProof = _singleProof(
+            CHAIN_B,
+            TRUSTED_HEIGHT_B,
+            fakeRemotePacketHandler,
+            IBCPacketHandlerSlots.acknowledgementHash(packetId),
+            built
+        );
+
+        vm.expectRevert(bytes("UNTRUSTED_REMOTE_PACKET_HANDLER"));
+        handlerA.acknowledgePacketFromStorageProof(
+            packet, acknowledgement, fakeRemotePacketHandler, acknowledgementProof
+        );
+    }
+
     function testAcknowledgePacketFromStorageProofRejectsInvalidStorageProof() public {
         IBCPacketLib.Packet memory packet = _packet();
         bytes32 packetId = IBCPacketLib.packetId(packet);
         bytes memory acknowledgement = abi.encodePacked("ok:", packetId);
         bytes32 acknowledgementHash = keccak256(acknowledgement);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built = _buildSingleStorageProof(
             remotePacketHandler,
@@ -79,7 +105,7 @@ contract PacketAcknowledgementTest is PacketHandlerFixture {
         bytes32 packetId = IBCPacketLib.packetId(packet);
         bytes memory acknowledgement = abi.encodePacked("ok:", packetId);
         bytes32 acknowledgementHash = keccak256(acknowledgement);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built =
             _buildSingleStorageProof(remotePacketHandler, IBCPacketHandlerSlots.acknowledgementHash(packetId), acknowledgementHash);
@@ -104,7 +130,7 @@ contract PacketAcknowledgementTest is PacketHandlerFixture {
         bytes32 packetId = IBCPacketLib.packetId(packet);
         bytes memory acknowledgement = abi.encodePacked("ok:", packetId);
         bytes32 acknowledgementHash = keccak256(acknowledgement);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
         channelKeeperA.closeChannel(bytes32("channel-a"));
 
         BuiltSingleStorageProof memory built =
@@ -129,7 +155,7 @@ contract PacketAcknowledgementTest is PacketHandlerFixture {
         bytes32 packetId = IBCPacketLib.packetId(packet);
         bytes memory acknowledgement = abi.encodePacked("ok:", packetId);
         bytes32 acknowledgementHash = keccak256(acknowledgement);
-        address remotePacketHandler = address(0xB0B);
+        address remotePacketHandler = address(handlerB);
 
         BuiltSingleStorageProof memory built =
             _buildSingleStorageProof(remotePacketHandler, IBCPacketHandlerSlots.acknowledgementHash(packetId), acknowledgementHash);
@@ -145,5 +171,44 @@ contract PacketAcknowledgementTest is PacketHandlerFixture {
 
         vm.expectRevert(bytes("PACKET_NOT_COMMITTED"));
         handlerA.acknowledgePacketFromStorageProof(packet, acknowledgement, remotePacketHandler, acknowledgementProof);
+    }
+
+    function testAcknowledgedPacketCannotBeTimedOut() public {
+        IBCPacketLib.Packet memory packet = _packet();
+        bytes32 packetId = IBCPacketLib.packetId(packet);
+        bytes memory acknowledgement = abi.encodePacked("ok:", packetId);
+        bytes32 acknowledgementHash = keccak256(acknowledgement);
+        address remotePacketHandler = address(handlerB);
+
+        BuiltSingleStorageProof memory ackBuilt = _buildSingleStorageProof(
+            remotePacketHandler,
+            IBCPacketHandlerSlots.acknowledgementHash(packetId),
+            acknowledgementHash
+        );
+        clientA.setTrustedStateRoot(CHAIN_B, TRUSTED_HEIGHT_B, ackBuilt.stateRoot);
+        IBCEVMTypes.StorageProof memory acknowledgementProof = _singleProof(
+            CHAIN_B,
+            TRUSTED_HEIGHT_B,
+            remotePacketHandler,
+            IBCPacketHandlerSlots.acknowledgementHash(packetId),
+            ackBuilt
+        );
+        handlerA.acknowledgePacketFromStorageProof(packet, acknowledgement, remotePacketHandler, acknowledgementProof);
+
+        BuiltSingleStorageProof memory absenceBuilt = _buildSingleStorageProof(
+            remotePacketHandler,
+            IBCPacketHandlerSlots.acknowledgementHash(packetId),
+            keccak256("unrelated-existing-slot")
+        );
+        IBCEVMTypes.StorageProof memory receiptAbsenceProof = _singleProof(
+            CHAIN_B,
+            TRUSTED_HEIGHT_B,
+            remotePacketHandler,
+            IBCPacketHandlerSlots.packetReceipt(packetId),
+            absenceBuilt
+        );
+
+        vm.expectRevert(bytes("PACKET_ALREADY_ACKNOWLEDGED"));
+        handlerA.timeoutPacketFromStorageProof(packet, remotePacketHandler, receiptAbsenceProof);
     }
 }

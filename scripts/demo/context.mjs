@@ -60,6 +60,7 @@ const DEMO_TX_WAIT_TIMEOUT_MS = Number(process.env.DEMO_TX_WAIT_TIMEOUT_MS || pr
 const DEMO_REPAY_BUFFER_BPS = BigInt(process.env.DEMO_REPAY_BUFFER_BPS || "1");
 const DEMO_REPAY_MIN_BUFFER = ethers.parseUnits(process.env.DEMO_REPAY_MIN_BUFFER || "0.01", 18);
 const DEMO_MAX_TIMEOUT_HEADER_GAP = BigInt(process.env.DEMO_MAX_TIMEOUT_HEADER_GAP || "600");
+const DEMO_PACKET_TIMEOUT_HEIGHT = BigInt(process.env.DEMO_PACKET_TIMEOUT_HEIGHT || "1000000");
 const DEMO_READ_RETRY_ATTEMPTS = Number(process.env.DEMO_READ_RETRY_ATTEMPTS || "4");
 const DEMO_READ_RETRY_DELAY_MS = Number(process.env.DEMO_READ_RETRY_DELAY_MS || "250");
 
@@ -1513,7 +1514,16 @@ async function requireOpenHandshake(config, ctx) {
   );
 }
 
-function transferPacket({ sequence, sourceChainId, destinationChainId, config, sender, recipient, amount, timeoutHeight = 0n }) {
+function transferPacket({
+  sequence,
+  sourceChainId,
+  destinationChainId,
+  config,
+  sender,
+  recipient,
+  amount,
+  timeoutHeight = DEMO_PACKET_TIMEOUT_HEIGHT,
+}) {
   return {
     sequence,
     source: {
@@ -1538,7 +1548,16 @@ function transferPacket({ sequence, sourceChainId, destinationChainId, config, s
   };
 }
 
-function reversePacket({ sequence, sourceChainId, destinationChainId, config, sender, recipient, amount, timeoutHeight = 0n }) {
+function reversePacket({
+  sequence,
+  sourceChainId,
+  destinationChainId,
+  config,
+  sender,
+  recipient,
+  amount,
+  timeoutHeight = DEMO_PACKET_TIMEOUT_HEIGHT,
+}) {
   return {
     sequence,
     source: {
@@ -1883,6 +1902,7 @@ export {
   CHANNEL_STATE,
   CONNECTION_STATE,
   DEMO_MAX_TIMEOUT_HEADER_GAP,
+  DEMO_PACKET_TIMEOUT_HEIGHT,
   DEPOSIT_AMOUNT,
   DENIED_AMOUNT,
   FORWARD_AMOUNT,

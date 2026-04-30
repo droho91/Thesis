@@ -184,6 +184,8 @@ async function main() {
   const packetStore = await deploy(packetStoreArtifact, sourceSigner, [SOURCE_CHAIN_ID]);
   const packetStoreAddress = await packetStore.getAddress();
   await (await packetStore.setPacketWriter(sourceAppAddress, true)).wait();
+  await (await sourcePacketHandler.setTrustedRemotePacketHandler(DESTINATION_CHAIN_ID, destinationPacketHandlerAddress)).wait();
+  await (await destinationPacketHandler.setTrustedRemotePacketHandler(SOURCE_CHAIN_ID, sourcePacketHandlerAddress)).wait();
   await (await sourcePacketHandler.setTrustedPacketStore(SOURCE_CHAIN_ID, packetStoreAddress)).wait();
   await (await destinationPacketHandler.setTrustedPacketStore(SOURCE_CHAIN_ID, packetStoreAddress)).wait();
 

@@ -1,5 +1,6 @@
 import {
   DEMO_MAX_TIMEOUT_HEADER_GAP,
+  DEMO_PACKET_TIMEOUT_HEIGHT,
   FORWARD_AMOUNT,
   amountFromTrace,
   asBigInt,
@@ -113,7 +114,7 @@ export async function settleSeizedVoucherStep({ config, ctx, sourceChainId, dest
       sourceChainId,
       ctx.sourceLiquidatorAddress,
       liquidatorVoucherBalance,
-      0,
+      DEMO_PACKET_TIMEOUT_HEIGHT,
       0,
       txOptions()
     )
@@ -127,6 +128,7 @@ export async function settleSeizedVoucherStep({ config, ctx, sourceChainId, dest
     sender: ctx.liquidatorAddress,
     recipient: ctx.sourceLiquidatorAddress,
     amount: liquidatorVoucherBalance,
+    timeoutHeight: DEMO_PACKET_TIMEOUT_HEIGHT,
   });
   const packetIdValue = await ctx.B.packetStore.packetIdAt(sequence);
 
@@ -184,7 +186,7 @@ export async function burnStep({ config, ctx, sourceChainId, destinationChainId 
       sourceChainId,
       ctx.sourceUserAddress,
       burnAmount,
-      0,
+      DEMO_PACKET_TIMEOUT_HEIGHT,
       0,
       txOptions()
     )
@@ -198,6 +200,7 @@ export async function burnStep({ config, ctx, sourceChainId, destinationChainId 
     sender: ctx.destinationUserAddress,
     recipient: ctx.sourceUserAddress,
     amount: burnAmount,
+    timeoutHeight: DEMO_PACKET_TIMEOUT_HEIGHT,
   });
   const packetIdValue = await ctx.B.packetStore.packetIdAt(sequence);
   return writeTracePatch(

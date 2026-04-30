@@ -1,6 +1,6 @@
 services:
   bank_a_validator_1:
-    image: hyperledger/besu:latest
+    image: hyperledger/besu:24.10.0
     container_name: thesis-bank-a-validator-1
     command: ["--config-file=/network/nodes/bank-a-validator-1/config.toml"]
     volumes:
@@ -11,7 +11,7 @@ services:
       thesis_besu:
         ipv4_address: 172.30.10.11
   bank_a_validator_2:
-    image: hyperledger/besu:latest
+    image: hyperledger/besu:24.10.0
     container_name: thesis-bank-a-validator-2
     command: ["--config-file=/network/nodes/bank-a-validator-2/config.toml"]
     volumes:
@@ -20,7 +20,7 @@ services:
       thesis_besu:
         ipv4_address: 172.30.10.12
   bank_a_validator_3:
-    image: hyperledger/besu:latest
+    image: hyperledger/besu:24.10.0
     container_name: thesis-bank-a-validator-3
     command: ["--config-file=/network/nodes/bank-a-validator-3/config.toml"]
     volumes:
@@ -29,7 +29,7 @@ services:
       thesis_besu:
         ipv4_address: 172.30.10.13
   bank_a_validator_4:
-    image: hyperledger/besu:latest
+    image: hyperledger/besu:24.10.0
     container_name: thesis-bank-a-validator-4
     command: ["--config-file=/network/nodes/bank-a-validator-4/config.toml"]
     volumes:
@@ -38,7 +38,7 @@ services:
       thesis_besu:
         ipv4_address: 172.30.10.14
   bank_b_validator_1:
-    image: hyperledger/besu:latest
+    image: hyperledger/besu:24.10.0
     container_name: thesis-bank-b-validator-1
     command: ["--config-file=/network/nodes/bank-b-validator-1/config.toml"]
     volumes:
@@ -49,7 +49,7 @@ services:
       thesis_besu:
         ipv4_address: 172.30.20.11
   bank_b_validator_2:
-    image: hyperledger/besu:latest
+    image: hyperledger/besu:24.10.0
     container_name: thesis-bank-b-validator-2
     command: ["--config-file=/network/nodes/bank-b-validator-2/config.toml"]
     volumes:
@@ -58,7 +58,7 @@ services:
       thesis_besu:
         ipv4_address: 172.30.20.12
   bank_b_validator_3:
-    image: hyperledger/besu:latest
+    image: hyperledger/besu:24.10.0
     container_name: thesis-bank-b-validator-3
     command: ["--config-file=/network/nodes/bank-b-validator-3/config.toml"]
     volumes:
@@ -67,7 +67,7 @@ services:
       thesis_besu:
         ipv4_address: 172.30.20.13
   bank_b_validator_4:
-    image: hyperledger/besu:latest
+    image: hyperledger/besu:24.10.0
     container_name: thesis-bank-b-validator-4
     command: ["--config-file=/network/nodes/bank-b-validator-4/config.toml"]
     volumes:

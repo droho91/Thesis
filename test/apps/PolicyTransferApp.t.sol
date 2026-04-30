@@ -94,6 +94,64 @@ contract PolicyTransferAppTest is Test {
         assertEq(canonicalAsset.balanceOf(alice), 75 ether);
     }
 
+    function testSendTransferRejectsUnsetTimeout() public {
+        canonicalAsset.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        canonicalAsset.approve(address(escrowA), 25 ether);
+        vm.expectRevert(bytes("TIMEOUT_UNSET"));
+        appA.sendTransfer(CHAIN_B, bob, 25 ether, 0, 0);
+        vm.stopPrank();
+
+        assertEq(packetStoreA.packetSequence(), 0);
+        assertEq(escrowA.totalEscrowed(), 0);
+        assertEq(canonicalAsset.balanceOf(alice), 100 ether);
+    }
+
+    function testSendTransferAcceptsOnlyTimeoutHeight() public {
+        canonicalAsset.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        canonicalAsset.approve(address(escrowA), 25 ether);
+        bytes32 packetId = appA.sendTransfer(CHAIN_B, bob, 25 ether, 50, 0);
+        vm.stopPrank();
+
+        assertTrue(packetStoreA.committedPacket(packetId));
+        assertEq(escrowA.totalEscrowed(), 25 ether);
+    }
+
+    function testSendTransferAcceptsOnlyTimeoutTimestamp() public {
+        canonicalAsset.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        canonicalAsset.approve(address(escrowA), 25 ether);
+        bytes32 packetId = appA.sendTransfer(CHAIN_B, bob, 25 ether, 0, 1_800_000_000);
+        vm.stopPrank();
+
+        assertTrue(packetStoreA.committedPacket(packetId));
+        assertEq(escrowA.totalEscrowed(), 25 ether);
+    }
+
+    function testSendTransferAcceptsHeightAndTimestamp() public {
+        canonicalAsset.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        canonicalAsset.approve(address(escrowA), 25 ether);
+        bytes32 packetId = appA.sendTransfer(CHAIN_B, bob, 25 ether, 50, 1_800_000_000);
+        vm.stopPrank();
+
+        assertTrue(packetStoreA.committedPacket(packetId));
+        assertEq(escrowA.totalEscrowed(), 25 ether);
+    }
+
+    function testBurnAndReleaseRejectsUnsetTimeout() public {
+        _mintVoucherOnB(alice, 60 ether, bytes32(uint256(10)));
+
+        vm.expectRevert(bytes("TIMEOUT_UNSET"));
+        vm.prank(alice);
+        appB.burnAndRelease(CHAIN_A, alice, 20 ether, 0, 0);
+
+        assertEq(voucherB.balanceOf(alice), 60 ether);
+        assertEq(policyB.voucherExposureOutstanding(address(canonicalAsset)), 60 ether);
+        assertEq(packetStoreB.packetSequence(), 0);
+    }
+
     function testUnauthorizedPacketWriterCannotCommitOrConsumeSequence() public {
         IBCPacketLib.Packet memory packet = _forwardPacket(1, alice, bob, 1 ether);
 

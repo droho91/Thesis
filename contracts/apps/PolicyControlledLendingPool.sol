@@ -227,7 +227,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
 
         totalLiquidityShares += shares;
         liquidityShares[msg.sender] += shares;
-        debtToken.safeTransferFrom(msg.sender, address(this), assets);
+        _transferFromExact(debtToken, msg.sender, assets);
         emit LiquidityDeposited(msg.sender, assets, shares);
     }
 
@@ -259,7 +259,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
 
         collateralBalance[msg.sender] += amount;
         totalCollateral += amount;
-        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
+        _transferFromExact(collateralToken, msg.sender, amount);
         policyEngine.noteCollateralAccepted(msg.sender, address(collateralToken), amount);
         emit CollateralDeposited(msg.sender, amount);
     }
@@ -329,7 +329,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
             totalCollateral -= preview.seizedCollateral;
         }
 
-        debtToken.safeTransferFrom(msg.sender, address(this), payment);
+        _transferFromExact(debtToken, msg.sender, payment);
         if (preview.seizedCollateral > 0) {
             collateralToken.safeTransfer(msg.sender, preview.seizedCollateral);
             policyEngine.noteCollateralReleased(borrower, address(collateralToken), preview.seizedCollateral);
@@ -504,7 +504,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         require(amount > 0, "AMOUNT_ZERO");
         _accrueInterest();
         (payment,) = _reduceDebtForPayment(borrower, amount);
-        debtToken.safeTransferFrom(payer, address(this), payment);
+        _transferFromExact(debtToken, payer, payment);
     }
 
     function _reduceDebtForPayment(address borrower, uint256 amount) internal returns (uint256 payment, uint256 sharesBurned) {
@@ -532,6 +532,13 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         }
 
         emit Repaid(msg.sender, borrower, payment, sharesBurned);
+    }
+
+    function _transferFromExact(IERC20 token, address from, uint256 amount) internal {
+        uint256 balanceBefore = token.balanceOf(address(this));
+        token.safeTransferFrom(from, address(this), amount);
+        uint256 received = token.balanceOf(address(this)) - balanceBefore;
+        require(received == amount, "FEE_ON_TRANSFER_UNSUPPORTED");
     }
 
     function _recognizeRemainingBadDebt(address borrower) internal returns (uint256 debtWrittenOff) {

@@ -198,6 +198,12 @@ async function configureStack({ chainA, chainB, bankA, bankB, chainIdA, chainIdB
   const appBAddress = await addressOf(bankB.transferApp);
   const packetStoreAAddress = await addressOf(chainA.packetStore);
   const packetStoreBAddress = await addressOf(chainB.packetStore);
+  const connectionKeeperAAddress = await addressOf(chainA.connectionKeeper);
+  const connectionKeeperBAddress = await addressOf(chainB.connectionKeeper);
+  const channelKeeperAAddress = await addressOf(chainA.channelKeeper);
+  const channelKeeperBAddress = await addressOf(chainB.channelKeeper);
+  const packetHandlerAAddress = await addressOf(chainA.packetHandler);
+  const packetHandlerBAddress = await addressOf(chainB.packetHandler);
 
   await txStep("grant Bank A escrow app", () => bankA.escrowVault.grantApp(appAAddress, txOptions()));
   await txStep("grant Bank B voucher app", () => bankB.voucherToken.grantApp(appBAddress, txOptions()));
@@ -240,6 +246,24 @@ async function configureStack({ chainA, chainB, bankA, bankB, chainIdA, chainIdB
 
   await txStep("bind Bank A packet app", () => chainA.packetHandler.setPortApplication(appAAddress, appAAddress, txOptions()));
   await txStep("bind Bank B packet app", () => chainB.packetHandler.setPortApplication(appBAddress, appBAddress, txOptions()));
+  await txStep("trust Bank B packet handler on Bank A", () =>
+    chainA.packetHandler.setTrustedRemotePacketHandler(chainIdB, packetHandlerBAddress, txOptions())
+  );
+  await txStep("trust Bank A packet handler on Bank B", () =>
+    chainB.packetHandler.setTrustedRemotePacketHandler(chainIdA, packetHandlerAAddress, txOptions())
+  );
+  await txStep("trust Bank B connection keeper on Bank A", () =>
+    chainA.connectionKeeper.setTrustedRemoteConnectionKeeper(chainIdB, connectionKeeperBAddress, txOptions())
+  );
+  await txStep("trust Bank A connection keeper on Bank B", () =>
+    chainB.connectionKeeper.setTrustedRemoteConnectionKeeper(chainIdA, connectionKeeperAAddress, txOptions())
+  );
+  await txStep("trust Bank B channel keeper on Bank A", () =>
+    chainA.channelKeeper.setTrustedRemoteChannelKeeper(chainIdB, channelKeeperBAddress, txOptions())
+  );
+  await txStep("trust Bank A channel keeper on Bank B", () =>
+    chainB.channelKeeper.setTrustedRemoteChannelKeeper(chainIdA, channelKeeperAAddress, txOptions())
+  );
   await txStep("trust Bank A packet store on Bank A", () =>
     chainA.packetHandler.setTrustedPacketStore(chainIdA, packetStoreAAddress, txOptions())
   );

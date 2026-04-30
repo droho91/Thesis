@@ -201,11 +201,17 @@ abstract contract PacketHandlerFixture is Test {
         clientA = new MockBesuLightClient();
         connectionKeeperB = new IBCConnectionKeeper(CHAIN_B, address(clientB), address(this));
         connectionKeeperA = new IBCConnectionKeeper(CHAIN_A, address(clientA), address(this));
+        connectionKeeperB.setUnsafeLocalDemoMode(true);
+        connectionKeeperA.setUnsafeLocalDemoMode(true);
         _openConnections();
         channelKeeperB = new IBCChannelKeeper(CHAIN_B, address(connectionKeeperB), address(this));
         channelKeeperA = new IBCChannelKeeper(CHAIN_A, address(connectionKeeperA), address(this));
+        channelKeeperB.setUnsafeLocalDemoMode(true);
+        channelKeeperA.setUnsafeLocalDemoMode(true);
         handlerB = new IBCPacketHandler(CHAIN_B, address(clientB), address(channelKeeperB), address(this));
         handlerA = new IBCPacketHandler(CHAIN_A, address(clientA), address(channelKeeperA), address(this));
+        handlerA.setTrustedRemotePacketHandler(CHAIN_B, address(handlerB));
+        handlerB.setTrustedRemotePacketHandler(CHAIN_A, address(handlerA));
         receiver = new RecordingPacketReceiver(address(handlerB));
         sourceApp = new RecordingAcknowledgementApp(address(handlerA));
         handlerA.setPortApplication(address(sourceApp), address(sourceApp));

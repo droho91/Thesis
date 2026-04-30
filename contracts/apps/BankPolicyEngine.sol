@@ -177,7 +177,8 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
         (bool allowed, bytes32 code) = _canUnlockCanonical(sourceChainId, beneficiary, canonicalAsset, amount);
         require(allowed, _policyCodeString(code));
         uint256 currentExposure = voucherExposureOutstanding[canonicalAsset];
-        voucherExposureOutstanding[canonicalAsset] = currentExposure > amount ? currentExposure - amount : 0;
+        require(currentExposure >= amount, "VOUCHER_EXPOSURE_UNDERFLOW");
+        voucherExposureOutstanding[canonicalAsset] = currentExposure - amount;
         emit CanonicalUnlockNoted(sourceChainId, beneficiary, canonicalAsset, amount);
     }
 

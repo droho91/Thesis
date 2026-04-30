@@ -2,12 +2,33 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {BankToken} from "../../contracts/apps/BankToken.sol";
 import {BankPolicyEngine} from "../../contracts/apps/BankPolicyEngine.sol";
 import {ManualAssetOracle} from "../../contracts/apps/ManualAssetOracle.sol";
 import {PolicyControlledVoucherToken} from "../../contracts/apps/PolicyControlledVoucherToken.sol";
 import {PolicyControlledEscrowVault} from "../../contracts/apps/PolicyControlledEscrowVault.sol";
 import {PolicyControlledLendingPool} from "../../contracts/apps/PolicyControlledLendingPool.sol";
+
+contract FeeOnTransferToken is ERC20 {
+    uint256 internal constant FEE_BPS = 1_000;
+
+    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (from != address(0) && to != address(0)) {
+            uint256 fee = value * FEE_BPS / 10_000;
+            super._update(from, to, value - fee);
+            if (fee > 0) super._update(from, address(0), fee);
+            return;
+        }
+        super._update(from, to, value);
+    }
+}
 
 contract BankPolicyTest is Test {
     uint256 internal constant SOURCE_CHAIN_A = 41001;
@@ -16,6 +37,7 @@ contract BankPolicyTest is Test {
 
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
+    address internal supplier = address(0x5151);
     bytes32 internal constant PACKET_ONE = bytes32(uint256(1));
     bytes32 internal constant PACKET_TWO = bytes32(uint256(2));
 
@@ -89,6 +111,72 @@ contract BankPolicyTest is Test {
         assertEq(canonicalAsset.balanceOf(alice), 70 ether);
         assertEq(escrow.totalEscrowed(), 30 ether);
         assertEq(policy.voucherExposureOutstanding(address(canonicalAsset)), 30 ether);
+    }
+
+    function testCanonicalUnlockUnderflowReverts() public {
+        policy.grantRole(policy.POLICY_APP_ROLE(), address(this));
+
+        vm.expectRevert(bytes("VOUCHER_EXPOSURE_UNDERFLOW"));
+        policy.noteCanonicalUnlocked(SOURCE_CHAIN_A, alice, address(canonicalAsset), 1 ether);
+    }
+
+    function testDirectCanonicalUnlockDecreasesExposureExactly() public {
+        policy.grantRole(policy.POLICY_APP_ROLE(), address(this));
+
+        policy.noteVoucherMinted(SOURCE_CHAIN_A, alice, address(canonicalAsset), 80 ether);
+        policy.noteCanonicalUnlocked(SOURCE_CHAIN_A, alice, address(canonicalAsset), 30 ether);
+
+        assertEq(policy.voucherExposureOutstanding(address(canonicalAsset)), 50 ether);
+    }
+
+    function testExposureRemainsConsistentAcrossMintBurnUnlockSequence() public {
+        policy.grantRole(policy.POLICY_APP_ROLE(), address(this));
+
+        policy.noteVoucherMinted(SOURCE_CHAIN_A, alice, address(canonicalAsset), 100 ether);
+        policy.noteVoucherBurned(alice, address(canonicalAsset), 25 ether);
+        policy.noteCanonicalUnlocked(SOURCE_CHAIN_A, alice, address(canonicalAsset), 15 ether);
+
+        assertEq(policy.voucherExposureOutstanding(address(canonicalAsset)), 60 ether);
+    }
+
+    function testEscrowRejectsFeeOnTransferCanonicalAsset() public {
+        FeeOnTransferToken feeToken = new FeeOnTransferToken("Fee Canonical", "fCAN");
+        BankPolicyEngine feePolicy = new BankPolicyEngine(address(this));
+        PolicyControlledEscrowVault feeEscrow =
+            new PolicyControlledEscrowVault(address(this), address(feeToken), address(feePolicy));
+        feeEscrow.grantApp(address(this));
+        feeToken.mint(alice, 100 ether);
+
+        vm.prank(alice);
+        feeToken.approve(address(feeEscrow), 10 ether);
+
+        vm.expectRevert(bytes("FEE_ON_TRANSFER_UNSUPPORTED"));
+        feeEscrow.lockFrom(alice, 10 ether);
+
+        assertEq(feeEscrow.totalEscrowed(), 0);
+        assertEq(feeToken.balanceOf(address(feeEscrow)), 0);
+    }
+
+    function testLendingPoolRejectsFeeOnTransferDebtDeposits() public {
+        FeeOnTransferToken feeDebt = new FeeOnTransferToken("Fee Debt", "fDEBT");
+        PolicyControlledLendingPool feePool = new PolicyControlledLendingPool(
+            address(this),
+            address(voucher),
+            address(feeDebt),
+            address(policy),
+            COLLATERAL_FACTOR_BPS,
+            LIQUIDATION_THRESHOLD_BPS
+        );
+        feeDebt.mint(supplier, 100 ether);
+
+        vm.startPrank(supplier);
+        feeDebt.approve(address(feePool), 100 ether);
+        vm.expectRevert(bytes("FEE_ON_TRANSFER_UNSUPPORTED"));
+        feePool.depositLiquidity(100 ether);
+        vm.stopPrank();
+
+        assertEq(feePool.totalLiquidityShares(), 0);
+        assertEq(feeDebt.balanceOf(address(feePool)), 0);
     }
 
     function testDepositCollateralRequiresPolicyAllowlist() public {

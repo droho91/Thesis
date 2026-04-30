@@ -55,8 +55,11 @@ contract PolicyControlledEscrowVault is AccessControl, Pausable, ReentrancyGuard
     function lockFrom(address from, uint256 amount) external onlyRole(APP_ROLE) whenNotPaused nonReentrant {
         require(from != address(0), "FROM_ZERO");
         require(amount > 0, "AMOUNT_ZERO");
-        totalEscrowed += amount;
+        uint256 balanceBefore = asset.balanceOf(address(this));
         asset.safeTransferFrom(from, address(this), amount);
+        uint256 received = asset.balanceOf(address(this)) - balanceBefore;
+        require(received == amount, "FEE_ON_TRANSFER_UNSUPPORTED");
+        totalEscrowed += amount;
         emit Escrowed(from, amount);
     }
 

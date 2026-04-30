@@ -6,6 +6,9 @@ const ROOT = resolve(process.cwd(), "networks", "besu");
 const VANITY = `0x${"00".repeat(32)}`;
 const FUNDED_BALANCE = "0x3635C9ADC5DEA00000"; // 1000 ETH
 const QBFT_MIX_HASH = "0x63746963616c2062797a616e74696e65206661756c7420746f6c6572616e6365";
+const UNSAFE_LOCAL_DEMO = process.env.UNSAFE_LOCAL_DEMO === "true";
+const BESU_ENABLE_ADMIN_DEBUG = process.env.BESU_ENABLE_ADMIN_DEBUG === "true";
+const BESU_DOCKER_IMAGE = process.env.BESU_DOCKER_IMAGE || "hyperledger/besu:24.10.0";
 
 const NETWORKS = [
   {
@@ -37,6 +40,7 @@ const NETWORKS = [
 ];
 
 function privateKeyHex(label) {
+  if (!UNSAFE_LOCAL_DEMO) return ethers.Wallet.createRandom().privateKey;
   return ethers.keccak256(ethers.toUtf8Bytes(`thesis-besu-qbft:${label}`));
 }
 
@@ -116,6 +120,22 @@ function genesisFor(network, validators, operators) {
   };
 }
 
+function rpcApis() {
+  const apis = ["ETH", "NET", "WEB3", "QBFT"];
+  if (UNSAFE_LOCAL_DEMO || BESU_ENABLE_ADMIN_DEBUG) apis.push("ADMIN", "DEBUG");
+  return JSON.stringify(apis);
+}
+
+function rpcCorsOrigins() {
+  if (UNSAFE_LOCAL_DEMO) return JSON.stringify(["all"]);
+  return JSON.stringify(["http://127.0.0.1:5173", "http://localhost:5173"]);
+}
+
+function hostAllowlist() {
+  if (UNSAFE_LOCAL_DEMO) return JSON.stringify(["*"]);
+  return JSON.stringify(["127.0.0.1", "localhost"]);
+}
+
 function configToml(network, node, enableRpc) {
   return [
     `data-path="/network/nodes/${node.name}/data"`,
@@ -128,9 +148,9 @@ function configToml(network, node, enableRpc) {
     `rpc-http-enabled=${enableRpc ? "true" : "false"}`,
     `rpc-http-host="0.0.0.0"`,
     `rpc-http-port=8545`,
-    `rpc-http-api=["ETH","NET","WEB3","QBFT","ADMIN","DEBUG"]`,
-    `rpc-http-cors-origins=["all"]`,
-    `host-allowlist=["*"]`,
+    `rpc-http-api=${rpcApis()}`,
+    `rpc-http-cors-origins=${rpcCorsOrigins()}`,
+    `host-allowlist=${hostAllowlist()}`,
     `rpc-ws-enabled=false`,
     `min-gas-price=0`,
     `sync-mode="FULL"`,
@@ -155,7 +175,7 @@ function dockerCompose(networks) {
       const serviceName = node.name.replace(/-/g, "_");
       const exposeRpc = index === 0;
       lines.push(`  ${serviceName}:`);
-      lines.push("    image: hyperledger/besu:latest");
+      lines.push(`    image: ${BESU_DOCKER_IMAGE}`);
       lines.push(`    container_name: thesis-${node.name}`);
       lines.push(`    command: ["--config-file=/network/nodes/${node.name}/config.toml"]`);
       lines.push("    volumes:");
@@ -216,6 +236,14 @@ async function renderNetwork(network) {
 }
 
 async function main() {
+  if (UNSAFE_LOCAL_DEMO) {
+    console.warn(
+      "[besu:generate] UNSAFE_LOCAL_DEMO=true: deterministic keys, ADMIN/DEBUG RPC, wildcard CORS, and wildcard host allowlist are enabled for local demo only."
+    );
+  } else if (BESU_ENABLE_ADMIN_DEBUG) {
+    console.warn("[besu:generate] BESU_ENABLE_ADMIN_DEBUG=true: ADMIN/DEBUG RPC APIs are enabled in hardened network mode.");
+  }
+
   await rm(ROOT, { recursive: true, force: true });
   await mkdir(ROOT, { recursive: true });
 
@@ -233,7 +261,13 @@ async function main() {
     "- `chainA`: Bank A QBFT network on host RPC `http://127.0.0.1:8545`",
     "- `chainB`: Bank B QBFT network on host RPC `http://127.0.0.1:9545`",
     "",
-    "Each chain has four validators with deterministic local keys, a QBFT genesis, and per-node config.",
+    UNSAFE_LOCAL_DEMO
+      ? "Each chain has four validators with deterministic local-demo keys, a QBFT genesis, and per-node config."
+      : "Each chain has four validators with generated local keys, a QBFT genesis, and hardened default RPC config.",
+    "",
+    UNSAFE_LOCAL_DEMO
+      ? "Warning: this directory was generated with `UNSAFE_LOCAL_DEMO=true`; do not treat the keys or RPC surface as hardened."
+      : "Default mode avoids deterministic keys, pins the Besu Docker image, disables ADMIN/DEBUG RPC, and restricts CORS/host allowlists for local UI access.",
     "",
     "Use `docker compose -f networks/besu/docker-compose.yml up -d` to start the local networks after generating them.",
     "",

@@ -7,7 +7,9 @@ It scaffolds two separate local permissioned EVM bank chains:
 - `chainA`: Bank A QBFT network on host RPC `http://127.0.0.1:8545`
 - `chainB`: Bank B QBFT network on host RPC `http://127.0.0.1:9545`
 
-Each chain has four validators with deterministic local keys, a QBFT genesis, and per-node config.
+Each chain has four validators with generated local keys, a QBFT genesis, and hardened default RPC config.
+
+Default mode avoids deterministic keys, pins the Besu Docker image, disables ADMIN/DEBUG RPC, and restricts CORS/host allowlists for local UI access.
 
 Use `docker compose -f networks/besu/docker-compose.yml up -d` to start the local networks after generating them.
 

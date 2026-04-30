@@ -452,6 +452,14 @@ export async function openProofCheckedConnection({
   validatorEpoch = 1n,
   onStage = null,
 }) {
+  emitStage(onStage, "step-open-route-connection-trust");
+  await txStep("trust destination connection keeper on source", () =>
+    sourceConnectionKeeper.setTrustedRemoteConnectionKeeper(destinationChainId, destinationConnectionKeeperAddress, txOptions())
+  );
+  await txStep("trust source connection keeper on destination", () =>
+    destinationConnectionKeeper.setTrustedRemoteConnectionKeeper(sourceChainId, sourceConnectionKeeperAddress, txOptions())
+  );
+
   emitStage(onStage, "step-open-route-connection-init");
   const sourceInitReceipt = await txStep("connection open init on source", () =>
     sourceConnectionKeeper.connectionOpenInit(
@@ -590,6 +598,14 @@ export async function openProofCheckedChannel({
   validatorEpoch = 1n,
   onStage = null,
 }) {
+  emitStage(onStage, "step-open-route-channel-trust");
+  await txStep("trust destination channel keeper on source", () =>
+    sourceChannelKeeper.setTrustedRemoteChannelKeeper(destinationChainId, destinationChannelKeeperAddress, txOptions())
+  );
+  await txStep("trust source channel keeper on destination", () =>
+    destinationChannelKeeper.setTrustedRemoteChannelKeeper(sourceChainId, sourceChannelKeeperAddress, txOptions())
+  );
+
   emitStage(onStage, "step-open-route-channel-init");
   const sourceInitReceipt = await txStep("channel open init on source", () =>
     sourceChannelKeeper.channelOpenInit(

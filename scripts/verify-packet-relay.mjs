@@ -32,6 +32,7 @@ const SOURCE_CHANNEL_ID = ethers.encodeBytes32String("channel-a");
 const DESTINATION_CHANNEL_ID = ethers.encodeBytes32String("channel-b");
 const CHANNEL_VERSION = ethers.hexlify(ethers.toUtf8Bytes("ics-004"));
 const CONNECTION_PREFIX = ethers.hexlify(ethers.toUtf8Bytes("ibc"));
+const DEFAULT_PACKET_TIMEOUT_HEIGHT = BigInt(process.env.DEMO_PACKET_TIMEOUT_HEIGHT || "1000000");
 
 function packetId(packet) {
   return ethers.keccak256(
@@ -261,6 +262,8 @@ async function main() {
   const packetStore = await deploy(packetStoreArtifact, sourceSigner, [SOURCE_CHAIN_ID]);
   const packetStoreAddress = await packetStore.getAddress();
   await (await packetStore.setPacketWriter(sourceAppAddress, true)).wait();
+  await (await sourcePacketHandler.setTrustedRemotePacketHandler(DESTINATION_CHAIN_ID, destinationPacketHandlerAddress)).wait();
+  await (await destinationPacketHandler.setTrustedRemotePacketHandler(SOURCE_CHAIN_ID, sourcePacketHandlerAddress)).wait();
   await (await destinationPacketHandler.setTrustedPacketStore(SOURCE_CHAIN_ID, packetStoreAddress)).wait();
   await (await sourcePacketHandler.setTrustedPacketStore(SOURCE_CHAIN_ID, packetStoreAddress)).wait();
   const connectionHandshake = await openProofCheckedConnection({
@@ -311,7 +314,7 @@ async function main() {
       action: 1,
       memo: ethers.ZeroHash,
     }),
-    timeout: { height: 0n, timestamp: 0n },
+    timeout: { height: DEFAULT_PACKET_TIMEOUT_HEIGHT, timestamp: 0n },
   };
 
   const commitTx = await sourceApp.commitPacket(packetStoreAddress, packet);

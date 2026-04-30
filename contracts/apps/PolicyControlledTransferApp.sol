@@ -146,6 +146,7 @@ contract PolicyControlledTransferApp is
         require(address(escrowVault.asset()) == route.canonicalAsset, "ESCROW_ASSET_ROUTE_MISMATCH");
         require(recipient != address(0), "RECIPIENT_ZERO");
         require(amount > 0, "AMOUNT_ZERO");
+        _validateTimeout(timeoutHeight, timeoutTimestamp);
 
         escrowVault.lockFrom(msg.sender, amount);
 
@@ -212,6 +213,7 @@ contract PolicyControlledTransferApp is
         require(voucherToken.canonicalAsset() == route.canonicalAsset, "VOUCHER_ASSET_ROUTE_MISMATCH");
         require(recipient != address(0), "RECIPIENT_ZERO");
         require(amount > 0, "AMOUNT_ZERO");
+        _validateTimeout(timeoutHeight, timeoutTimestamp);
 
         voucherToken.burnFromWithPolicy(sender, route.canonicalAsset, amount);
 
@@ -328,5 +330,9 @@ contract PolicyControlledTransferApp is
     function _requireRoute(uint256 remoteChainId) internal view returns (RemoteRoute memory route) {
         route = remoteRouteByChain[remoteChainId];
         require(route.exists, "REMOTE_ROUTE_NOT_SET");
+    }
+
+    function _validateTimeout(uint64 timeoutHeight, uint64 timeoutTimestamp) internal pure {
+        require(timeoutHeight != 0 || timeoutTimestamp != 0, "TIMEOUT_UNSET");
     }
 }

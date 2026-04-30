@@ -19,7 +19,11 @@ contract IBCConnectionKeeper is AccessControl, IBCEVMProofBoundary {
 
     mapping(bytes32 => IBCConnectionTypes.ConnectionEnd) internal connections;
     mapping(bytes32 => bytes32) public connectionCommitments;
+    mapping(uint256 => address) public trustedRemoteConnectionKeeperByChain;
+    bool public unsafeLocalDemoMode;
 
+    event TrustedRemoteConnectionKeeperSet(uint256 indexed chainId, address indexed keeper);
+    event UnsafeLocalDemoModeSet(bool enabled);
     event UnsafeConnectionOpened(
         bytes32 indexed connectionId,
         bytes32 indexed clientId,
@@ -36,6 +40,21 @@ contract IBCConnectionKeeper is AccessControl, IBCEVMProofBoundary {
         _grantRole(CONNECTION_ADMIN_ROLE, admin);
     }
 
+    function setTrustedRemoteConnectionKeeper(uint256 chainId, address keeper)
+        external
+        onlyRole(CONNECTION_ADMIN_ROLE)
+    {
+        require(chainId != 0, "CHAIN_ZERO");
+        require(keeper != address(0), "KEEPER_ZERO");
+        trustedRemoteConnectionKeeperByChain[chainId] = keeper;
+        emit TrustedRemoteConnectionKeeperSet(chainId, keeper);
+    }
+
+    function setUnsafeLocalDemoMode(bool enabled) external onlyRole(CONNECTION_ADMIN_ROLE) {
+        unsafeLocalDemoMode = enabled;
+        emit UnsafeLocalDemoModeSet(enabled);
+    }
+
     /// @dev Unsafe admin shortcut kept only for tests and controlled scaffolding.
     ///      Production flows should use the proof-checked handshake path.
     function openConnectionUnsafe(
@@ -46,6 +65,7 @@ contract IBCConnectionKeeper is AccessControl, IBCEVMProofBoundary {
         uint64 delayPeriod,
         bytes calldata prefix
     ) external onlyRole(CONNECTION_ADMIN_ROLE) {
+        require(unsafeLocalDemoMode, "UNSAFE_LOCAL_DEMO_DISABLED");
         require(connectionId != bytes32(0), "CONNECTION_ID_ZERO");
         require(clientId != bytes32(0), "CLIENT_ID_ZERO");
         require(counterpartyClientId != bytes32(0), "COUNTERPARTY_CLIENT_ID_ZERO");
@@ -274,6 +294,10 @@ contract IBCConnectionKeeper is AccessControl, IBCEVMProofBoundary {
     ) internal view {
         require(counterpartyConnectionKeeper != address(0), "COUNTERPARTY_KEEPER_ZERO");
         require(proof.sourceChainId != 0 && proof.sourceChainId != localChainId, "BAD_COUNTERPARTY_CHAIN");
+        require(
+            counterpartyConnectionKeeper == trustedRemoteConnectionKeeperByChain[proof.sourceChainId],
+            "UNTRUSTED_REMOTE_CONNECTION_KEEPER"
+        );
         require(proof.account == counterpartyConnectionKeeper, "CONNECTION_PROOF_ACCOUNT_MISMATCH");
         require(
             proof.storageKey == connectionCommitmentStorageSlot(counterpartyConnectionId),

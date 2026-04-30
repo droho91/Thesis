@@ -27,8 +27,10 @@ contract IBCPacketHandler is AccessControl, IBCProofVerifier {
     mapping(bytes32 => bool) public packetAcknowledgements;
     mapping(bytes32 => bool) public packetTimeouts;
     mapping(address => address) public portApplications;
+    mapping(uint256 => address) public trustedRemotePacketHandlerByChain;
 
     event TrustedPacketStoreSet(uint256 indexed sourceChainId, address indexed packetStore);
+    event TrustedRemotePacketHandlerSet(uint256 indexed chainId, address indexed handler);
     event PortApplicationSet(address indexed port, address indexed application);
     event PacketReceiptWritten(bytes32 indexed packetId, uint256 indexed sourceChainId, uint256 indexed trustedHeight);
     event PacketAcknowledgementStored(bytes32 indexed packetId, bytes32 acknowledgementHash);
@@ -57,6 +59,13 @@ contract IBCPacketHandler is AccessControl, IBCProofVerifier {
         require(packetStore != address(0), "PACKET_STORE_ZERO");
         trustedPacketStoreBySourceChain[sourceChainId] = packetStore;
         emit TrustedPacketStoreSet(sourceChainId, packetStore);
+    }
+
+    function setTrustedRemotePacketHandler(uint256 chainId, address handler) external onlyRole(CLIENT_ADMIN_ROLE) {
+        require(chainId != 0, "CHAIN_ZERO");
+        require(handler != address(0), "HANDLER_ZERO");
+        trustedRemotePacketHandlerByChain[chainId] = handler;
+        emit TrustedRemotePacketHandlerSet(chainId, handler);
     }
 
     function setPortApplication(address port, address application) external onlyRole(CLIENT_ADMIN_ROLE) {
@@ -111,6 +120,7 @@ contract IBCPacketHandler is AccessControl, IBCProofVerifier {
         require(packet.source.chainId == localChainId, "WRONG_SOURCE_CHAIN");
         require(packet.destination.chainId == acknowledgementProof.sourceChainId, "ACK_SOURCE_CHAIN_MISMATCH");
         require(remotePacketHandler != address(0), "REMOTE_HANDLER_ZERO");
+        _requireTrustedRemotePacketHandler(packet.destination.chainId, remotePacketHandler);
         require(
             channelKeeper.isPacketRouteOpenForChannel(
                 packet.destination.chainId,
@@ -164,6 +174,7 @@ contract IBCPacketHandler is AccessControl, IBCProofVerifier {
         require(packet.source.chainId == localChainId, "WRONG_SOURCE_CHAIN");
         require(packet.destination.chainId == receiptAbsenceProof.sourceChainId, "TIMEOUT_SOURCE_CHAIN_MISMATCH");
         require(remotePacketHandler != address(0), "REMOTE_HANDLER_ZERO");
+        _requireTrustedRemotePacketHandler(packet.destination.chainId, remotePacketHandler);
         require(
             channelKeeper.isPacketRouteOpenForChannel(
                 packet.destination.chainId,
@@ -201,6 +212,13 @@ contract IBCPacketHandler is AccessControl, IBCProofVerifier {
         address localPacketStore = trustedPacketStoreBySourceChain[localChainId];
         require(localPacketStore != address(0), "LOCAL_PACKET_STORE_ZERO");
         require(IBCPacketStore(localPacketStore).committedPacket(packetId), "PACKET_NOT_COMMITTED");
+    }
+
+    function _requireTrustedRemotePacketHandler(uint256 chainId, address remotePacketHandler) internal view {
+        require(
+            remotePacketHandler == trustedRemotePacketHandlerByChain[chainId],
+            "UNTRUSTED_REMOTE_PACKET_HANDLER"
+        );
     }
 
     function _packetTimedOut(IBCPacketLib.Packet calldata packet, uint256 trustedHeight)

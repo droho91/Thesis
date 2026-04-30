@@ -33,7 +33,11 @@ contract IBCChannelKeeper is AccessControl, IBCEVMProofBoundary {
     mapping(bytes32 => PacketRoute) public packetRoutes;
     mapping(bytes32 => bytes32) public channelCommitments;
     mapping(bytes32 => PacketRoute) internal routesByChannel;
+    mapping(uint256 => address) public trustedRemoteChannelKeeperByChain;
+    bool public unsafeLocalDemoMode;
 
+    event TrustedRemoteChannelKeeperSet(uint256 indexed chainId, address indexed keeper);
+    event UnsafeLocalDemoModeSet(bool enabled);
     event ChannelRouteOpened(
         bytes32 indexed channelId,
         bytes32 indexed connectionId,
@@ -57,6 +61,18 @@ contract IBCChannelKeeper is AccessControl, IBCEVMProofBoundary {
         _grantRole(CHANNEL_ADMIN_ROLE, admin);
     }
 
+    function setTrustedRemoteChannelKeeper(uint256 chainId, address keeper) external onlyRole(CHANNEL_ADMIN_ROLE) {
+        require(chainId != 0, "CHAIN_ZERO");
+        require(keeper != address(0), "KEEPER_ZERO");
+        trustedRemoteChannelKeeperByChain[chainId] = keeper;
+        emit TrustedRemoteChannelKeeperSet(chainId, keeper);
+    }
+
+    function setUnsafeLocalDemoMode(bool enabled) external onlyRole(CHANNEL_ADMIN_ROLE) {
+        unsafeLocalDemoMode = enabled;
+        emit UnsafeLocalDemoModeSet(enabled);
+    }
+
     /// @dev Unsafe admin shortcut kept only for tests and controlled scaffolding.
     ///      Production packet routes should be reached through the proof-checked channel handshake.
     function openChannelRouteUnsafe(
@@ -69,6 +85,7 @@ contract IBCChannelKeeper is AccessControl, IBCEVMProofBoundary {
         IBCChannelTypes.Order ordering,
         bytes calldata version
     ) external onlyRole(CHANNEL_ADMIN_ROLE) {
+        require(unsafeLocalDemoMode, "UNSAFE_LOCAL_DEMO_DISABLED");
         require(channelId != bytes32(0), "CHANNEL_ID_ZERO");
         require(counterpartyChainId != 0 && counterpartyChainId != localChainId, "BAD_COUNTERPARTY_CHAIN");
         require(counterpartyPort != address(0), "COUNTERPARTY_PORT_ZERO");
@@ -423,6 +440,10 @@ contract IBCChannelKeeper is AccessControl, IBCEVMProofBoundary {
     ) internal view {
         require(counterpartyChannelKeeper != address(0), "COUNTERPARTY_KEEPER_ZERO");
         require(proof.sourceChainId != 0 && proof.sourceChainId != localChainId, "BAD_COUNTERPARTY_CHAIN");
+        require(
+            counterpartyChannelKeeper == trustedRemoteChannelKeeperByChain[proof.sourceChainId],
+            "UNTRUSTED_REMOTE_CHANNEL_KEEPER"
+        );
         require(proof.account == counterpartyChannelKeeper, "CHANNEL_PROOF_ACCOUNT_MISMATCH");
         require(proof.storageKey == channelCommitmentStorageSlot(counterpartyChannelId), "CHANNEL_PROOF_KEY_MISMATCH");
         require(

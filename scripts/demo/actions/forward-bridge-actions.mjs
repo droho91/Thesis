@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import {
   DEMO_MAX_TIMEOUT_HEADER_GAP,
+  DEMO_PACKET_TIMEOUT_HEIGHT,
   DENIED_AMOUNT,
   FORWARD_AMOUNT,
   asBigInt,
@@ -238,7 +239,14 @@ export async function lockStep({ config, ctx, sourceChainId, destinationChainId 
   setPhase("step-lock-send");
   const sequence = asBigInt(await ctx.A.packetStore.nextSequence());
   const receipt = await txStep("step send forward transfer", () =>
-    ctx.A.transferAppUser.sendTransfer(destinationChainId, ctx.destinationUserAddress, FORWARD_AMOUNT, 0, 0, txOptions())
+    ctx.A.transferAppUser.sendTransfer(
+      destinationChainId,
+      ctx.destinationUserAddress,
+      FORWARD_AMOUNT,
+      DEMO_PACKET_TIMEOUT_HEIGHT,
+      0,
+      txOptions()
+    )
   );
   const commitHeight = BigInt(receipt.blockNumber);
   const packet = transferPacket({
@@ -249,6 +257,7 @@ export async function lockStep({ config, ctx, sourceChainId, destinationChainId 
     sender: ctx.sourceUserAddress,
     recipient: ctx.destinationUserAddress,
     amount: FORWARD_AMOUNT,
+    timeoutHeight: DEMO_PACKET_TIMEOUT_HEIGHT,
   });
   const packetIdValue = await ctx.A.packetStore.packetIdAt(sequence);
   const trace = await writeTracePatch(
