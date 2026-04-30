@@ -25,5 +25,6 @@
 /.interchain-lending.local.json
 
 # Generated Besu runtime state
-/networks/besu/**/data
+/networks/besu/*
+!/networks/besu/README.md
 /proofs
