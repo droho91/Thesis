@@ -147,6 +147,19 @@ export async function settleSeizedVoucherStep({ config, ctx, sourceChainId, dest
         sourceTxHash: receipt.hash,
         commitHeight: commitHeight.toString(),
         settlementMode: "authorized-liquidator",
+        finalizedHeight: null,
+        finalizedHeaderHash: null,
+        finalizedStateRoot: null,
+        trustedHeight: null,
+        trustedHeaderHash: null,
+        trustedStateRoot: null,
+        packetLeafSlot: null,
+        packetPathSlot: null,
+        receiveTxHash: null,
+        finalSourceBalance: null,
+        finalRecipientBalance: null,
+        finalEscrowed: null,
+        proofMode: null,
       },
       liquidatorSettlement: {
         operation: "Authorized liquidator settles seized voucher through reverse bridge route",
@@ -157,6 +170,7 @@ export async function settleSeizedVoucherStep({ config, ctx, sourceChainId, dest
         burnTxHash: receipt.hash,
         packetId: packetIdValue,
         commitHeight: commitHeight.toString(),
+        unlockTxHash: null,
       },
     },
     {
@@ -173,8 +187,8 @@ export async function burnStep({ config, ctx, sourceChainId, destinationChainId 
   setPhase("step-burn");
   await requireOpenHandshake(config, ctx);
   const trace = await readExistingTrace();
-  const pendingReversePacket = trace.reverse?.packetId && !trace.reverse?.receiveTxHash
-    ? !(await ctx.A.packetHandler.packetReceipts(trace.reverse.packetId).catch(() => false))
+  const pendingReversePacket = trace.reverse?.packetId
+    ? !(await ctx.A.packetHandler.packetReceipts(trace.reverse.packetId).catch(() => Boolean(trace.reverse?.receiveTxHash)))
     : false;
   if (pendingReversePacket) {
     throw new Error("A reverse packet is already pending. Verify the reverse proof next.");
@@ -252,7 +266,22 @@ export async function burnStep({ config, ctx, sourceChainId, destinationChainId 
         packetPath: packetPath(packet),
         sourceTxHash: receipt.hash,
         commitHeight: commitHeight.toString(),
+        settlementMode: null,
+        finalizedHeight: null,
+        finalizedHeaderHash: null,
+        finalizedStateRoot: null,
+        trustedHeight: null,
+        trustedHeaderHash: null,
+        trustedStateRoot: null,
+        packetLeafSlot: null,
+        packetPathSlot: null,
+        receiveTxHash: null,
+        finalSourceBalance: null,
+        finalRecipientBalance: null,
+        finalEscrowed: null,
+        proofMode: null,
       },
+      liquidatorSettlement: null,
     },
     {
       phase: "reverse-burned",

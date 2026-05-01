@@ -21,6 +21,8 @@ function functionBlock(source, name) {
 
 const demoRunner = await readFile(resolve(process.cwd(), "scripts", "run-lending-demo.mjs"), "utf8");
 const lendingActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "lending-actions.mjs"), "utf8");
+const forwardBridgeActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "forward-bridge-actions.mjs"), "utf8");
+const reverseBridgeActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "reverse-bridge-actions.mjs"), "utf8");
 const timeoutActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "timeout-actions.mjs"), "utf8");
 const borrowerScenario = await readFile(resolve(process.cwd(), "scripts", "demo", "scenarios", "borrower-closeout.mjs"), "utf8");
 const demoApp = await readFile(resolve(process.cwd(), "demo", "app.js"), "utf8");
@@ -77,6 +79,22 @@ assert.match(
   /if \(voucherReady && !collateralActive && !debtActive && !lifecycle\.borrowerCollateralWithdrawn && !lifecycle\.debtWasOpened\)/,
   "activate should only handle newly bridged vouchers, not withdrawn closeout collateral"
 );
+assert.match(demoApp, /function forwardConsumed\(status\)/, "UI should use current receipt state for forward packet completion");
+assert.match(demoApp, /return !forwardConsumed\(status\)/, "forward pending state should not trust stale trace receive tx hashes");
+assert.match(demoApp, /return !reverseConsumed\(status\) && !settlement\.unlocked/, "reverse pending state should not trust stale trace receive tx hashes");
+assert.match(
+  demoApp,
+  /heightAtLeast\(forward\.finalizedHeight, forward\.commitHeight\)/,
+  "forward header controls should compare header state against the current packet height"
+);
+assert.match(forwardBridgeActions, /receiveTxHash: null/, "new forward packets should clear stale receive proof trace fields");
+assert.match(reverseBridgeActions, /liquidatorSettlement: null/, "borrower reverse burns should clear stale liquidation settlement trace");
+assert.match(
+  reverseBridgeActions,
+  /packetReceipts\(trace\.reverse\.packetId\)/,
+  "reverse burn should check live receipt state before allowing another reverse packet"
+);
+assert.match(demoApp, /settlementMatchesReverse/, "UI should ignore stale settlement traces from a previous reverse packet");
 
 assert.match(borrowerScenario, /runBorrowerCloseoutScenario/, "demo modules should include a borrower closeout lifecycle");
 assert.match(demoRunner, /--scenario/, "demo runner should support explicit scenario selection");

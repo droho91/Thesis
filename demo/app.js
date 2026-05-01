@@ -556,7 +556,7 @@ function suggestActionCard(status) {
   const state = financialState(status);
   const lifecycle = lifecycleState(status);
   const reverse = status?.trace?.reverse || {};
-  if (lifecycle.returnStarted || lifecycle.freeVoucher || reverse.commitHeight || reverse.packetId || reverse.receiveTxHash) return "redeem";
+  if (lifecycle.returnStarted || lifecycle.freeVoucher || reverse.commitHeight || reverse.packetId || reverseConsumed(status)) return "redeem";
   if (state.voucher > 0 || state.collateral > 0 || state.debt > 0 || state.bankB > 0) return "loan";
   return "bridge";
 }
@@ -713,7 +713,7 @@ function updateLinkyGuides(status = currentStatus) {
   let returnTone = "";
   let returnTitle = "Closeout sequence";
   let returnCopy = "Repay debt -> withdraw collateral -> burn voucher -> verify reverse proof -> unlock Bank A collateral.";
-  if (lifecycle.borrowerReverseComplete || status?.security?.reverseConsumed) {
+  if (lifecycle.borrowerReverseComplete || reverseConsumed(status)) {
     returnVariant = "success";
     returnTone = "success";
     returnTitle = "Collateral returned";
@@ -959,24 +959,38 @@ function healthFromBps(rawValue) {
 function bridgeProofAction(status) {
   const forward = status?.trace?.forward || {};
   const progress = status?.progress || {};
-  if (!forward.finalizedHeight && !forward.trustedHeight) return "finalizeForwardHeader";
+  const headerReady = heightAtLeast(forward.finalizedHeight, forward.commitHeight);
   const trustReady =
-    Boolean(forward.trustedHeight) ||
     heightAtLeast(progress.trustedAOnB, forward.commitHeight) ||
     heightAtLeast(forward.trustedHeight, forward.commitHeight);
+  if (!headerReady && !trustReady) return "finalizeForwardHeader";
   return trustReady ? "proveForwardMint" : "updateForwardClient";
+}
+
+function securityHas(status, key) {
+  return Object.prototype.hasOwnProperty.call(status?.security || {}, key);
+}
+
+function forwardConsumed(status) {
+  if (securityHas(status, "forwardConsumed")) return Boolean(status.security.forwardConsumed);
+  return Boolean(status?.trace?.forward?.receiveTxHash);
+}
+
+function reverseConsumed(status) {
+  if (securityHas(status, "reverseConsumed")) return Boolean(status.security.reverseConsumed);
+  return Boolean(status?.trace?.reverse?.receiveTxHash || status?.risk?.settlement?.unlocked);
 }
 
 function reverseProofAction(status) {
   const reverse = status?.trace?.reverse || {};
   const progress = status?.progress || {};
   if (!reverse.packetId && !reverse.commitHeight) return "burn";
-  if (reverse.receiveTxHash || status?.security?.reverseConsumed) return null;
-  if (!reverse.finalizedHeight && !reverse.trustedHeight) return "finalizeReverseHeader";
+  if (reverseConsumed(status)) return null;
+  const headerReady = heightAtLeast(reverse.finalizedHeight, reverse.commitHeight);
   const trustReady =
-    Boolean(reverse.trustedHeight) ||
     heightAtLeast(progress.trustedBOnA, reverse.commitHeight) ||
     heightAtLeast(reverse.trustedHeight, reverse.commitHeight);
+  if (!headerReady && !trustReady) return "finalizeReverseHeader";
   return trustReady ? "proveReverseUnlock" : "updateReverseClient";
 }
 
@@ -1028,16 +1042,19 @@ function lifecycleState(status) {
       (debtWasOpened && collateralWasDeposited && !activeCollateral)
   );
   const settlementTrace = trace.liquidatorSettlement || {};
+  const settlementPacketId = settlement.packetId || settlementTrace.packetId;
+  const settlementMatchesReverse = Boolean(settlementPacketId && settlementPacketId === reverse.packetId);
   const reverseStarted = Boolean(reverse.packetId || reverse.commitHeight || reverse.sourceTxHash);
   const settlementStarted = Boolean(
-    settlement.started ||
-      settlementTrace.packetId ||
-      settlementTrace.burnTxHash ||
-      reverse.settlementMode === "authorized-liquidator"
+    settlementMatchesReverse &&
+      (settlement.started ||
+        settlementTrace.packetId ||
+        settlementTrace.burnTxHash ||
+        reverse.settlementMode === "authorized-liquidator")
   );
-  const settlementUnlocked = Boolean(settlement.unlocked || settlementTrace.unlockTxHash);
+  const settlementUnlocked = Boolean(settlementMatchesReverse && (settlement.unlocked || settlementTrace.unlockTxHash));
   const borrowerReverseStarted = reverseStarted && !settlementStarted;
-  const borrowerReverseComplete = Boolean(borrowerReverseStarted && (reverse.receiveTxHash || status?.security?.reverseConsumed));
+  const borrowerReverseComplete = Boolean(borrowerReverseStarted && reverseConsumed(status));
   const liquidationExecuted = Boolean(afterLiquidation.executed || traceRisk.liquidationTxHash || lending.liquidated);
   const settlementVoucher = positive(settlement.seizedVoucherBalance || status?.balances?.liquidatorVoucher);
 
@@ -1083,7 +1100,8 @@ function workflowModel(status) {
   const deployed = state.deployed;
   const bridgeStarted =
     state.escrow > 0 ||
-    Boolean(forward.commitHeight || forward.packetId || forward.receiveTxHash) ||
+    Boolean(forward.commitHeight || forward.packetId) ||
+    forwardConsumed(status) ||
     state.voucher > 0 ||
     state.collateral > 0 ||
     state.debt > 0 ||
@@ -1323,23 +1341,28 @@ function workflowModel(status) {
   }
 
   if (collateralActive && !debtActive) {
+    const borrowLabel = lifecycle.debtWasOpened ? "Borrow again" : "Borrow";
     const recommendedAction =
       closeoutWithdrawReady
         ? { type: "action", action: "withdrawCollateral", label: "Withdraw collateral to return" }
         : state.availableBorrow > POSITION_EPSILON
-        ? { type: "action", action: "borrow", label: "Borrow again" }
+        ? { type: "action", action: "borrow", label: borrowLabel }
         : state.voucher > POSITION_EPSILON
           ? { type: "action", action: "depositCollateral", label: "Deposit more voucher collateral" }
           : state.withdrawable > POSITION_EPSILON
             ? { type: "action", action: "withdrawCollateral", label: "Withdraw safe collateral" }
             : { type: "action", action: routeReady(status) ? "lock" : "openRoute", label: "Bridge more collateral" };
+    const idleSummary = lifecycle.debtWasOpened
+      ? "Collateral is active and no debt is open. You can borrow again, deposit more voucher collateral, bridge more, withdraw safe collateral, or close the position."
+      : "Collateral is active and no debt is open. You can borrow, deposit more voucher collateral, bridge more, withdraw safe collateral, or close the position.";
+    const closeoutSummary = lifecycle.debtWasOpened
+      ? "Debt is closed and collateral is still active in the lending pool. Continue borrowing if you want another loan, or close the position by withdrawing voucher collateral for return."
+      : "No debt is open and collateral is still active in the lending pool. Borrow when ready, or close the position by withdrawing voucher collateral for return.";
     return {
       step: closeoutWithdrawReady ? "return" : "manage",
       title: closeoutWithdrawReady ? "Close position and return collateral" : "Choose how to use active collateral",
       status: lifecycle.debtWasOpened ? "Debt closed" : "No debt",
-      summary: closeoutWithdrawReady
-        ? "Debt is closed and collateral is still active in the lending pool. Continue borrowing if you want another loan, or close the position by withdrawing voucher collateral for return."
-        : "Collateral is active and no debt is open. You can borrow again, deposit more voucher collateral, bridge more, withdraw safe collateral, or close the position.",
+      summary: closeoutWithdrawReady ? closeoutSummary : idleSummary,
       cta: recommendedAction,
       description: closeoutWithdrawReady
         ? "Withdraw active collateral first; after it is free in your Bank B wallet, burn the voucher and verify the reverse proof."
@@ -1377,9 +1400,8 @@ function hasForwardPacket(status) {
 }
 
 function forwardPacketPending(status) {
-  const forward = status?.trace?.forward || {};
   if (!hasForwardPacket(status)) return false;
-  return !status?.security?.forwardConsumed && !forward.receiveTxHash;
+  return !forwardConsumed(status);
 }
 
 function hasReversePacket(status) {
@@ -1389,10 +1411,9 @@ function hasReversePacket(status) {
 }
 
 function reversePacketPending(status) {
-  const reverse = status?.trace?.reverse || {};
   const settlement = status?.risk?.settlement || {};
   if (!hasReversePacket(status)) return false;
-  return !status?.security?.reverseConsumed && !reverse.receiveTxHash && !settlement.unlocked;
+  return !reverseConsumed(status) && !settlement.unlocked;
 }
 
 function closeoutWithdrawEligibility(status, baseEligibility) {
@@ -1403,16 +1424,8 @@ function closeoutWithdrawEligibility(status, baseEligibility) {
   if (!lifecycle.activeCollateral) {
     return { ok: false, message: "There is no active collateral to withdraw for return." };
   }
-  const closeoutContext =
-    lifecycle.debtWasOpened ||
-    lifecycle.borrowerCollateralWithdrawn ||
-    lifecycle.returnStarted ||
-    selectedWorkflowStep === "return";
-  if (!closeoutContext) {
-    return { ok: false, message: "Use this after borrowing is closed, or select Step 6 to return an idle position." };
-  }
   if (!baseEligibility.ok) return baseEligibility;
-  return { ok: true, message: "Withdraw collateral to continue the return path." };
+  return { ok: true, message: "Withdraw collateral to start or continue the return path." };
 }
 
 function actionEligibility(action, status = currentStatus) {
@@ -1447,7 +1460,7 @@ function actionEligibility(action, status = currentStatus) {
     case "finalizeForwardHeader":
       if (!hasForwardPacket(status)) return disabled("Lock collateral first so there is a forward packet height to fetch.");
       if (!forwardPacketPending(status)) return disabled("The latest forward packet has already been received.");
-      return forward.finalizedHeight
+      return heightAtLeast(forward.finalizedHeight, forward.commitHeight)
         ? disabled("The Bank A header is already fetched for the latest forward packet.")
         : enabled("Fetch the Bank A header for the pending forward packet.");
     case "updateForwardClient":
@@ -1498,7 +1511,7 @@ function actionEligibility(action, status = currentStatus) {
     case "finalizeReverseHeader":
       if (!hasReversePacket(status)) return disabled("Burn voucher or settle seized voucher first so a reverse packet exists.");
       if (!reversePacketPending(status)) return disabled("The reverse packet has already been verified.");
-      return reverse.finalizedHeight
+      return heightAtLeast(reverse.finalizedHeight, reverse.commitHeight)
         ? disabled("The Bank B header is already fetched for the reverse packet.")
         : enabled("Fetch the Bank B header for the reverse proof.");
     case "updateReverseClient":
@@ -1695,7 +1708,12 @@ function proofDoneSteps(status) {
   if (forward.commitHeight || forward.packetId || reverse.commitHeight || reverse.packetId || numeric(progress.packetSequenceA) > 0) {
     steps.add("packet-committed");
   }
-  if (forward.finalizedHeight || reverse.finalizedHeight || proof.headerHash || proof.stateRoot) {
+  if (
+    heightAtLeast(forward.finalizedHeight, forward.commitHeight) ||
+    heightAtLeast(reverse.finalizedHeight, reverse.commitHeight) ||
+    proof.headerHash ||
+    proof.stateRoot
+  ) {
     steps.add("header-fetched");
   }
   if (numeric(progress.trustedAOnB) > 0 || numeric(progress.trustedBOnA) > 0 || proof.trustedHeight) {
@@ -1705,8 +1723,8 @@ function proofDoneSteps(status) {
     steps.add("storage-proof");
   }
   if (
-    forward.receiveTxHash ||
-    reverse.receiveTxHash ||
+    forwardConsumed(status) ||
+    reverseConsumed(status) ||
     textIncludes(proof.proofVerificationResult, "verified", "executed", "accepted")
   ) {
     steps.add("packet-verified");

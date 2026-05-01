@@ -255,15 +255,6 @@ a.button-secondary {
   position: relative;
 }
 
-.product-brand::before {
-  content: "";
-  position: absolute;
-  inset: 8px auto 8px 8px;
-  width: 3px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(14, 165, 233, 0.88), rgba(20, 184, 166, 0.24));
-}
-
 .brand-linky {
   width: 34px;
   height: 34px;
@@ -1028,6 +1019,7 @@ body[data-workflow-risk="risk"] .position-card {
 }
 
 body[data-workflow-risk="risk"] .position-health {
+  padding-right: 98px;
   border-color: rgba(239, 68, 68, 0.22);
   background:
     linear-gradient(135deg, rgba(254, 242, 242, 0.98), rgba(255, 247, 237, 0.88)),
@@ -3434,6 +3426,17 @@ body.product-dashboard.is-focus-mode .drawer-panel--technical {
 
   .position-card-anchor {
     margin-bottom: 16px;
+  }
+
+  body[data-workflow-risk="risk"] .position-health {
+    padding: 20px;
+  }
+
+  body[data-workflow-risk="risk"] .linky--risk {
+    position: static;
+    justify-self: start;
+    width: 52px;
+    height: 52px;
   }
 }
 

@@ -71,10 +71,23 @@ function formatHealth(healthFactorBps) {
 function positionRiskGuidance(status, health) {
   const balances = status?.balances || {};
   const security = status?.security || {};
+  const trace = status?.trace || {};
+  const lending = trace.lending || {};
+  const traceRisk = trace.risk || {};
   const debt = numeric(balances.poolDebt);
   const activeCollateral = numeric(balances.poolCollateral);
   const voucher = numeric(balances.voucher);
   const escrow = numeric(balances.escrow);
+  const debtWasOpened = Boolean(
+    lending.borrowed ||
+      traceRisk.borrowed ||
+      traceRisk.debtBeforeRepay ||
+      traceRisk.repayTxHash ||
+      traceRisk.repaid ||
+      traceRisk.liquidationTxHash ||
+      traceRisk.debtBeforeLiquidation ||
+      debt > 0
+  );
 
   if (security.frozen || security.recovering) {
     return {
@@ -110,7 +123,9 @@ function positionRiskGuidance(status, health) {
     return {
       focus: "Flexible position",
       copy: "Collateral is active and no debt is open. You can keep borrowing power available or close out deliberately.",
-      action: "Borrow again, deposit more voucher, withdraw safe collateral, bridge more, or close the position.",
+      action: debtWasOpened
+        ? "Borrow again, deposit more voucher, withdraw safe collateral, bridge more, or close the position."
+        : "Borrow, deposit more voucher, withdraw safe collateral, bridge more, or close the position.",
     };
   }
   if (voucher > 0) {
@@ -220,7 +235,9 @@ function buildVisualModel(status) {
     present(forward.packetId) ||
     numeric(progress.packetSequenceA) > 0 ||
     numeric(balances.escrow) > 0;
-  const headerFinalized = present(forward.finalizedHeight) || present(forward.trustedHeight);
+  const headerFinalized = present(forward.commitHeight)
+    ? heightAtLeast(forward.finalizedHeight, forward.commitHeight) || heightAtLeast(forward.trustedHeight, forward.commitHeight)
+    : present(forward.finalizedHeight) || present(forward.trustedHeight);
   const trusted =
     numeric(progress.trustedAOnB) > 0 ||
     present(status.trust?.aOnB?.consensusHash) ||
@@ -228,12 +245,12 @@ function buildVisualModel(status) {
       (heightAtLeast(forward.trustedHeight, forward.commitHeight) ||
         heightAtLeast(progress.trustedAOnB, forward.commitHeight)));
   const proven =
-    Boolean(forward.receiveTxHash || security.forwardConsumed) ||
+    Boolean(security.forwardConsumed) ||
     numeric(balances.voucher) > 0 ||
     numeric(balances.poolCollateral) > 0;
   const collateralized = Boolean(lending.collateralDeposited) || numeric(balances.poolCollateral) > 0;
   const borrowed = Boolean(lending.borrowed) || numeric(balances.poolDebt) > 0 || numeric(balances.bankB) > 0;
-  const reverseStarted = present(reverse.commitHeight) || present(reverse.packetId) || Boolean(reverse.receiveTxHash);
+  const reverseStarted = present(reverse.commitHeight) || present(reverse.packetId) || Boolean(security.reverseConsumed);
   const safety = Boolean(security.frozen || security.recovering || trace.misbehaviour?.frozen);
 
   let stage = "ready";
@@ -320,12 +337,14 @@ export function renderRoadmap(status) {
   const forward = trace.forward || {};
   const reverse = trace.reverse || {};
   const escrowed = present(forward.commitHeight) || present(forward.packetId) || positive(balances.escrow);
-  const headerFinalized = present(forward.finalizedHeight) || present(forward.trustedHeight);
+  const headerFinalized = present(forward.commitHeight)
+    ? heightAtLeast(forward.finalizedHeight, forward.commitHeight) || heightAtLeast(forward.trustedHeight, forward.commitHeight)
+    : present(forward.finalizedHeight) || present(forward.trustedHeight);
   const trusted =
     present(forward.commitHeight) &&
     (heightAtLeast(forward.trustedHeight, forward.commitHeight) ||
       heightAtLeast(progress.trustedAOnB, forward.commitHeight));
-  const proven = Boolean(forward.receiveTxHash || forward.proofMode || security.forwardConsumed) || positive(balances.voucher);
+  const proven = Boolean(security.forwardConsumed) || positive(balances.voucher);
   const forwardProofMode = trace.forward?.proofMode;
   const lending = trace.risk || trace.lending || {};
   const lendingStarted =
@@ -339,7 +358,7 @@ export function renderRoadmap(status) {
     present(reverse.commitHeight) &&
     (heightAtLeast(reverse.trustedHeight, reverse.commitHeight) ||
       heightAtLeast(progress.trustedBOnA, reverse.commitHeight));
-  const unlocked = Boolean(reverse.receiveTxHash || reverse.proofMode || reverse.finalSourceBalance);
+  const unlocked = Boolean(security.reverseConsumed);
   const frozen = Number(progress.statusAOnB) === 2 || Number(progress.statusBOnA) === 2;
   const recovering = Number(progress.statusAOnB) === 3 || Number(progress.statusBOnA) === 3;
   const recovered = Boolean(trace.misbehaviour?.recovered);

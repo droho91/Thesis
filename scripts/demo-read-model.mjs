@@ -679,12 +679,13 @@ async function readOnchainDemoStatus(health) {
   const statusBOnANumber = Number(statusBOnA);
   const frozenEvidenceAOnB = normalizeEvidence(evidenceAOnB);
   const frozenEvidenceBOnA = normalizeEvidence(evidenceBOnA);
-  const [trustedAOnBSummary, trustedBOnASummary, forwardConsumed, forwardAcknowledged, deniedTimedOut] =
+  const [trustedAOnBSummary, trustedBOnASummary, forwardConsumed, forwardAcknowledged, reverseConsumed, deniedTimedOut] =
     await Promise.all([
       trustedHeaderSummary(lightClientB, chainIdA, trustedAOnB),
       trustedHeaderSummary(lightClientA, chainIdB, trustedBOnA),
       trace?.forward?.packetId ? handlerB.packetReceipts(trace.forward.packetId) : false,
       trace?.forward?.packetId ? handlerA.packetAcknowledgements(trace.forward.packetId) : false,
+      trace?.reverse?.packetId ? handlerA.packetReceipts(trace.reverse.packetId) : false,
       trace?.denied?.packetId ? handlerA.packetTimeouts(trace.denied.packetId) : false,
     ]);
 
@@ -732,7 +733,7 @@ async function readOnchainDemoStatus(health) {
   });
   const misbehaviourTrace = trace?.misbehaviour || {};
   const deniedTimedOutLive = Boolean(deniedTimedOut || trace?.denied?.timedOut);
-  const forwardProofVerified = Boolean(forwardConsumed || trace?.forward?.receiveTxHash);
+  const forwardProofVerified = Boolean(forwardConsumed);
   const forwardCollateralObserved = Boolean(forwardProofVerified || voucherBalance > 0n || poolCollateral > 0n);
   const receiptReplayGuardLive = Boolean(forwardConsumed);
   const explicitReplayAttackRejected = Boolean(
@@ -747,8 +748,9 @@ async function readOnchainDemoStatus(health) {
     liveBadDebt: totalBadDebt,
   });
   const settlementTrace = trace?.liquidatorSettlement || {};
-  const settlementStarted = Boolean(settlementTrace.burnTxHash || settlementTrace.packetId);
-  const settlementUnlocked = Boolean(settlementTrace.unlockTxHash || (settlementStarted && trace?.reverse?.receiveTxHash));
+  const settlementMatchesReverse = Boolean(settlementTrace.packetId && settlementTrace.packetId === trace?.reverse?.packetId);
+  const settlementStarted = Boolean(settlementMatchesReverse && (settlementTrace.burnTxHash || settlementTrace.packetId));
+  const settlementUnlocked = Boolean(settlementStarted && (settlementTrace.unlockTxHash || reverseConsumed));
   const packetLifecycleStatus = packetStatusLabel({
     consumed: forwardProofVerified,
     acknowledged: forwardAcknowledged,
@@ -872,10 +874,12 @@ async function readOnchainDemoStatus(health) {
         originRecipientBalance: units(liquidatorOriginBalance),
         started: settlementStarted,
         unlocked: settlementUnlocked,
-        packetId: settlementTrace.packetId || null,
-        burnTxHash: settlementTrace.burnTxHash || null,
-        unlockTxHash: settlementTrace.unlockTxHash || (settlementStarted ? trace?.reverse?.receiveTxHash : null) || null,
-        amount: settlementTrace.amount || units(0n),
+        packetId: settlementStarted ? settlementTrace.packetId || null : null,
+        burnTxHash: settlementStarted ? settlementTrace.burnTxHash || null : null,
+        unlockTxHash: settlementStarted
+          ? settlementTrace.unlockTxHash || (reverseConsumed ? trace?.reverse?.receiveTxHash : null) || null
+          : null,
+        amount: settlementStarted ? settlementTrace.amount || units(0n) : units(0n),
       },
     },
     progress: {
@@ -903,7 +907,7 @@ async function readOnchainDemoStatus(health) {
     security: {
       forwardConsumed: Boolean(forwardConsumed),
       forwardCollateralObserved,
-      reverseConsumed: Boolean(trace?.reverse?.receiveTxHash),
+      reverseConsumed: Boolean(reverseConsumed),
       forwardAcknowledged,
       deniedTimedOut,
       receiptReplayGuardLive,
