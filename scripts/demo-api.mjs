@@ -1,6 +1,7 @@
 import {
   deploySeedPayload,
   healthPayload,
+  resumeSessionPayload,
   runActionPayload,
   runFlowPayload,
   resetSeededPayload,
@@ -55,6 +56,11 @@ export async function handleDemoApi(req, res, url) {
 
     if (req.method === "POST" && url.pathname === "/api/reset-seeded") {
       return sendJson(res, 200, await resetSeededPayload());
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/resume-session") {
+      const result = await resumeSessionPayload();
+      return sendJson(res, result.statusCode || (result.ok ? 200 : 500), result);
     }
 
     if (req.method === "POST" && url.pathname === "/api/action") {

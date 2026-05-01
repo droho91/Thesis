@@ -446,7 +446,7 @@ async function readLocalHealth(runtime) {
       label: "Stale interchain lending deployment",
       runtime: cfgRuntime,
       message:
-        "Runtime config exists, but one or more configured contract addresses have no code. Run npm run deploy and npm run seed after starting fresh Besu chains.",
+        "Runtime config exists, but one or more configured contract addresses have no code on the running chains. If you used besu:down -v, run Prepare Fast Demo Session or npm run deploy and npm run seed; Resume Session cannot recover deleted chain state.",
       chains: { A: chainA, B: chainB },
     };
   }

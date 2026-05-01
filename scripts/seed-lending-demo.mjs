@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { defaultBesuRuntimeEnv, loadArtifact, normalizeRuntime, waitForBesuRuntimeReady } from "./besu-runtime.mjs";
 import { loadRuntimeConfig, saveRuntimeConfig, signerForChain, RUNTIME_CONFIG_PATH } from "./interchain-config.mjs";
+import { baseTrace, writeTrace } from "./demo/trace-writer.mjs";
 
 defaultBesuRuntimeEnv();
 
@@ -238,11 +239,27 @@ async function main() {
     liquidationBonusBps: LIQUIDATION_BONUS_BPS.toString(),
   };
   await saveRuntimeConfig(config);
+  const trace = {
+    ...baseTrace(config, {
+      sourceUserAddress,
+      sourceLiquidatorAddress,
+      destinationUserAddress,
+      liquidatorAddress,
+    }),
+    generatedAt: new Date().toISOString(),
+    latestOperation: {
+      phase: "seeded",
+      label: "Seeded interchain lending runtime",
+      summary: "Contracts are deployed and policy/oracle/risk seed state is ready for the storage-proof lending flow.",
+    },
+  };
+  await writeTrace(trace);
 
   console.log(`[seed] minted ${ethers.formatUnits(SOURCE_USER_AMOUNT, 18)} aBANK to ${sourceUserAddress}`);
   console.log(`[seed] deposited ${ethers.formatUnits(POOL_LIQUIDITY, 18)} bCASH supplier liquidity`);
   console.log(`[seed] funded liquidator ${liquidatorAddress} with ${ethers.formatUnits(LIQUIDATOR_DEBT_BALANCE, 18)} bCASH`);
   console.log(`[seed] policy/oracle/risk configuration saved to ${RUNTIME_CONFIG_PATH}`);
+  console.log("[seed] demo trace reset to seeded baseline");
 }
 
 main()

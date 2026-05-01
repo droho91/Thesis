@@ -9,6 +9,11 @@ const QBFT_MIX_HASH = "0x63746963616c2062797a616e74696e65206661756c7420746f6c657
 const UNSAFE_LOCAL_DEMO = process.env.UNSAFE_LOCAL_DEMO === "true";
 const BESU_ENABLE_ADMIN_DEBUG = process.env.BESU_ENABLE_ADMIN_DEBUG === "true";
 const BESU_DOCKER_IMAGE = process.env.BESU_DOCKER_IMAGE || "hyperledger/besu:24.10.0";
+const BONSAI_HISTORICAL_BLOCK_LIMIT = Number(process.env.BESU_BONSAI_HISTORICAL_BLOCK_LIMIT || "100000");
+const BONSAI_TRIE_LOGS_PRUNING_WINDOW_SIZE = Math.max(
+  BONSAI_HISTORICAL_BLOCK_LIMIT + 1,
+  Number(process.env.BESU_BONSAI_TRIE_LOGS_PRUNING_WINDOW_SIZE || String(BONSAI_HISTORICAL_BLOCK_LIMIT + 20000)),
+);
 
 const NETWORKS = [
   {
@@ -155,6 +160,9 @@ function configToml(network, node, enableRpc) {
     `min-gas-price=0`,
     `sync-mode="FULL"`,
     `sync-min-peers=0`,
+    `# Local demo setting: keep enough Bonsai historical state for storage-proof RPC after idle periods.`,
+    `bonsai-historical-block-limit=${BONSAI_HISTORICAL_BLOCK_LIMIT}`,
+    `bonsai-trie-logs-pruning-window-size=${BONSAI_TRIE_LOGS_PRUNING_WINDOW_SIZE}`,
     `metrics-enabled=true`,
     `metrics-host="0.0.0.0"`,
     `metrics-port=9546`,
@@ -268,6 +276,8 @@ async function main() {
     UNSAFE_LOCAL_DEMO
       ? "Warning: this directory was generated with `UNSAFE_LOCAL_DEMO=true`; do not treat the keys or RPC surface as hardened."
       : "Default mode avoids deterministic keys, pins the Besu Docker image, disables ADMIN/DEBUG RPC, and restricts CORS/host allowlists for local UI access.",
+    "",
+    `Generated node configs set \`bonsai-historical-block-limit=${BONSAI_HISTORICAL_BLOCK_LIMIT}\` and \`bonsai-trie-logs-pruning-window-size=${BONSAI_TRIE_LOGS_PRUNING_WINDOW_SIZE}\` so the local demo can serve storage proofs after idle periods. This is a local demo retention setting, not production guidance.`,
     "",
     "Use `docker compose -f networks/besu/docker-compose.yml up -d` to start the local networks after generating them.",
     "",

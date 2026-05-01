@@ -20,6 +20,11 @@ function functionBlock(source, name) {
 }
 
 const demoRunner = await readFile(resolve(process.cwd(), "scripts", "run-lending-demo.mjs"), "utf8");
+const besuGenerator = await readFile(resolve(process.cwd(), "scripts", "generate-besu-qbft-networks.mjs"), "utf8");
+const seedDemo = await readFile(resolve(process.cwd(), "scripts", "seed-lending-demo.mjs"), "utf8");
+const demoReadModel = await readFile(resolve(process.cwd(), "scripts", "demo-read-model.mjs"), "utf8");
+const demoService = await readFile(resolve(process.cwd(), "scripts", "demo-service.mjs"), "utf8");
+const demoApi = await readFile(resolve(process.cwd(), "scripts", "demo-api.mjs"), "utf8");
 const lendingActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "lending-actions.mjs"), "utf8");
 const forwardBridgeActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "forward-bridge-actions.mjs"), "utf8");
 const reverseBridgeActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "reverse-bridge-actions.mjs"), "utf8");
@@ -94,7 +99,62 @@ assert.match(
   /packetReceipts\(trace\.reverse\.packetId\)/,
   "reverse burn should check live receipt state before allowing another reverse packet"
 );
+assert.match(
+  reverseBridgeActions,
+  /reverse-header-partial/,
+  "reverse client update should persist partial light-client progress instead of failing the UI"
+);
 assert.match(demoApp, /settlementMatchesReverse/, "UI should ignore stale settlement traces from a previous reverse packet");
+assert.match(besuGenerator, /bonsai-historical-block-limit=\$\{BONSAI_HISTORICAL_BLOCK_LIMIT\}/, "generated Besu config should retain local demo historical Bonsai state");
+assert.match(
+  besuGenerator,
+  /bonsai-trie-logs-pruning-window-size=\$\{BONSAI_TRIE_LOGS_PRUNING_WINDOW_SIZE\}/,
+  "generated Besu config should keep Bonsai trie logs pruning window above the historical block limit"
+);
+assert.match(seedDemo, /writeTrace\(trace\)/, "manual seed should reset stale UI trace to the seeded baseline");
+assert.match(demoReadModel, /Resume Session cannot recover deleted chain state/, "stale chain guidance should explain that volume resets require redeploy and seed");
+assert.match(forwardBridgeActions, /refreshFreshProofAnchor/, "forward receive should retry stale packet-height proofs at a fresh trusted height");
+assert.match(
+  forwardBridgeActions,
+  /Use Resume Session to refresh the proof anchor/,
+  "forward receive stale-proof guidance should direct users to Resume Session"
+);
+assert.match(
+  forwardBridgeActions,
+  /writeForwardReceiveTrace/,
+  "forward receive should persist a minted voucher even when the acknowledgement proof is deferred"
+);
+assert.match(
+  forwardBridgeActions,
+  /Bank A acknowledgement proof was deferred/,
+  "forward receive should explain deferred acknowledgement proof recovery"
+);
+assert.match(demoApi, /\/api\/resume-session/, "API should expose Resume Session");
+assert.match(demoService, /resumeSessionPayload/, "service should implement Resume Session");
+assert.match(demoService, /RESUME_SESSION_MAX_HEADERS/, "Resume Session should bound light-client catch-up per click");
+assert.match(demoService, /Resume Session partially refreshed proof anchors/, "Resume Session should report bounded partial proof-anchor refreshes");
+assert.match(demoService, /recoverOpenRouteCompletion/, "Open route should recover the UI trace if the on-chain route opened before a final read error");
+assert.match(demoService, /startLightClientHeartbeat\(\)/, "demo service should start the optional light-client heartbeat");
+assert.match(
+  demoService,
+  /function actionCanRunDuringHeartbeat\(action\)/,
+  "read-only header fetch actions should not fail while the heartbeat is refreshing proof anchors"
+);
+assert.match(
+  demoService,
+  /action === "finalizeForwardHeader"/,
+  "forward header fetch should be allowed during the light-client heartbeat"
+);
+assert.match(demoService, /probeOnChainDeploymentHealth\(config, STATUS_READ_TIMEOUT_MS\)/, "heartbeat should verify cached deployment code before touching light clients");
+assert.match(demoApp, /controller is no longer running this action/i, "UI should release stale processing state when the controller is no longer active");
+assert.match(demoApp, /attachBusyController/, "UI should attach to an already-running controller operation instead of showing a duplicate-submit failure");
+assert.match(demoApp, /If the chain was reset with besu:down -v/, "UI Resume recovery copy should distinguish deleted chain state from proof-anchor refresh");
+assert.match(demoHtml, /id="resumeSession"/, "UI should expose a Resume Session control");
+assert.doesNotMatch(
+  demoApp,
+  /wait for a fresh block and retry the receive-voucher action/i,
+  "UI recovery text should not ask users to blindly retry stale historical proof state"
+);
 
 assert.match(borrowerScenario, /runBorrowerCloseoutScenario/, "demo modules should include a borrower closeout lifecycle");
 assert.match(demoRunner, /--scenario/, "demo runner should support explicit scenario selection");

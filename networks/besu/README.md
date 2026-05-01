@@ -11,6 +11,8 @@ Each chain has four validators with generated local keys, a QBFT genesis, and ha
 
 Default mode avoids deterministic keys, pins the Besu Docker image, disables ADMIN/DEBUG RPC, and restricts CORS/host allowlists for local UI access.
 
+Generated node configs set `bonsai-historical-block-limit=100000` and `bonsai-trie-logs-pruning-window-size=120000` so the local demo can serve storage proofs after idle periods. This is a local demo retention setting, not production guidance.
+
 Use `docker compose -f networks/besu/docker-compose.yml up -d` to start the local networks after generating them.
 
 Important: this is local thesis scaffolding, but it is now the canonical runtime surface for the Solidity demo flow. The remaining gap is production-grade on-chain Besu header verification, not generator integration.

@@ -23,6 +23,18 @@ import { writeTracePatch } from "../trace-writer.mjs";
 import { buildPacketProofs } from "../proof/packet-proof-builder.mjs";
 import { readReverseHeader, trustCurrentHeaderForProof, trustReverseHeader } from "../proof/header-trust.mjs";
 
+async function latestTrustedAnchor(lightClient, sourceChainId) {
+  const height = BigInt(await lightClient.latestTrustedHeight(sourceChainId));
+  if (height === 0n) return null;
+  const header = await lightClient.trustedHeader(sourceChainId, height);
+  if (!header.exists) return null;
+  return {
+    height,
+    headerHash: header.headerHash,
+    stateRoot: header.stateRoot,
+  };
+}
+
 async function requireReasonableProofRefresh({ lightClient, provider, sourceChainId, minimumHeight, label }) {
   const [trustedHeight, latestHeight] = await Promise.all([
     readWithRetry(`${label} trusted height`, () => lightClient.latestTrustedHeight(sourceChainId)),
@@ -316,7 +328,37 @@ export async function finalizeReverseHeaderStep({ config, ctx, sourceChainId, de
 export async function updateReverseClientStep({ config, ctx, sourceChainId, destinationChainId }) {
   setPhase("step-updateReverseClient");
   const reverse = await ensureReversePacket(config, ctx, sourceChainId, destinationChainId);
-  const header = await trustReverseHeader(config, ctx, destinationChainId, reverse.commitHeight);
+  const before = await latestTrustedAnchor(ctx.A.lightClient, destinationChainId);
+  let header = null;
+  try {
+    header = await trustReverseHeader(config, ctx, destinationChainId, reverse.commitHeight);
+  } catch (error) {
+    const after = await latestTrustedAnchor(ctx.A.lightClient, destinationChainId).catch(() => null);
+    const progressed =
+      after &&
+      (!before || after.height > before.height) &&
+      after.height < BigInt(reverse.commitHeight);
+    if (!progressed) throw error;
+
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        reverse: {
+          trustedHeight: after.height.toString(),
+          trustedHeaderHash: after.headerHash,
+          trustedStateRoot: after.stateRoot,
+        },
+      },
+      {
+        phase: "reverse-header-partial",
+        label: "Partially updated Bank A Besu light client",
+        summary:
+          `Bank A now trusts Bank B Besu header #${after.height.toString()} and still needs ` +
+          `header #${BigInt(reverse.commitHeight).toString()} before reverse proof execution. Retry Sync Trust on Bank A.`,
+      }
+    );
+  }
   return writeTracePatch(
     config,
     ctx,

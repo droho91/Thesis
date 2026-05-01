@@ -32,6 +32,7 @@
               </div>
               <div class="nav-actions">
                 <button class="utility-button" id="refreshState" type="button">Refresh</button>
+                <button class="utility-button" id="resumeSession" type="button">Resume Session</button>
                 <button class="utility-button" id="openVerificationPanel" type="button" aria-expanded="false">Technical Details</button>
               </div>
             </div>
@@ -1485,9 +1486,10 @@
             <button class="utility-button" data-drawer-close="demoToolsDrawer" type="button">Close</button>
           </div>
           <p class="drawer-copy">
-            These controls prepare the thesis runtime or run scripted support flows. Fresh Reset redeploys and reseeds a clean baseline; Prepare Fast Demo Session only reuses a valid current runtime.
+            These controls prepare the thesis runtime or run scripted support flows. Resume Session refreshes RPC and proof-anchor readiness without resetting balances. Fresh Reset redeploys and reseeds a clean baseline.
           </p>
           <div class="runtime-tool-actions">
+            <button class="button-primary-soft" id="resumeSessionDrawer" type="button">Resume Session</button>
             <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
             <button class="button-secondary" data-action="borrowerCloseout" type="button">Close Position &amp; Return Collateral</button>
             <button class="button-secondary" data-action="fullFlow" type="button">Run Risk/Liquidation</button>

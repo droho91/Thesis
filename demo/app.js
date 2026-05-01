@@ -4,6 +4,10 @@ const buttons = [...document.querySelectorAll("button")];
 const actionButtons = [...document.querySelectorAll("[data-action]")];
 const deploySeedButton = document.getElementById("deploySeed");
 const resetSeededButton = document.getElementById("resetSeeded");
+const resumeSessionButtons = [
+  document.getElementById("resumeSession"),
+  document.getElementById("resumeSessionDrawer"),
+].filter(Boolean);
 const refreshButton = document.getElementById("refreshState");
 const focusModeButton = document.getElementById("focusMode");
 const openDemoToolsButton = document.getElementById("openDemoTools");
@@ -97,6 +101,15 @@ const ACTION_GUIDE = {
     affectedMetrics: ["deploymentStatus", "bankABalance", "bankBBalance", "poolLiquidity"],
     failureRecovery: "Check the runtime output, then rerun Fresh Reset before the live demo window.",
   },
+  resumeSession: {
+    runningTitle: "Resume Session",
+    currentAction: "Reloading runtime config, checking Besu RPC health, verifying deployed code, and refreshing light-client proof anchors when the gap is small.",
+    expectedVisibleChange: "The dashboard keeps current balances and previous actions, but proof-readiness state and the next valid action are refreshed.",
+    nextAfterSuccess: "Continue with the next enabled borrower action.",
+    affectedPortal: "borrower",
+    affectedMetrics: ["deploymentStatus", "trustedAOnB", "trustedBOnA", "workflowPanelStatus"],
+    failureRecovery: "If the chain was reset with besu:down -v, run npm run deploy and npm run seed once. If only proof anchors are behind, keep demo:ui running and click Resume again.",
+  },
   openRoute: {
     runningTitle: "Open Bank A to Bank B Route",
     currentAction: "Opening or reusing the proof-checked connection and channel. A first-time route performs several handshake transactions and storage proofs.",
@@ -140,7 +153,7 @@ const ACTION_GUIDE = {
     nextAfterSuccess: "Deposit the voucher as collateral in the Bank B lending pool.",
     affectedPortal: "borrower",
     affectedMetrics: ["voucherBalance", "proofVerificationResult", "proofReceiptStatus", "routeProof"],
-    failureRecovery: "If proof state is unavailable, wait for a fresh block and retry the receive-voucher action.",
+    failureRecovery: "The local Besu RPC can no longer serve the historical proof state for the packet height. Use Resume Session to refresh the proof anchor, or run Fresh Reset if the session is too stale.",
   },
   depositCollateral: {
     runningTitle: "Deposit Voucher Collateral",
@@ -415,6 +428,7 @@ function isMutationControl(button) {
     button.matches("[data-action]") ||
     button === deploySeedButton ||
     button === resetSeededButton ||
+    resumeSessionButtons.includes(button) ||
     button === primaryWorkflowCta ||
     button === topUpRepayCashButton
   );
@@ -790,6 +804,7 @@ function renderPrimaryGuide(actionState) {
   if (actionState.phase === "success") stage = "Rendering visible changes";
   if (actionState.phase === "warning") stage = "Fast readiness probe did not confirm runtime";
   if (actionState.phase === "failed") stage = "Stopped before visible state changed";
+  const failureMessage = actionState.error?.userMessage || actionState.error?.message || null;
   const guideNode = document.getElementById("primaryActionGuide");
   if (guideNode) guideNode.dataset.phase = actionState.phase;
   setPrimaryLinkyVariant(
@@ -811,7 +826,7 @@ function renderPrimaryGuide(actionState) {
         ? "Completed action remains visible so the state change is easy to explain."
         : actionState.phase === "warning"
           ? "The controller did not modify protocol state and is asking for a deliberate reset."
-          : "Review the recovery instruction before retrying."
+          : failureMessage || "Review the recovery instruction before retrying."
   );
   setText("primaryGuideMode", prefix);
   setText("primaryGuideProcessing", guide.runningTitle);
@@ -821,7 +836,9 @@ function renderPrimaryGuide(actionState) {
   setText("primaryGuideExpected", guide.expectedVisibleChange);
   setText(
     "primaryGuideNext",
-    actionState.phase === "failed" || actionState.phase === "warning" ? guide.failureRecovery : guide.nextAfterSuccess
+    actionState.phase === "failed" || actionState.phase === "warning"
+      ? failureMessage || guide.failureRecovery
+      : guide.nextAfterSuccess
   );
   const controllerCopy =
     controller?.label
@@ -829,10 +846,13 @@ function renderPrimaryGuide(actionState) {
       : actionState.phase === "running"
         ? `Controller submitted / ${elapsed}s elapsed. Waiting for tx confirmation, proof generation, or status refresh.`
         : actionState.phase === "failed" || actionState.phase === "warning"
-          ? "Action stopped before the expected state change completed."
+          ? failureMessage || "Action stopped before the expected state change completed."
           : "Action completed; visible state has been refreshed.";
   setText("primaryGuideController", controllerCopy);
-  setText("primaryActionHint", actionState.phase === "failed" || actionState.phase === "warning" ? guide.failureRecovery : guide.nextAfterSuccess);
+  setText(
+    "primaryActionHint",
+    actionState.phase === "failed" || actionState.phase === "warning" ? failureMessage || guide.failureRecovery : guide.nextAfterSuccess
+  );
   if (primaryWorkflowCta) {
     primaryWorkflowCta.disabled = actionState.phase === "running";
     primaryWorkflowCta.textContent =
@@ -2389,6 +2409,7 @@ function actionTitle(action) {
     borrowerCloseout: "Closed position and returned collateral",
     deploySeed: "Prepared fast demo session",
     resetSeeded: "Reset account baseline",
+    resumeSession: "Resumed runtime session",
     refresh: "Refreshed account state",
   };
   return titles[action] || action;
@@ -2453,6 +2474,12 @@ function renderPortalFailure(action, error, guide = guideForAction(action)) {
   const li = document.createElement("li");
   li.textContent = guide.failureRecovery;
   list.appendChild(li);
+  const output = error?.payload?.output || error?.payload?.message || "";
+  if (output && !output.includes(li.textContent)) {
+    const detail = document.createElement("li");
+    detail.textContent = output.split("\n").filter(Boolean).slice(0, 3).join(" ");
+    list.appendChild(detail);
+  }
 }
 
 function pushActivity(action, summary, nextStatus) {
@@ -2523,10 +2550,31 @@ async function refreshStatus() {
 function updateRunningController(status) {
   if (!currentRunningAction) return;
   currentRunningAction.controller = status?.controller?.activeOperation || null;
+  const elapsed = currentRunningAction.controller?.elapsedSeconds ?? Math.round((Date.now() - currentRunningAction.startedAtMs) / 1000);
+  if (status?.deployed === false && currentRunningAction.phase === "running") {
+    const error = new Error(
+      status.message ||
+        "The cached deployment is not present on the running chains. Prepare the demo session again before continuing."
+    );
+    error.userMessage = error.message;
+    completeActionUi(currentRunningAction.action, false, error);
+    setBusy(false);
+    setText("lastMessage", error.message);
+    setOutput(error.message);
+    return;
+  }
+  if (!currentRunningAction.controller && elapsed > 10 && currentRunningAction.phase === "running") {
+    const error = new Error("The controller is no longer running this action. Refresh state or use Resume Session before retrying.");
+    error.userMessage = error.message;
+    completeActionUi(currentRunningAction.action, false, error);
+    setBusy(false);
+    setText("lastMessage", error.message);
+    setOutput(error.message);
+    return;
+  }
   renderPrimaryGuide(currentRunningAction);
   updateProofLifecycle(status || currentStatus, currentRunningAction);
   const label = currentRunningAction.controller?.label || currentRunningAction.guide.runningTitle;
-  const elapsed = currentRunningAction.controller?.elapsedSeconds ?? Math.round((Date.now() - currentRunningAction.startedAtMs) / 1000);
   setText("lastMessage", `Running ${label} for ${elapsed}s. Waiting for tx confirmation, proof generation, or status refresh if needed.`);
 }
 
@@ -2552,6 +2600,14 @@ function startActionPolling() {
 }
 
 function beginActionUi(action, button = null) {
+  if (currentRunningAction?.phase === "running") {
+    renderPrimaryGuide(currentRunningAction);
+    setText(
+      "lastMessage",
+      `${currentRunningAction.guide.runningTitle} is already running. Wait for it to finish before starting another action.`
+    );
+    return false;
+  }
   const guide = guideForAction(action);
   currentRunningAction = {
     action,
@@ -2572,6 +2628,42 @@ function beginActionUi(action, button = null) {
   updateProofLifecycle(currentStatus, currentRunningAction);
   setBusy(true);
   startActionPolling();
+  return true;
+}
+
+function attachToControllerOperation(activeOperation, button = null) {
+  if (!activeOperation?.action) return false;
+  const action = activeOperation.action;
+  const guide = guideForAction(action);
+  const elapsedSeconds = Number(activeOperation.elapsedSeconds || 0);
+  currentRunningAction = {
+    action,
+    guide,
+    button,
+    phase: "running",
+    startedAtMs: Date.now() - Math.max(0, elapsedSeconds) * 1000,
+    controller: activeOperation,
+  };
+  activeScenarioCard = scenarioCardForButton(button) || scenarioCardForAction(action);
+  setScenarioCardState(activeScenarioCard, "running", "Running");
+  document.body.dataset.runningAction = action;
+  document.body.dataset.actionPortal = guide.affectedPortal;
+  setText(
+    "lastMessage",
+    `${activeOperation.label || guide.runningTitle} is already running for ${elapsedSeconds}s. Waiting for it to finish.`
+  );
+  setOutput(`[controller] ${activeOperation.label || guide.runningTitle} is already running. Wait for completion.`);
+  renderPrimaryGuide(currentRunningAction);
+  updateProofLifecycle(currentStatus, currentRunningAction);
+  setBusy(true);
+  startActionPolling();
+  return true;
+}
+
+function attachBusyController(error, button = null) {
+  if (error?.statusCode !== 409) return false;
+  const activeOperation = error.payload?.controller?.activeOperation;
+  return attachToControllerOperation(activeOperation, button);
 }
 
 function completeActionUi(action, ok, error = null, phaseOverride = null) {
@@ -2583,6 +2675,7 @@ function completeActionUi(action, ok, error = null, phaseOverride = null) {
     currentRunningAction.controller?.elapsedSeconds ??
     Math.max(0, Math.round((currentRunningAction.completedAtMs - currentRunningAction.startedAtMs) / 1000));
   currentRunningAction.phase = phase;
+  currentRunningAction.error = error;
   currentRunningAction.controller = null;
   renderPrimaryGuide(currentRunningAction);
   updateProofLifecycle(currentStatus, currentRunningAction);
@@ -2603,7 +2696,8 @@ function completeActionUi(action, ok, error = null, phaseOverride = null) {
 }
 
 async function runDeploySeed(button = deploySeedButton) {
-  beginActionUi("deploySeed", button);
+  if (!beginActionUi("deploySeed", button)) return;
+  let attachedBusyController = false;
   try {
     const payload = await requestJson("/api/deploy-seed", { method: "POST" });
     actionCardPinned = false;
@@ -2626,17 +2720,22 @@ async function runDeploySeed(button = deploySeedButton) {
     }
     setOutput(payload.output);
   } catch (error) {
+    if (attachBusyController(error, button)) {
+      attachedBusyController = true;
+      return;
+    }
     completeActionUi("deploySeed", false, error);
     setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Prepare Fast Demo Session failed.");
     setOutput(error.message);
     pushFailedActivity("deploySeed", error);
   } finally {
-    setBusy(false);
+    if (!attachedBusyController) setBusy(false);
   }
 }
 
 async function runResetSeeded() {
-  beginActionUi("resetSeeded", resetSeededButton);
+  if (!beginActionUi("resetSeeded", resetSeededButton)) return;
+  let attachedBusyController = false;
   try {
     const payload = await requestJson("/api/reset-seeded", { method: "POST" });
     actionCardPinned = false;
@@ -2651,12 +2750,45 @@ async function runResetSeeded() {
     setText("lastMessage", "Fresh reset complete.");
     setOutput(payload.output);
   } catch (error) {
+    if (attachBusyController(error, resetSeededButton)) {
+      attachedBusyController = true;
+      return;
+    }
     completeActionUi("resetSeeded", false, error);
     setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Fresh Reset failed.");
     setOutput(error.message);
     pushFailedActivity("resetSeeded", error);
   } finally {
-    setBusy(false);
+    if (!attachedBusyController) setBusy(false);
+  }
+}
+
+async function runResumeSession(button = resumeSessionButtons[0]) {
+  if (!beginActionUi("resumeSession", button)) return;
+  let attachedBusyController = false;
+  try {
+    const payload = await requestJson("/api/resume-session", { method: "POST" });
+    actionCardPinned = false;
+    renderStatus(payload.status);
+    refreshTransactionUi(payload.status, { forceDefaults: false });
+    currentStatus = payload.status;
+    selectedWorkflowStep = null;
+    syncWorkflowUi(currentStatus);
+    pushActivity("resumeSession", payload.message || "Runtime session resumed and proof anchors refreshed.", payload.status);
+    completeActionUi("resumeSession", true);
+    setText("lastMessage", payload.message || "Resume Session complete.");
+    setOutput(payload.output);
+  } catch (error) {
+    if (attachBusyController(error, button)) {
+      attachedBusyController = true;
+      return;
+    }
+    completeActionUi("resumeSession", false, error);
+    setText("lastMessage", error.statusCode === 409 ? error.userMessage || "Resume Session needs Fresh Reset." : "Resume Session failed.");
+    setOutput(error.message);
+    pushFailedActivity("resumeSession", error);
+  } finally {
+    if (!attachedBusyController) setBusy(false);
   }
 }
 
@@ -2696,7 +2828,8 @@ async function runAction(action, { button = null } = {}) {
     return;
   }
   const title = actionTitle(action);
-  beginActionUi(action, button);
+  if (!beginActionUi(action, button)) return;
+  let attachedBusyController = false;
   if (requestBody.amount) {
     setOutput(
       `${guideForAction(action).currentAction}\n\nAmount: ${requestBody.amount} ${AMOUNT_ACTIONS[action]?.unit || ""}\nExpected visible change: ${guideForAction(action).expectedVisibleChange}`
@@ -2717,13 +2850,17 @@ async function runAction(action, { button = null } = {}) {
     setText("lastMessage", payload.message);
     setOutput(payload.output || payload.message);
   } catch (error) {
+    if (attachBusyController(error, button)) {
+      attachedBusyController = true;
+      return;
+    }
     completeActionUi(action, false, error);
     const staleCache = String(error.payload?.error || error.message || "").includes("Cached deployment is no longer valid");
     setText("lastMessage", error.statusCode === 409 && !staleCache ? "Controller is busy." : error.payload?.error || `${title} failed.`);
     setOutput(error.message);
     pushFailedActivity(action, error);
   } finally {
-    setBusy(false);
+    if (!attachedBusyController) setBusy(false);
   }
 }
 
@@ -2753,6 +2890,9 @@ async function runPrimaryWorkflowAction() {
 primaryWorkflowCta?.addEventListener("click", runPrimaryWorkflowAction);
 deploySeedButton?.addEventListener("click", () => runDeploySeed(deploySeedButton));
 resetSeededButton?.addEventListener("click", runResetSeeded);
+resumeSessionButtons.forEach((button) => {
+  button.addEventListener("click", () => runResumeSession(button));
+});
 topUpRepayCashButton?.addEventListener("click", () => {
   setLoanTab("repay");
   setActiveActionCard("loan", { pinned: true });

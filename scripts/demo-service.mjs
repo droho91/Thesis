@@ -3,9 +3,21 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { ethers } from "ethers";
 import { loadArtifact, normalizeRuntime } from "./besu-runtime.mjs";
-import { loadRuntimeConfig, providerForChain, RUNTIME_CONFIG_PATH } from "./interchain-config.mjs";
+import { loadRuntimeConfig, providerForChain, saveRuntimeConfig, RUNTIME_CONFIG_PATH } from "./interchain-config.mjs";
 import { readDemoStatus, readTrace } from "./demo-read-model.mjs";
-import { applyDemoAmountOverrides, getCurrentPhase, prepareStepContext } from "./demo/context.mjs";
+import {
+  DEMO_MAX_TIMEOUT_HEADER_GAP,
+  applyDemoAmountOverrides,
+  chainId,
+  currentRouteStatus,
+  getCurrentPhase,
+  handshakeTrace,
+  loadContext,
+  prepareStepContext,
+  robustCurrentRouteStatus,
+  trustRemoteHeaderAt,
+  writeTracePatch,
+} from "./demo/context.mjs";
 import { runDemoStep } from "./demo/dispatcher.mjs";
 
 // Demo service layer: wraps runtime command execution and composes payloads consumed by the HTTP API.
@@ -17,9 +29,16 @@ const node = process.execPath;
 const DEFAULT_TIMEOUT_MS = Number(process.env.DEMO_SERVICE_TIMEOUT_MS || 600000);
 const FAST_READY_TIMEOUT_MS = Number(process.env.DEMO_FAST_READY_TIMEOUT_MS || 5000);
 const STATUS_READ_TIMEOUT_MS = Number(process.env.DEMO_STATUS_READ_TIMEOUT_MS || 8000);
+const LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS = Number(process.env.DEMO_LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS || 25000);
+const LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS = BigInt(process.env.DEMO_LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS || "12");
+const RESUME_SESSION_MAX_HEADER_GAP = BigInt(process.env.DEMO_RESUME_MAX_HEADER_GAP || DEMO_MAX_TIMEOUT_HEADER_GAP.toString());
+const RESUME_SESSION_MAX_HEADERS = BigInt(process.env.DEMO_RESUME_MAX_HEADERS || "12");
+const RESUME_SESSION_TIMEOUT_MS = Number(process.env.DEMO_RESUME_TIMEOUT_MS || 60000);
 let activeOperation = null;
 let preparedContextCache = null;
 let runtimeReadyConfirmed = false;
+let heartbeatRunning = false;
+let lastHeartbeatSkipMessage = null;
 
 const CRITICAL_DEPLOYMENT_CONTRACTS = Object.freeze([
   ["A", "lightClient"],
@@ -85,6 +104,7 @@ function operationLabel(action) {
   const labels = {
     deploySeed: "Prepare Fast Demo Session",
     resetSeeded: "Fresh Reset",
+    resumeSession: "Resume Session",
     fullFlow: "Run Risk/Liquidation Lifecycle",
     borrowerCloseout: "Close Position & Return Collateral",
     runFlow: "Run Flow",
@@ -159,17 +179,62 @@ function controllerBusyError(requestedAction) {
   return error;
 }
 
+function sleep(ms) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+async function waitForHeartbeatIdle() {
+  const deadline = Date.now() + 10000;
+  while (heartbeatRunning && Date.now() < deadline) {
+    await sleep(250);
+  }
+  if (heartbeatRunning) {
+    const message = "Light-client heartbeat is still refreshing proof anchors. Retry the action in a few seconds.";
+    const error = new Error(message);
+    error.statusCode = 409;
+    error.payload = {
+      ok: false,
+      error: message,
+      output: `[controller] ${message}`,
+      controller: controllerState(),
+    };
+    throw error;
+  }
+}
+
+function actionCanRunDuringHeartbeat(action) {
+  return action === "finalizeForwardHeader" || action === "finalizeReverseHeader";
+}
+
+function proofReadinessGapError(label, trustedHeight, latestHeight, maxGap) {
+  const message =
+    `${label} latest source height ${latestHeight.toString()} is too far ahead of trusted height ${trustedHeight.toString()} ` +
+    `(gap ${(latestHeight - trustedHeight).toString()}, limit ${maxGap.toString()}). ` +
+    "Resume Session will not catch up that many headers during a live click. Keep the demo service running so the light-client heartbeat can keep proof anchors warm; if the chain was reset with besu:down -v, run npm run deploy and npm run seed once.";
+  const error = new Error(message);
+  error.statusCode = 409;
+  error.demoSafeMessage = message;
+  return error;
+}
+
 function invalidatePreparedContext() {
   preparedContextCache = null;
 }
 
 function staleCachedDeploymentError(reason) {
-  const message = "Cached deployment is no longer valid. Please run Fresh Reset to redeploy and reseed the demo environment.";
+  const message =
+    "Cached deployment is no longer valid on the currently running Besu chains. Run Prepare Fast Demo Session, or run npm run deploy and npm run seed after besu:down -v.";
   const error = new Error(message);
   error.statusCode = 409;
   error.demoSafeMessage = message;
   error.healthReason = reason;
   return error;
+}
+
+function warnHeartbeatSkip(message) {
+  if (message === lastHeartbeatSkipMessage) return;
+  lastHeartbeatSkipMessage = message;
+  console.warn(`[heartbeat] proof anchor refresh skipped: ${message}`);
 }
 
 async function assertOnChainDeploymentHealth(config, timeoutMs = FAST_READY_TIMEOUT_MS) {
@@ -334,6 +399,7 @@ async function preparedContextForUiAction() {
 
 async function withControllerLock(action, run) {
   if (activeOperation) throw controllerBusyError(action);
+  if (!actionCanRunDuringHeartbeat(action)) await waitForHeartbeatIdle();
 
   activeOperation = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -454,6 +520,141 @@ function withTimeout(promise, timeoutMs, label) {
       }
     );
   });
+}
+
+async function rpcSnapshot(config) {
+  const providerA = providerForChain(config, "A");
+  const providerB = providerForChain(config, "B");
+  const [networkA, networkB, latestA, latestB] = await withTimeout(
+    Promise.all([providerA.getNetwork(), providerB.getNetwork(), providerA.getBlockNumber(), providerB.getBlockNumber()]),
+    FAST_READY_TIMEOUT_MS,
+    "Besu RPC health check"
+  );
+  return {
+    providerA,
+    providerB,
+    latestA: BigInt(latestA),
+    latestB: BigInt(latestB),
+    chainA: networkA.chainId.toString(),
+    chainB: networkB.chainId.toString(),
+  };
+}
+
+async function refreshOneProofAnchor({
+  label,
+  lightClient,
+  provider,
+  sourceChainId,
+  latestHeight,
+  maxGap,
+  maxHeaders = null,
+}) {
+  const trustedHeight = BigInt(await lightClient.latestTrustedHeight(sourceChainId));
+  const latest = BigInt(latestHeight);
+  if (latest <= trustedHeight) {
+    return { label, changed: false, trustedHeight, targetHeight: trustedHeight, latestHeight: latest, reason: "already current" };
+  }
+
+  const gap = latest - trustedHeight;
+  if (trustedHeight !== 0n && gap > maxGap) {
+    throw proofReadinessGapError(label, trustedHeight, latest, maxGap);
+  }
+
+  const targetHeight = maxHeaders == null ? latest : trustedHeight + (gap > maxHeaders ? maxHeaders : gap);
+  const trusted = await trustRemoteHeaderAt({
+    lightClient,
+    provider,
+    sourceChainId,
+    targetHeight,
+    validatorEpoch: 1n,
+  });
+  return {
+    label,
+    changed: true,
+    trustedHeight: BigInt(trusted.headerUpdate.height),
+    targetHeight,
+    latestHeight: latest,
+    reason: targetHeight < latest ? "bounded heartbeat update" : "refreshed to latest",
+  };
+}
+
+async function refreshProofAnchors({ config, ctx, latestA, latestB, maxGap, maxHeaders = null }) {
+  const sourceChainId = chainId(config, "A");
+  const destinationChainId = chainId(config, "B");
+  const route = await currentRouteStatus(config, ctx);
+  if (!route.ready) {
+    return {
+      route,
+      updates: [],
+      skipped: "Route is not open yet; light-client proof anchors will refresh after Open route.",
+    };
+  }
+
+  const updates = [];
+  updates.push(
+    await refreshOneProofAnchor({
+      label: "Bank A on Bank B",
+      lightClient: ctx.B.lightClient,
+      provider: ctx.providerA,
+      sourceChainId,
+      latestHeight: latestA,
+      maxGap,
+      maxHeaders,
+    })
+  );
+  updates.push(
+    await refreshOneProofAnchor({
+      label: "Bank B on Bank A",
+      lightClient: ctx.A.lightClient,
+      provider: ctx.providerB,
+      sourceChainId: destinationChainId,
+      latestHeight: latestB,
+      maxGap,
+      maxHeaders,
+    })
+  );
+  return { route, updates };
+}
+
+function nextValidActionFromStatus(status) {
+  if (!status?.deployed) return { action: "deploySeed", label: "Prepare Fast Demo Session" };
+  if (status.security?.frozen || status.security?.recovering) return { action: "recoverClient", label: "Recover Account" };
+  const trace = status.trace || {};
+  const balances = status.balances || {};
+  const market = status.market || {};
+  const progress = status.progress || {};
+  const forward = trace.forward || {};
+  const reverse = trace.reverse || {};
+  const forwardPending = Boolean(forward.packetId || forward.commitHeight) && !status.security?.forwardConsumed;
+  const reversePending = Boolean(reverse.packetId || reverse.commitHeight) && !status.security?.reverseConsumed;
+  if (!trace.handshake?.ready && !trace.handshake?.sourceRouteOpen && !trace.handshake?.destinationRouteOpen) {
+    return { action: "openRoute", label: "Open route" };
+  }
+  if (forwardPending) {
+    const commitHeight = BigInt(forward.commitHeight || 0);
+    const trustedHeight = BigInt(progress.trustedAOnB || forward.trustedHeight || 0);
+    if (commitHeight > 0n && trustedHeight < commitHeight) {
+      return { action: "updateForwardClient", label: "Import Bank A header on Bank B" };
+    }
+    return { action: "proveForwardMint", label: "Receive voucher" };
+  }
+  if (Number(balances.voucher || 0) > 0 && Number(balances.poolDebt || 0) <= 0 && Number(balances.poolCollateral || 0) <= 0) {
+    return { action: "depositCollateral", label: "Deposit voucher collateral" };
+  }
+  if (Number(balances.poolCollateral || 0) > 0 && Number(market.availableToBorrow || 0) > 0) {
+    return { action: "borrow", label: "Borrow" };
+  }
+  if (Number(balances.poolDebt || 0) > 0) return { action: "repay", label: "Repay" };
+  if (reversePending) {
+    const commitHeight = BigInt(reverse.commitHeight || 0);
+    const trustedHeight = BigInt(progress.trustedBOnA || reverse.trustedHeight || 0);
+    if (commitHeight > 0n && trustedHeight < commitHeight) {
+      return { action: "updateReverseClient", label: "Import Bank B header on Bank A" };
+    }
+    return { action: "proveReverseUnlock", label: "Verify reverse proof and unlock" };
+  }
+  if (Number(balances.bankA || 0) > 0) return { action: "lock", label: "Bridge collateral" };
+  return { action: "refresh", label: "Refresh state" };
 }
 
 async function readDemoStatusForPayload() {
@@ -682,6 +883,56 @@ async function runDemoActionInProcess(action, env = {}) {
   };
 }
 
+async function recoverOpenRouteCompletion(error) {
+  const config = await loadRuntimeConfig();
+  const ctx = await loadContext(config);
+  const routeStatus = await robustCurrentRouteStatus(config, ctx, { repair: false });
+  if (!routeStatus.ready) return null;
+
+  config.status = {
+    ...(config.status || {}),
+    proofCheckedHandshakeOpened: true,
+  };
+  await saveRuntimeConfig(config);
+
+  const trace = await writeTracePatch(
+    config,
+    ctx,
+    {
+      handshake: {
+        ...handshakeTrace(config, { reused: true, recoveredAfterError: true }, { reused: true, recoveredAfterError: true }),
+        ready: true,
+        degraded: routeStatus.degraded || false,
+        readError: routeStatus.readError,
+        sourceRouteOpen: routeStatus.sourceRouteOpen,
+        destinationRouteOpen: routeStatus.destinationRouteOpen,
+      },
+    },
+    {
+      phase: "route-ready",
+      label: "Recovered opened IBC connection and channel",
+      summary:
+        routeStatus.degraded
+          ? `Route is open; final status read remains degraded because Besu returned: ${routeStatus.readError}.`
+          : `Connection ${routeStatus.connection.sourceStateName}/${routeStatus.connection.destinationStateName}, ` +
+            `channel ${routeStatus.channel.sourceStateName}/${routeStatus.channel.destinationStateName}.`,
+    }
+  );
+
+  return {
+    ok: true,
+    recovered: true,
+    output: [
+      error.capturedOutput,
+      "[controller] Open route reached the expected on-chain state.",
+      `[controller] Recovered the UI trace after a finalization/read error: ${error.shortMessage || error.message}`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    trace,
+  };
+}
+
 export async function runActionPayload(actionRequest) {
   let request;
   try {
@@ -722,18 +973,21 @@ export async function runActionPayload(actionRequest) {
       result = action === "fullFlow" ? await runFlowStrict() : await runDemoActionInProcess(action, env);
     } catch (error) {
       error.phase = typeof error?.phase === "string" && error.phase.length > 0 ? error.phase : getCurrentPhase();
-      const safeMessage = error.demoSafeMessage || `Demo action ${action} failed.`;
-      result = {
-        ok: false,
-        statusCode: error.statusCode || 500,
-        output: [
-          error.capturedOutput,
-          `run-lending-demo failed during phase: ${error.phase}`,
-          error.healthReason ? `[controller] ${error.healthReason}` : null,
-          error.stack || error.message,
-        ].filter(Boolean).join("\n"),
-        error: safeMessage,
-      };
+      result = action === "openRoute" ? await recoverOpenRouteCompletion(error).catch(() => null) : null;
+      if (!result) {
+        const safeMessage = error.demoSafeMessage || `Demo action ${action} failed.`;
+        result = {
+          ok: false,
+          statusCode: error.statusCode || 500,
+          output: [
+            error.capturedOutput,
+            `run-lending-demo failed during phase: ${error.phase}`,
+            error.healthReason ? `[controller] ${error.healthReason}` : null,
+            error.stack || error.message,
+          ].filter(Boolean).join("\n"),
+          error: safeMessage,
+        };
+      }
     }
 
     return {
@@ -812,6 +1066,101 @@ export async function resetSeededPayload() {
   });
 }
 
+export async function resumeSessionPayload() {
+  return withControllerLock("resumeSession", async () => {
+    try {
+      return await withTimeout((async () => {
+        runtimeReadyConfirmed = false;
+        invalidatePreparedContext();
+        setActiveOperationStage("Reloading runtime config");
+        const config = await loadRuntimeConfig();
+
+        setActiveOperationStage("Pinging Besu RPC endpoints");
+        const rpc = await rpcSnapshot(config);
+
+        setActiveOperationStage("Checking deployed contract code");
+        await assertOnChainDeploymentHealth(config, STATUS_READ_TIMEOUT_MS);
+
+        setActiveOperationStage("Loading runtime contracts");
+        const ctx = await loadContext(config);
+
+        setActiveOperationStage("Refreshing proof anchors");
+        const proofReadiness = await refreshProofAnchors({
+          config,
+          ctx,
+          latestA: rpc.latestA,
+          latestB: rpc.latestB,
+          maxGap: RESUME_SESSION_MAX_HEADER_GAP,
+          maxHeaders: RESUME_SESSION_MAX_HEADERS,
+        });
+
+        runtimeReadyConfirmed = true;
+        invalidatePreparedContext();
+        setActiveOperationStage("Reading refreshed state");
+        const status = await readDemoStatusForPayload();
+        const nextAction = nextValidActionFromStatus(status);
+        const updates = proofReadiness.updates || [];
+        const partial = updates.some((update) => update.targetHeight < update.latestHeight);
+        const updateSummary = updates
+          .map((update) => `${update.label}: trusted ${update.trustedHeight.toString()} / latest ${update.latestHeight.toString()}`)
+          .join("\n");
+
+        return {
+          ok: true,
+          ready: true,
+          partial,
+          message: partial
+            ? `Resume Session partially refreshed proof anchors. Next valid action: ${nextAction.label}.`
+            : `Resume Session complete. Next valid action: ${nextAction.label}.`,
+          output: [
+            `[controller] Reloaded ${RUNTIME_CONFIG_PATH}.`,
+            `[controller] Bank A RPC chain=${rpc.chainA} latest=${rpc.latestA.toString()}.`,
+            `[controller] Bank B RPC chain=${rpc.chainB} latest=${rpc.latestB.toString()}.`,
+            proofReadiness.skipped ? `[controller] ${proofReadiness.skipped}` : null,
+            updateSummary ? `[controller] Proof anchors:\n${updateSummary}` : "[controller] Proof anchors already current.",
+            partial
+              ? `[controller] Resume is bounded to ${RESUME_SESSION_MAX_HEADERS.toString()} headers per chain per click to avoid a long live-demo catch-up. Keep this service running for heartbeat refresh, or click Resume again if the next action still needs a newer trusted height.`
+              : null,
+            `[controller] Next valid action: ${nextAction.label} (${nextAction.action}).`,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          nextAction,
+          trace: await readTrace(),
+          status,
+        };
+      })(), RESUME_SESSION_TIMEOUT_MS, "Resume Session");
+    } catch (error) {
+      runtimeReadyConfirmed = false;
+      invalidatePreparedContext();
+      const status = await readDemoStatusForPayload();
+      const nextAction = nextValidActionFromStatus(status);
+      const message = error.demoSafeMessage || error.message || "Resume Session failed.";
+      return {
+        ok: false,
+        ready: false,
+        statusCode: error.statusCode || 500,
+        error: message,
+        message,
+        output: [
+          `[controller] Resume Session failed.`,
+          error.healthReason ? `[controller] ${error.healthReason}` : null,
+          `[controller] ${message}`,
+          status?.deployed === false
+            ? "[controller] The saved runtime does not match the currently running chain. If besu:down -v was used, run npm run deploy and npm run seed once before demo:ui."
+            : null,
+          `[controller] Next safe action: ${nextAction.label} (${nextAction.action}).`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        nextAction,
+        trace: await readTrace(),
+        status,
+      };
+    }
+  });
+}
+
 export async function runFlowPayload() {
   return withControllerLock("runFlow", async () => {
     const result = await runFlowStrict();
@@ -824,3 +1173,49 @@ export async function runFlowPayload() {
     };
   });
 }
+
+async function lightClientHeartbeatTick() {
+  if (heartbeatRunning || activeOperation || process.env.DEMO_LIGHT_CLIENT_HEARTBEAT === "false") return;
+  heartbeatRunning = true;
+  try {
+    const config = await loadRuntimeConfig().catch(() => null);
+    if (!config?.status?.deployed || !config?.status?.seeded) return;
+    const health = await probeOnChainDeploymentHealth(config, STATUS_READ_TIMEOUT_MS);
+    if (!health.ready) {
+      warnHeartbeatSkip(
+        `cached deployment is not present on the running chains (${health.reason}). Run Prepare Fast Demo Session, or npm run deploy && npm run seed after besu:down -v.`
+      );
+      return;
+    }
+    const rpc = await rpcSnapshot(config);
+    const ctx = await loadContext(config);
+    const readiness = await refreshProofAnchors({
+      config,
+      ctx,
+      latestA: rpc.latestA,
+      latestB: rpc.latestB,
+      maxGap: DEMO_MAX_TIMEOUT_HEADER_GAP,
+      maxHeaders: LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS,
+    });
+    const changed = (readiness.updates || []).filter((update) => update.changed);
+    if (changed.length > 0) {
+      console.log(
+        `[heartbeat] refreshed proof anchors: ${changed
+          .map((update) => `${update.label}=${update.trustedHeight.toString()}/${update.latestHeight.toString()}`)
+          .join(", ")}`
+      );
+    }
+  } catch (error) {
+    warnHeartbeatSkip(error.demoSafeMessage || error.message);
+  } finally {
+    heartbeatRunning = false;
+  }
+}
+
+function startLightClientHeartbeat() {
+  if (LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS <= 0 || process.env.DEMO_LIGHT_CLIENT_HEARTBEAT === "false") return;
+  const timer = setInterval(lightClientHeartbeatTick, LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS);
+  timer.unref?.();
+}
+
+startLightClientHeartbeat();
