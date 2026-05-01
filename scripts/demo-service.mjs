@@ -86,7 +86,7 @@ function operationLabel(action) {
     deploySeed: "Prepare Fast Demo Session",
     resetSeeded: "Fresh Reset",
     fullFlow: "Run Risk/Liquidation Lifecycle",
-    borrowerCloseout: "Run Borrower Closeout Lifecycle",
+    borrowerCloseout: "Close Position & Return Collateral",
     runFlow: "Run Flow",
     openRoute: "Open connection and channel",
     lock: "Lock canonical asset",
@@ -744,7 +744,7 @@ export async function runActionPayload(actionRequest) {
           result.ok && action === "fullFlow"
             ? "Completed the storage-proof cross-chain lending flow."
             : result.ok && action === "borrowerCloseout"
-              ? "Completed the borrower closeout lifecycle."
+              ? "Closed the position and returned collateral."
             : result.ok
               ? `Completed demo action: ${operationLabel(action)}${request.amount ? ` (${request.amount}).` : "."}`
               : result.error,

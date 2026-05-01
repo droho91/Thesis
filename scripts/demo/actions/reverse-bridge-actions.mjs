@@ -1,8 +1,6 @@
 import {
   DEMO_MAX_TIMEOUT_HEADER_GAP,
   DEMO_PACKET_TIMEOUT_HEIGHT,
-  FORWARD_AMOUNT,
-  amountFromTrace,
   asBigInt,
   compact,
   ensureReversePacket,
@@ -175,11 +173,32 @@ export async function burnStep({ config, ctx, sourceChainId, destinationChainId 
   setPhase("step-burn");
   await requireOpenHandshake(config, ctx);
   const trace = await readExistingTrace();
-  const burnAmount = amountFromTrace(trace.forward, FORWARD_AMOUNT);
-  const freeVoucher = await ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress);
-  if (freeVoucher < burnAmount) {
+  const pendingReversePacket = trace.reverse?.packetId && !trace.reverse?.receiveTxHash
+    ? !(await ctx.A.packetHandler.packetReceipts(trace.reverse.packetId).catch(() => false))
+    : false;
+  if (pendingReversePacket) {
+    throw new Error("A reverse packet is already pending. Verify the reverse proof next.");
+  }
+
+  const [freeVoucher, activeDebt, activeCollateral, sourceEscrow] = await Promise.all([
+    ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress),
+    ctx.B.lendingPoolAdmin.debtBalance(ctx.destinationUserAddress),
+    ctx.B.lendingPoolAdmin.collateralBalance(ctx.destinationUserAddress),
+    ctx.A.escrow.totalEscrowed(),
+  ]);
+  if (activeDebt > 0n) throw new Error("Repay all debt first.");
+  if (activeCollateral > 0n) throw new Error("Withdraw collateral from the lending pool first.");
+  if (freeVoucher === 0n) {
     throw new Error("Bank B user needs a free voucher balance before burn. Repay and withdraw collateral first.");
   }
+  if (sourceEscrow < freeVoucher) {
+    throw new Error(
+      `Bank A escrow ${units(sourceEscrow)} aBANK is lower than the requested voucher burn ${units(freeVoucher)} vA. ` +
+        "Do not burn more voucher than source escrow can unlock."
+    );
+  }
+
+  const burnAmount = freeVoucher;
   const sequence = asBigInt(await ctx.B.packetStore.nextSequence());
   const receipt = await txStep("step burn voucher and release", () =>
     ctx.B.transferAppAdmin.connect(ctx.destinationUser).burnAndRelease(
@@ -191,6 +210,16 @@ export async function burnStep({ config, ctx, sourceChainId, destinationChainId 
       txOptions()
     )
   );
+  const [voucherAfter, nextSequenceAfter] = await Promise.all([
+    ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress),
+    ctx.B.packetStore.nextSequence(),
+  ]);
+  if (voucherAfter + burnAmount !== freeVoucher) {
+    throw new Error("Voucher burn accounting mismatch after Bank B burn.");
+  }
+  if (asBigInt(nextSequenceAfter) !== sequence + 1n) {
+    throw new Error("Reverse packet sequence did not advance as expected after voucher burn.");
+  }
   const commitHeight = BigInt(receipt.blockNumber);
   const packet = reversePacket({
     sequence,
@@ -203,6 +232,10 @@ export async function burnStep({ config, ctx, sourceChainId, destinationChainId 
     timeoutHeight: DEMO_PACKET_TIMEOUT_HEIGHT,
   });
   const packetIdValue = await ctx.B.packetStore.packetIdAt(sequence);
+  const committed = await ctx.B.packetStore.committedPacket(packetIdValue);
+  if (!committed) {
+    throw new Error("Reverse packet commitment was not recorded on Bank B after voucher burn.");
+  }
   return writeTracePatch(
     config,
     ctx,

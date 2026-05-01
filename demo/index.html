@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Verified Capital</title>
-    <link rel="icon" type="image/png" href="./assets/logo.png" />
+    <title>Linky Interchain Lending</title>
+    <link rel="icon" type="image/png" href="./assets/linky/linky-head.png" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body class="product-dashboard">
@@ -13,8 +13,11 @@
         <div class="hero-copy-panel product-hero-card">
           <nav class="product-nav" aria-label="Product status">
             <div class="product-brand">
-              <strong>Verified Capital</strong>
-              <span>Cross-chain lending</span>
+              <img class="brand-linky" data-linky-img data-linky-variant="head" src="./assets/linky/linky-head.png" alt="" />
+              <div>
+                <strong>Linky Interchain Lending</strong>
+                <span>Besu light-client prototype</span>
+              </div>
             </div>
             <div class="nav-meta">
               <div class="nav-badges">
@@ -38,63 +41,8 @@
             <div class="dashboard-title">
               <p class="eyebrow">Lending Dashboard</p>
               <h1>Cross-chain credit account</h1>
-              <p class="summary-copy" id="workflowSummaryCopy">
-                Prepare the demo account, bridge collateral, and borrow with a clear safety margin.
-              </p>
+              <p class="thesis-caption">Collateral-backed credit, unlocked by verified packet proofs in a controlled Besu/QBFT prototype.</p>
             </div>
-            <aside class="primary-action-card" aria-live="polite">
-              <div class="advisor-main">
-                <div class="advisor-copy">
-                  <span class="eyebrow">Linky's recommendation</span>
-                  <h2 id="primaryActionTitle">Prepare Fast Demo Session</h2>
-                  <p id="primaryActionDescription">Confirm the current Besu/QBFT runtime before moving collateral.</p>
-                </div>
-                <figure class="linky linky--advisor" id="primaryLinky" data-variant="wave" aria-hidden="true">
-                  <img
-                    id="primaryLinkyImage"
-                    data-linky-img
-                    data-linky-variant="wave"
-                    src="./assets/linky/linky-wave.png"
-                    alt=""
-                  />
-                  <span class="linky-fallback">L</span>
-                </figure>
-              </div>
-              <div>
-                <div class="running-guide live-action-card" id="primaryActionGuide" hidden>
-                  <div class="live-action-head">
-                    <span class="processing-chip" id="primaryGuideMode">Processing</span>
-                    <strong id="primaryGuideProcessing">-</strong>
-                  </div>
-                  <div class="live-progress-strip" aria-hidden="true"><i></i></div>
-                  <dl class="live-action-grid">
-                    <div>
-                      <dt>Current stage</dt>
-                      <dd id="primaryGuideStage">-</dd>
-                    </div>
-                    <div>
-                      <dt>Action duration</dt>
-                      <dd id="primaryGuideElapsed">0s</dd>
-                    </div>
-                    <div>
-                      <dt>What is happening now</dt>
-                      <dd id="primaryGuideCurrent">-</dd>
-                    </div>
-                    <div>
-                      <dt>Expected visible change</dt>
-                      <dd id="primaryGuideExpected">-</dd>
-                    </div>
-                    <div>
-                      <dt>Next after success</dt>
-                      <dd id="primaryGuideNext">-</dd>
-                    </div>
-                  </dl>
-                  <small id="primaryGuideController">Waiting for controller status.</small>
-                </div>
-              </div>
-              <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Prepare Fast Demo Session</button>
-              <small id="primaryActionHint">Use the recommendation, or choose any enabled action below.</small>
-            </aside>
           </div>
 
           <div class="portal-tabs" role="tablist" aria-label="Demo portals">
@@ -121,10 +69,16 @@
           </div>
 
           <aside class="portal-change-banner" id="portalChangeBanner" aria-live="polite" hidden>
-            <div>
-              <span class="eyebrow" id="portalChangeScope">What changed</span>
-              <h3 id="portalChangeTitle">Latest action</h3>
-              <p id="portalChangeSummary">Visible state changes will appear here after each action.</p>
+            <div class="portal-change-copy">
+              <figure class="linky linky--feedback" aria-hidden="true">
+                <img id="portalChangeLinkyImage" data-linky-img data-linky-variant="success" src="./assets/linky/linky-success.png" alt="" />
+                <span class="linky-fallback">L</span>
+              </figure>
+              <div>
+                <span class="eyebrow" id="portalChangeScope">What changed</span>
+                <h3 id="portalChangeTitle">Latest action</h3>
+                <p id="portalChangeSummary">Visible state changes will appear here after each action.</p>
+              </div>
             </div>
             <ul id="portalChangeList">
               <li>Waiting for the next action.</li>
@@ -223,7 +177,7 @@
           <article>
             <span class="action-index">Credit</span>
             <div class="available-action-buttons">
-              <button class="button-run" data-action="borrow" data-amount-input="borrowAmount" type="button">Borrow</button>
+              <button class="button-run" data-action="borrow" data-amount-input="borrowAmount" type="button">Continue borrowing</button>
               <button class="button-secondary" data-action="repay" data-amount-input="repayAmount" type="button">Repay</button>
               <button class="button-primary-soft" data-action="topUpRepayCash" type="button">Get demo bCASH</button>
             </div>
@@ -231,6 +185,9 @@
           <article>
             <span class="action-index">Closeout</span>
             <div class="available-action-buttons">
+              <button class="button-primary" data-action="withdrawCollateral" data-amount-input="withdrawAmount" data-closeout-withdraw="true" type="button">
+                Close Position &amp; Return Collateral
+              </button>
               <button class="button-primary-soft" data-action="burn" type="button">Burn voucher</button>
               <button class="button-run" data-action="proveReverseUnlock" type="button">Verify reverse proof and unlock</button>
             </div>
@@ -286,6 +243,16 @@
                 <strong id="voucherBalance">-</strong>
               </div>
             </div>
+            <aside class="linky-helper" id="bridgeLinkyHelper" data-linky-helper="bridge" aria-live="polite">
+              <figure class="linky linky--callout" aria-hidden="true">
+                <img data-linky-img data-linky-variant="wave" src="./assets/linky/linky-wave.png" alt="" />
+                <span class="linky-fallback">L</span>
+              </figure>
+              <div>
+                <strong id="bridgeLinkyTitle">No bridge activity yet</strong>
+                <p id="bridgeLinkyCopy">Let's begin by locking collateral on Bank A, then receive the voucher proof on Bank B.</p>
+              </div>
+            </aside>
             <div class="transaction-panel transaction-panel--bridge">
               <div class="transaction-panel-head">
                 <div>
@@ -336,6 +303,16 @@
               </div>
               <button class="button-primary" data-action="depositCollateral" data-amount-input="depositAmount" type="button">Deposit Voucher</button>
             </div>
+            <aside class="linky-helper" id="depositLinkyHelper" data-linky-helper="deposit" aria-live="polite">
+              <figure class="linky linky--callout" aria-hidden="true">
+                <img data-linky-img data-linky-variant="thinking" src="./assets/linky/linky-thinking.png" alt="" />
+                <span class="linky-fallback">L</span>
+              </figure>
+              <div>
+                <strong id="depositLinkyTitle">No voucher collateral yet</strong>
+                <p id="depositLinkyCopy">Bridge your asset first; once the proof mints voucher collateral, this deposit step becomes available.</p>
+              </div>
+            </aside>
             <div class="transaction-panel">
               <div class="transaction-panel-head">
                 <div>
@@ -629,15 +606,97 @@
               </div>
               <span class="soft-status">Optional</span>
             </div>
+            <ol class="redeem-sequence" aria-label="Return collateral sequence">
+              <li>
+                <span>Step 1</span>
+                <strong>Withdraw active collateral from lending pool</strong>
+              </li>
+              <li>
+                <span>Step 2</span>
+                <strong>Burn free voucher on Bank B</strong>
+              </li>
+              <li>
+                <span>Step 3</span>
+                <strong>Verify reverse proof and unlock aBANK on Bank A</strong>
+              </li>
+            </ol>
+            <aside class="linky-helper linky-helper--return" id="returnLinkyHelper" data-linky-helper="return" aria-live="polite">
+              <figure class="linky linky--callout" aria-hidden="true">
+                <img id="returnLinkyImage" data-linky-img data-linky-variant="thinking" src="./assets/linky/linky-thinking.png" alt="" />
+                <span class="linky-fallback">L</span>
+              </figure>
+              <div>
+                <strong id="returnLinkyTitle">Closeout sequence</strong>
+                <p id="returnLinkyCopy">Repay debt -> withdraw collateral -> burn voucher -> verify reverse proof -> unlock Bank A collateral.</p>
+              </div>
+            </aside>
             <div class="action-buttons action-buttons--primary">
+              <button class="button-secondary" data-action="withdrawCollateral" data-amount-input="withdrawAmount" data-closeout-withdraw="true" type="button">
+                Withdraw Collateral
+              </button>
               <button class="button-primary-soft" data-action="burn" type="button">Burn Voucher for Bank A Unlock</button>
               <button class="button-run" data-action="proveReverseUnlock" type="button">Verify Reverse Proof and Unlock</button>
             </div>
+            <p class="validation-message" id="burnValidation" aria-live="polite"></p>
           </article>
         </section>
 
         <section class="workflow-side" aria-label="Position overview">
           <div class="sticky-summary-stack">
+            <aside class="primary-action-card" aria-live="polite">
+              <div class="advisor-main">
+                <div class="advisor-copy">
+                  <span class="eyebrow">Linky recommends</span>
+                  <h2 id="primaryActionTitle">Prepare Fast Demo Session</h2>
+                  <p id="primaryActionDescription">Confirm the current Besu/QBFT runtime before moving collateral.</p>
+                </div>
+                <figure class="linky linky--advisor" id="primaryLinky" data-variant="wave" aria-hidden="true">
+                  <img
+                    id="primaryLinkyImage"
+                    data-linky-img
+                    data-linky-variant="wave"
+                    src="./assets/linky/linky-wave.png"
+                    alt=""
+                  />
+                  <span class="linky-fallback">L</span>
+                </figure>
+              </div>
+              <div>
+                <div class="running-guide live-action-card" id="primaryActionGuide" hidden>
+                  <div class="live-action-head">
+                    <span class="processing-chip" id="primaryGuideMode">Processing</span>
+                    <strong id="primaryGuideProcessing">-</strong>
+                  </div>
+                  <div class="live-progress-strip" aria-hidden="true"><i></i></div>
+                  <dl class="live-action-grid">
+                    <div>
+                      <dt>Current stage</dt>
+                      <dd id="primaryGuideStage">-</dd>
+                    </div>
+                    <div>
+                      <dt>Action duration</dt>
+                      <dd id="primaryGuideElapsed">0s</dd>
+                    </div>
+                    <div>
+                      <dt>What is happening now</dt>
+                      <dd id="primaryGuideCurrent">-</dd>
+                    </div>
+                    <div>
+                      <dt>Expected visible change</dt>
+                      <dd id="primaryGuideExpected">-</dd>
+                    </div>
+                    <div>
+                      <dt>Next after success</dt>
+                      <dd id="primaryGuideNext">-</dd>
+                    </div>
+                  </dl>
+                  <small id="primaryGuideController">Waiting for controller status.</small>
+                </div>
+              </div>
+              <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Prepare Fast Demo Session</button>
+              <small id="primaryActionHint">Use the recommendation, or choose any enabled action below.</small>
+            </aside>
+
             <article class="product-card verification-glance" aria-label="Verification summary">
               <div class="verification-glance-head">
                 <div class="section-head compact">
@@ -1109,6 +1168,16 @@
           <p class="proof-copy">
             This panel shows what the proof proves: Bank B accepts the packet only when a storage proof matches a packet commitment under a trusted Bank A state root. The backend relays data, but it does not get to decide whether the voucher is minted.
           </p>
+          <aside class="linky-helper" id="proofLinkyHelper" data-linky-helper="proof" aria-live="polite">
+            <figure class="linky linky--callout" aria-hidden="true">
+              <img data-linky-img data-linky-variant="thinking" src="./assets/linky/linky-thinking.png" alt="" />
+              <span class="linky-fallback">L</span>
+            </figure>
+            <div>
+              <strong id="proofLinkyTitle">No proof imported yet</strong>
+              <p id="proofLinkyCopy">Lock collateral or burn voucher first; then Linky will point to the trusted header and storage proof path.</p>
+            </div>
+          </aside>
           <div class="proof-lifecycle" aria-label="Proof lifecycle">
             <article data-proof-step="packet-committed">
               <span>1</span>
@@ -1269,7 +1338,7 @@
             <h2>Defense-ready flows</h2>
           </div>
           <div class="scenario-actions scenario-actions--heading">
-            <button class="button-secondary" data-action="borrowerCloseout" type="button">Run Borrower Closeout</button>
+            <button class="button-secondary" data-action="borrowerCloseout" type="button">Close Position &amp; Return Collateral</button>
             <button class="button-danger" data-action="fullFlow" type="button">Run Risk/Liquidation</button>
           </div>
         </div>
@@ -1420,7 +1489,7 @@
           </p>
           <div class="runtime-tool-actions">
             <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
-            <button class="button-secondary" data-action="borrowerCloseout" type="button">Run Borrower Closeout</button>
+            <button class="button-secondary" data-action="borrowerCloseout" type="button">Close Position &amp; Return Collateral</button>
             <button class="button-secondary" data-action="fullFlow" type="button">Run Risk/Liquidation</button>
           </div>
         </aside>

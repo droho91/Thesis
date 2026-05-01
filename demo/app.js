@@ -12,7 +12,6 @@ const topUpRepayCashButton = document.getElementById("topUpRepayCashButton");
 const primaryWorkflowCta = document.getElementById("primaryWorkflowCta");
 const workflowPanelTitle = document.getElementById("workflowPanelTitle");
 const workflowPanelStatus = document.getElementById("workflowPanelStatus");
-const workflowSummaryCopy = document.getElementById("workflowSummaryCopy");
 const primaryActionTitle = document.getElementById("primaryActionTitle");
 const primaryActionDescription = document.getElementById("primaryActionDescription");
 const primaryActionHint = document.getElementById("primaryActionHint");
@@ -297,11 +296,11 @@ const ACTION_GUIDE = {
     failureRecovery: "Use Fresh Reset deliberately before rerunning the scenario if it stopped mid-lifecycle.",
   },
   borrowerCloseout: {
-    runningTitle: "Run Borrower Closeout Lifecycle",
+    runningTitle: "Close Position & Return Collateral",
     currentAction: "Running the borrower path from bridge through borrow, repay, withdraw, burn, and reverse unlock.",
     expectedVisibleChange: "Borrower journey, reverse proof status, and source collateral balance move to closeout complete.",
     nextAfterSuccess: "Review the proof inspector for the completed reverse unlock evidence.",
-    affectedPortal: "scenarios",
+    affectedPortal: "borrower",
     affectedMetrics: ["scenarioRepayStatus", "proofStatusChip", "routeReverse", "workflowStepReturn"],
     failureRecovery: "Use Fresh Reset deliberately before rerunning the closeout scenario if an earlier step already consumed state.",
   },
@@ -590,6 +589,34 @@ function setActivePortal(portal) {
   } catch {}
 }
 
+function getLinkyVariant(state = {}) {
+  if (state.risk || state.blocked || state.error || state.health === "danger") return "risk";
+  if (state.success || state.completed) return "success";
+  if (state.welcome || state.empty) return "wave";
+  return "thinking";
+}
+
+function linkyAsset(variant = "head") {
+  return LINKY_ASSETS[variant] || LINKY_ASSETS.head;
+}
+
+function setLinkyImageVariant(image, variant = "head") {
+  if (!image) return;
+  const safeVariant = LINKY_ASSETS[variant] ? variant : "head";
+  image.dataset.linkyVariant = safeVariant;
+  const asset = linkyAsset(safeVariant);
+  if (missingLinkyAssets.has(safeVariant)) {
+    image.hidden = true;
+    image.closest(".linky")?.classList.add("is-fallback");
+    return;
+  }
+  image.closest(".linky")?.classList.remove("is-fallback");
+  if (!image.src.endsWith(asset.replace("./", ""))) {
+    image.hidden = false;
+    image.src = asset;
+  }
+}
+
 function setupLinkyFallbacks() {
   linkyImages.forEach((image) => {
     const markMissing = () => {
@@ -606,6 +633,7 @@ function setupLinkyFallbacks() {
       image.closest(".linky")?.classList.remove("is-fallback");
     });
     if (image.complete && image.naturalWidth === 0) markMissing();
+    setLinkyImageVariant(image, image.dataset.linkyVariant || "head");
   });
 }
 
@@ -613,18 +641,106 @@ function setPrimaryLinkyVariant(variant = "head") {
   if (!primaryLinky) return;
   const safeVariant = LINKY_ASSETS[variant] ? variant : "head";
   primaryLinky.dataset.variant = safeVariant;
-  if (!primaryLinkyImage) return;
-  primaryLinkyImage.dataset.linkyVariant = safeVariant;
-  if (missingLinkyAssets.has(safeVariant)) {
-    primaryLinkyImage.hidden = true;
-    primaryLinky.classList.add("is-fallback");
-    return;
+  setLinkyImageVariant(primaryLinkyImage, safeVariant);
+}
+
+function setLinkyHelper(key, { variant = "thinking", title = "", copy = "", hidden = false, tone = "" } = {}) {
+  const helper = document.getElementById(`${key}LinkyHelper`);
+  if (!helper) return;
+  helper.hidden = hidden;
+  helper.classList.toggle("is-risk", tone === "risk");
+  helper.classList.toggle("is-success", tone === "success");
+  setText(`${key}LinkyTitle`, title);
+  setText(`${key}LinkyCopy`, copy);
+  setLinkyImageVariant(helper.querySelector("[data-linky-img]"), variant);
+}
+
+function setPortalFeedbackLinky(variant) {
+  setLinkyImageVariant(document.getElementById("portalChangeLinkyImage"), variant);
+}
+
+function updateLinkyGuides(status = currentStatus) {
+  const state = financialState(status);
+  const lifecycle = lifecycleState(status);
+  const forward = status?.trace?.forward || {};
+  const reverse = status?.trace?.reverse || {};
+  const proof = status?.proofInspector || {};
+  const noBridgeActivity =
+    state.deployed &&
+    state.escrow <= POSITION_EPSILON &&
+    state.voucher <= POSITION_EPSILON &&
+    state.collateral <= POSITION_EPSILON &&
+    state.debt <= POSITION_EPSILON &&
+    !forward.packetId &&
+    !forward.commitHeight;
+
+  setLinkyHelper("bridge", {
+    variant: "wave",
+    title: "No bridge activity yet",
+    copy: "Let's begin by locking collateral on Bank A, then receive the voucher proof on Bank B.",
+    hidden: !noBridgeActivity,
+  });
+
+  const noVoucherCollateral = state.deployed && state.voucher <= POSITION_EPSILON && !lifecycle.collateralWasDeposited;
+  setLinkyHelper("deposit", {
+    variant: "thinking",
+    title: noVoucherCollateral ? "No voucher collateral yet" : "Voucher collateral is ready",
+    copy: noVoucherCollateral
+      ? "Bridge your asset first; once the proof mints voucher collateral, this deposit step becomes available."
+      : "Deposit only the voucher amount you want to make active collateral for borrowing.",
+    hidden: false,
+  });
+
+  const noProofActivity =
+    !forward.packetId &&
+    !forward.commitHeight &&
+    !reverse.packetId &&
+    !reverse.commitHeight &&
+    !proof.headerHash &&
+    !proof.storageSlot &&
+    !proof.proofVerificationResult;
+  setLinkyHelper("proof", {
+    variant: "thinking",
+    title: noProofActivity ? "No proof imported yet" : "Proof path is active",
+    copy: noProofActivity
+      ? "Lock collateral or burn voucher first; then Linky will point to the trusted header and storage proof path."
+      : "The proof inspector is tracking the packet, trusted header, storage proof, and one-time receipt status.",
+    hidden: false,
+  });
+
+  const burnEligibility = actionEligibility("burn", status);
+  let returnVariant = "thinking";
+  let returnTone = "";
+  let returnTitle = "Closeout sequence";
+  let returnCopy = "Repay debt -> withdraw collateral -> burn voucher -> verify reverse proof -> unlock Bank A collateral.";
+  if (lifecycle.borrowerReverseComplete || status?.security?.reverseConsumed) {
+    returnVariant = "success";
+    returnTone = "success";
+    returnTitle = "Collateral returned";
+    returnCopy = "Reverse proof execution is complete and Bank A collateral has been unlocked.";
+  } else if (reversePacketPending(status)) {
+    returnTitle = "Reverse proof is ready";
+    returnCopy = "Verify the reverse packet proof to unlock Bank A collateral.";
+  } else if (state.debt > POSITION_EPSILON) {
+    returnVariant = "risk";
+    returnTone = "risk";
+    returnTitle = "Repay debt first";
+    returnCopy = "Repay all debt before returning collateral.";
+  } else if (lifecycle.activeCollateral && !burnEligibility.ok) {
+    returnVariant = "risk";
+    returnTone = "risk";
+    returnTitle = "Withdraw before burning";
+    returnCopy = "Withdraw collateral from the lending pool before burning voucher.";
+  } else if (lifecycle.freeVoucher || state.voucher > POSITION_EPSILON) {
+    returnTitle = "Burn voucher next";
+    returnCopy = "Your voucher is free on Bank B. Burn it to commit the reverse unlock packet.";
   }
-  primaryLinky.classList.remove("is-fallback");
-  if (!primaryLinkyImage.src.endsWith(LINKY_ASSETS[safeVariant].replace("./", ""))) {
-    primaryLinkyImage.hidden = false;
-    primaryLinkyImage.src = LINKY_ASSETS[safeVariant];
-  }
+  setLinkyHelper("return", {
+    variant: returnVariant,
+    tone: returnTone,
+    title: returnTitle,
+    copy: returnCopy,
+  });
 }
 
 function setPrimaryGuideVisible(visible) {
@@ -977,6 +1093,12 @@ function workflowModel(status) {
   const collateralActive = lifecycle.activeCollateral;
   const debtActive = lifecycle.activeDebt;
   const activeIdlePosition = collateralActive && !debtActive;
+  const closeoutContext =
+    lifecycle.debtWasOpened ||
+    lifecycle.borrowerCollateralWithdrawn ||
+    lifecycle.returnStarted ||
+    selectedWorkflowStep === "return";
+  const closeoutWithdrawReady = activeIdlePosition && closeoutContext && state.withdrawable > POSITION_EPSILON;
   const elevatedRisk = debtActive && ["Watch", "Danger", "Liquidatable"].includes(health.status);
   const locked = safetyLocked(status);
   const reverseAction = reverseProofAction(status);
@@ -1022,6 +1144,7 @@ function workflowModel(status) {
     return: {
       complete: lifecycle.returnComplete,
       unlocked:
+        closeoutWithdrawReady ||
         lifecycle.freeVoucher ||
         lifecycle.returnStarted ||
         lifecycle.settlementVoucher ||
@@ -1033,9 +1156,11 @@ function workflowModel(status) {
           ? "Proof pending"
           : lifecycle.settlementVoucher
             ? "Settle"
-            : lifecycle.freeVoucher
-              ? "Ready"
-              : "Locked",
+            : closeoutWithdrawReady
+              ? "Withdraw first"
+              : lifecycle.freeVoucher
+                ? "Ready"
+                : "Locked",
     },
   };
 
@@ -1199,7 +1324,9 @@ function workflowModel(status) {
 
   if (collateralActive && !debtActive) {
     const recommendedAction =
-      state.availableBorrow > POSITION_EPSILON
+      closeoutWithdrawReady
+        ? { type: "action", action: "withdrawCollateral", label: "Withdraw collateral to return" }
+        : state.availableBorrow > POSITION_EPSILON
         ? { type: "action", action: "borrow", label: "Borrow again" }
         : state.voucher > POSITION_EPSILON
           ? { type: "action", action: "depositCollateral", label: "Deposit more voucher collateral" }
@@ -1207,12 +1334,16 @@ function workflowModel(status) {
             ? { type: "action", action: "withdrawCollateral", label: "Withdraw safe collateral" }
             : { type: "action", action: routeReady(status) ? "lock" : "openRoute", label: "Bridge more collateral" };
     return {
-      step: "manage",
-      title: "Choose how to use active collateral",
+      step: closeoutWithdrawReady ? "return" : "manage",
+      title: closeoutWithdrawReady ? "Close position and return collateral" : "Choose how to use active collateral",
       status: lifecycle.debtWasOpened ? "Debt closed" : "No debt",
-      summary: "Collateral is active and no debt is open. You can borrow again, deposit more voucher collateral, bridge more, withdraw safe collateral, or close the position.",
+      summary: closeoutWithdrawReady
+        ? "Debt is closed and collateral is still active in the lending pool. Continue borrowing if you want another loan, or close the position by withdrawing voucher collateral for return."
+        : "Collateral is active and no debt is open. You can borrow again, deposit more voucher collateral, bridge more, withdraw safe collateral, or close the position.",
       cta: recommendedAction,
-      description: "This is an idle lending position, not a forced closeout. Pick the action that best fits the live demo story.",
+      description: closeoutWithdrawReady
+        ? "Withdraw active collateral first; after it is free in your Bank B wallet, burn the voucher and verify the reverse proof."
+        : "This is an idle lending position, not a forced closeout. Pick the action that best fits the live demo story.",
       hint: `${formatAmount(state.availableBorrow, "bCASH")} available to borrow; ${formatAmount(state.withdrawable, "vA")} withdrawable.`,
       steps,
       risk: "safe",
@@ -1262,6 +1393,26 @@ function reversePacketPending(status) {
   const settlement = status?.risk?.settlement || {};
   if (!hasReversePacket(status)) return false;
   return !status?.security?.reverseConsumed && !reverse.receiveTxHash && !settlement.unlocked;
+}
+
+function closeoutWithdrawEligibility(status, baseEligibility) {
+  const state = financialState(status);
+  const lifecycle = lifecycleState(status);
+  if (!state.deployed) return baseEligibility;
+  if (state.debt > POSITION_EPSILON) return { ok: false, message: "Repay all debt first." };
+  if (!lifecycle.activeCollateral) {
+    return { ok: false, message: "There is no active collateral to withdraw for return." };
+  }
+  const closeoutContext =
+    lifecycle.debtWasOpened ||
+    lifecycle.borrowerCollateralWithdrawn ||
+    lifecycle.returnStarted ||
+    selectedWorkflowStep === "return";
+  if (!closeoutContext) {
+    return { ok: false, message: "Use this after borrowing is closed, or select Step 6 to return an idle position." };
+  }
+  if (!baseEligibility.ok) return baseEligibility;
+  return { ok: true, message: "Withdraw collateral to continue the return path." };
 }
 
 function actionEligibility(action, status = currentStatus) {
@@ -1334,11 +1485,16 @@ function actionEligibility(action, status = currentStatus) {
     case "withdrawCollateral":
       if (state.collateral <= POSITION_EPSILON) return disabled("There is no deposited collateral to withdraw.");
       return state.withdrawable > POSITION_EPSILON ? enabled("Withdraw only collateral that keeps the position healthy.") : disabled("No safe withdrawal room is available.");
-    case "burn":
-      if (state.debt > POSITION_EPSILON) return disabled("Repay debt before returning collateral to Bank A.");
-      if (state.voucher <= POSITION_EPSILON) return disabled("Withdraw or receive voucher collateral before burning it for return.");
+    case "burn": {
+      if (state.debt > POSITION_EPSILON) return disabled("Repay all debt first.");
       if (reversePacketPending(status)) return disabled("A reverse packet is already pending. Verify the reverse proof next.");
-      return enabled(lifecycle.activeCollateral ? "Burn only free voucher; withdraw active collateral first to close the whole position." : "Burn free voucher and start Bank A unlock.");
+      const fullReturnAmount = state.voucher + state.collateral;
+      if (lifecycle.activeCollateral && state.voucher + POSITION_EPSILON < fullReturnAmount) {
+        return disabled("Withdraw collateral from the lending pool first.");
+      }
+      if (state.voucher <= POSITION_EPSILON) return disabled("Withdraw or receive voucher collateral before burning it for return.");
+      return enabled("Burn free voucher and start Bank A unlock.");
+    }
     case "finalizeReverseHeader":
       if (!hasReversePacket(status)) return disabled("Burn voucher or settle seized voucher first so a reverse packet exists.");
       if (!reversePacketPending(status)) return disabled("The reverse packet has already been verified.");
@@ -1402,11 +1558,16 @@ function syncWorkflowUi(status = currentStatus) {
   document.body.dataset.workflowRisk = model.risk;
   setText("workflowPanelTitle", reviewingPastStep ? "Review journey area" : model.title);
   setText("workflowPanelStatus", reviewingPastStep ? "Review" : model.status);
-  setText("workflowSummaryCopy", model.summary);
   if (currentRunningAction) {
     renderPrimaryGuide(currentRunningAction);
   } else {
-    setPrimaryLinkyVariant(model.risk === "risk" ? "risk" : model.step === "connect" ? "wave" : "head");
+    setPrimaryLinkyVariant(
+      getLinkyVariant({
+        risk: model.risk === "risk",
+        success: model.status === "Complete" || model.status === "Settled",
+        welcome: model.step === "connect",
+      })
+    );
     setPrimaryGuideVisible(false);
     setText("primaryActionTitle", reviewingPastStep ? "Continue workflow" : model.title);
     setText("primaryActionDescription", reviewingPastStep ? "The journey map is for orientation. Use any enabled action button when prerequisites are met." : model.description);
@@ -1477,7 +1638,10 @@ function syncWorkflowUi(status = currentStatus) {
   const busy = document.body.classList.contains("is-busy");
   for (const button of actionButtons) {
     const action = button.dataset.action;
-    const eligibility = actionEligibility(action, status);
+    let eligibility = actionEligibility(action, status);
+    if (button.dataset.closeoutWithdraw === "true") {
+      eligibility = closeoutWithdrawEligibility(status, eligibility);
+    }
     button.classList.toggle("is-current-action", action === currentWorkflowAction?.action);
     if (button.hidden && button.id !== "topUpRepayCashButton") button.hidden = false;
     button.disabled = busy || !eligibility.ok;
@@ -2017,6 +2181,10 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
     );
   }
 
+  const burnEligibility = actionEligibility("burn", status);
+  setValidation("burnValidation", burnEligibility.message, burnEligibility.ok ? "" : "error");
+  updateLinkyGuides(status);
+
   updateAmountActionAvailability(status);
   if (!actionCardPinned) setActiveActionCard(suggestActionCard(status));
   updateProofLifecycle(status, currentRunningAction);
@@ -2200,7 +2368,7 @@ function actionTitle(action) {
     executeTimeoutRefund: "Executed timeout refund",
     verifyTimeoutAbsence: "Marked legacy timeout explanation",
     fullFlow: "Completed risk/liquidation lifecycle",
-    borrowerCloseout: "Completed borrower closeout lifecycle",
+    borrowerCloseout: "Closed position and returned collateral",
     deploySeed: "Prepared fast demo session",
     resetSeeded: "Reset account baseline",
     refresh: "Refreshed account state",
@@ -2215,6 +2383,7 @@ function renderPortalChanges(action, activity, guide = guideForAction(action)) {
   banner.hidden = false;
   banner.classList.remove("is-failed", "is-warning");
   banner.classList.add("is-visible");
+  setPortalFeedbackLinky("success");
   setText("portalChangeScope", `Visible changes / ${guide.affectedPortal}`);
   setText("portalChangeTitle", guide.runningTitle || activity.title);
   setText("portalChangeSummary", guide.nextAfterSuccess || activity.summary || guide.expectedVisibleChange);
@@ -2241,6 +2410,7 @@ function renderPortalWarning(action, message, guide = guideForAction(action)) {
   banner.hidden = false;
   banner.classList.remove("is-failed");
   banner.classList.add("is-visible", "is-warning");
+  setPortalFeedbackLinky("risk");
   setText("portalChangeScope", `Setup check / ${guide.affectedPortal}`);
   setText("portalChangeTitle", `${guide.runningTitle} needs attention`);
   setText("portalChangeSummary", message || "The existing runtime was not confirmed ready.");
@@ -2257,6 +2427,7 @@ function renderPortalFailure(action, error, guide = guideForAction(action)) {
   banner.hidden = false;
   banner.classList.remove("is-warning");
   banner.classList.add("is-visible", "is-failed");
+  setPortalFeedbackLinky("risk");
   setText("portalChangeScope", `Recovery / ${guide.affectedPortal}`);
   setText("portalChangeTitle", `${guide.runningTitle} failed`);
   setText("portalChangeSummary", error?.userMessage || error?.message || "The action failed before the expected visible change completed.");
@@ -2497,7 +2668,8 @@ function amountPayloadForAction(action, button = null) {
 
 async function runAction(action, { button = null } = {}) {
   if (LOAN_TAB_BY_ACTION[action]) setLoanTab(LOAN_TAB_BY_ACTION[action]);
-  setActiveActionCard(ACTION_CARD_BY_ACTION[action] || suggestActionCard(currentStatus), { pinned: true });
+  const actionCard = button?.closest("[data-action-card]")?.dataset.actionCard || ACTION_CARD_BY_ACTION[action] || suggestActionCard(currentStatus);
+  setActiveActionCard(actionCard, { pinned: true });
   let requestBody;
   try {
     requestBody = { action, ...amountPayloadForAction(action, button) };
