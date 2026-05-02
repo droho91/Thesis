@@ -98,6 +98,7 @@ contract IBCPacketHandler is AccessControl, IBCProofVerifier {
             _verifyPacketStorageMembership(packet, trustedPacketStore, leafProof, pathProof),
             "INVALID_PACKET_STORAGE_PROOF"
         );
+        _requirePacketNotTimedOutForReceive(packet);
 
         packetId = IBCPacketLib.packetIdCalldata(packet);
         // The packet receipt is the replay guard: the same valid storage proof cannot mint or execute twice.
@@ -232,5 +233,14 @@ contract IBCPacketHandler is AccessControl, IBCProofVerifier {
 
         uint256 remoteTimestamp = besuLightClient.trustedTimestamp(packet.destination.chainId, trustedHeight);
         return remoteTimestamp != 0 && remoteTimestamp >= packet.timeout.timestamp;
+    }
+
+    function _requirePacketNotTimedOutForReceive(IBCPacketLib.Packet calldata packet) internal view {
+        if (packet.timeout.height != 0) {
+            require(block.number < packet.timeout.height, "PACKET_TIMEOUT_HEIGHT_EXPIRED");
+        }
+        if (packet.timeout.timestamp != 0) {
+            require(block.timestamp < packet.timeout.timestamp, "PACKET_TIMEOUT_TIMESTAMP_EXPIRED");
+        }
     }
 }
