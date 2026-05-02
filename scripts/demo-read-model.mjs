@@ -312,9 +312,9 @@ async function configExists(path) {
   }
 }
 
-async function probeRpc(rpc) {
+async function probeRpcOnce(rpc, timeoutMs) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 650);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(rpc, {
       method: "POST",
@@ -330,6 +330,18 @@ async function probeRpc(rpc) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function probeRpc(rpc) {
+  const timeoutMs = Number(process.env.DEMO_RPC_PROBE_TIMEOUT_MS || 2500);
+  const retries = Math.max(1, Number(process.env.DEMO_RPC_PROBE_RETRIES || 2));
+  let last = { ok: false, error: "RPC not checked" };
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    last = await probeRpcOnce(rpc, timeoutMs);
+    if (last.ok) return last;
+    if (attempt < retries) await sleep(350 * attempt);
+  }
+  return last;
 }
 
 function viewErrorSummary(error) {

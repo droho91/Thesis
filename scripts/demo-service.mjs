@@ -29,6 +29,7 @@ const node = process.execPath;
 const DEFAULT_TIMEOUT_MS = Number(process.env.DEMO_SERVICE_TIMEOUT_MS || 600000);
 const FAST_READY_TIMEOUT_MS = Number(process.env.DEMO_FAST_READY_TIMEOUT_MS || 5000);
 const STATUS_READ_TIMEOUT_MS = Number(process.env.DEMO_STATUS_READ_TIMEOUT_MS || 8000);
+const HEALTH_GRACE_RETRY_MS = Number(process.env.DEMO_HEALTH_GRACE_RETRY_MS || 20000);
 const CODE_READ_RETRIES = Math.max(1, Number(process.env.DEMO_CODE_READ_RETRIES || 6));
 const CODE_READ_RETRY_DELAY_MS = Number(process.env.DEMO_CODE_READ_RETRY_DELAY_MS || 500);
 const LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS = Number(process.env.DEMO_LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS || 25000);
@@ -37,6 +38,9 @@ const HEARTBEAT_IDLE_TIMEOUT_MS = Number(process.env.DEMO_HEARTBEAT_IDLE_TIMEOUT
 const RESUME_SESSION_MAX_HEADER_GAP = BigInt(process.env.DEMO_RESUME_MAX_HEADER_GAP || DEMO_MAX_TIMEOUT_HEADER_GAP.toString());
 const RESUME_SESSION_MAX_HEADERS = BigInt(process.env.DEMO_RESUME_MAX_HEADERS || "12");
 const RESUME_SESSION_TIMEOUT_MS = Number(process.env.DEMO_RESUME_TIMEOUT_MS || 60000);
+const REPAY_CLOSE_BUFFER_BPS = 1;
+const REPAY_CLOSE_MIN_BUFFER = 0.01;
+const VISIBLE_STATE_RETRY_MS = Number(process.env.DEMO_VISIBLE_STATE_RETRY_MS || 15000);
 let activeOperation = null;
 let preparedContextCache = null;
 let runtimeReadyConfirmed = false;
@@ -137,6 +141,25 @@ function operationLabel(action) {
   return labels[action] || `demo action ${action || "unknown"}`;
 }
 
+const FORWARD_PROOF_STEP_LABELS = {
+  finalizeForwardHeader: "1/3 Fetch Bank A header",
+  updateForwardClient: "2/3 Import Bank A header on Bank B",
+  proveForwardMint: "3/3 Verify proof and mint voucher",
+};
+const REVERSE_PROOF_STEP_LABELS = {
+  finalizeReverseHeader: "1/3 Fetch Bank B header",
+  updateReverseClient: "2/3 Import Bank B header on Bank A",
+  proveReverseUnlock: "3/3 Verify proof and unlock aBANK",
+};
+
+function forwardProofStepLabel(action) {
+  return FORWARD_PROOF_STEP_LABELS[action] || "Receive voucher collateral on Bank B";
+}
+
+function reverseProofStepLabel(action) {
+  return REVERSE_PROOF_STEP_LABELS[action] || "Verify reverse proof and unlock aBANK on Bank A";
+}
+
 function publicActiveOperation() {
   if (!activeOperation) return null;
   const phase = getCurrentPhase();
@@ -183,6 +206,20 @@ function controllerState() {
   return {
     busy: activeOperation !== null,
     activeOperation: publicActiveOperation(),
+  };
+}
+
+function idleControllerState() {
+  return {
+    busy: false,
+    activeOperation: null,
+  };
+}
+
+function statusWithIdleController(status) {
+  return {
+    ...(status || {}),
+    controller: idleControllerState(),
   };
 }
 
@@ -352,6 +389,17 @@ async function probeOnChainDeploymentHealth(config, timeoutMs = FAST_READY_TIMEO
   }
 }
 
+async function probeOnChainDeploymentHealthWithGrace(config, { timeoutMs = FAST_READY_TIMEOUT_MS, graceMs = HEALTH_GRACE_RETRY_MS } = {}) {
+  const deadline = Date.now() + graceMs;
+  let health = await probeOnChainDeploymentHealth(config, timeoutMs);
+  while (!health.ready && Date.now() < deadline) {
+    setActiveOperationStage("Waiting for Besu RPC readiness");
+    await sleep(1000);
+    health = await probeOnChainDeploymentHealth(config, timeoutMs);
+  }
+  return health;
+}
+
 function setActiveOperationStage(stage) {
   if (activeOperation) activeOperation.stage = stage;
 }
@@ -427,7 +475,7 @@ async function preparedContextForUiAction() {
   const fingerprint = await runtimeConfigFingerprint();
   if (preparedContextCache?.fingerprint === fingerprint) {
     setActiveOperationStage("Checking cached deployment");
-    const health = await probeOnChainDeploymentHealth(preparedContextCache.prepared.config);
+    const health = await probeOnChainDeploymentHealthWithGrace(preparedContextCache.prepared.config);
     if (!health.ready) {
       runtimeReadyConfirmed = false;
       invalidatePreparedContext();
@@ -445,7 +493,7 @@ async function preparedContextForUiAction() {
   });
   if (useFastPrepare) {
     setActiveOperationStage("Checking prepared deployment");
-    const health = await probeOnChainDeploymentHealth(prepared.config);
+    const health = await probeOnChainDeploymentHealthWithGrace(prepared.config);
     if (!health.ready) {
       runtimeReadyConfirmed = false;
       invalidatePreparedContext();
@@ -685,6 +733,99 @@ function statusPositive(value) {
   return statusNumber(value) > 0.000001;
 }
 
+function statusHeightAtLeast(value, minimum) {
+  if (value == null || minimum == null) return false;
+  try {
+    return BigInt(value) >= BigInt(minimum);
+  } catch {
+    return false;
+  }
+}
+
+function repayCloseBuffer(amount) {
+  const number = statusNumber(amount);
+  if (number <= 0) return 0;
+  return Math.max((number * REPAY_CLOSE_BUFFER_BPS) / 10_000, REPAY_CLOSE_MIN_BUFFER);
+}
+
+function repayFundingShortfallFromStatus(status) {
+  const balances = status?.balances || {};
+  const debt = statusNumber(balances.poolDebt);
+  const target = debt > 0 ? debt + repayCloseBuffer(debt) : 0;
+  return Math.max(0, target - statusNumber(balances.bankB));
+}
+
+function visibleStateReached(action, status, before = null) {
+  if (!status) return false;
+  const balances = status.balances || {};
+  const beforeBalances = before?.balances || {};
+  const number = (value) => statusNumber(value);
+  const movedUp = (after, old) => number(after) > number(old) + 0.000001;
+  const movedDown = (after, old) => number(after) < number(old) - 0.000001;
+  const forward = status.trace?.forward || {};
+  const reverse = status.trace?.reverse || {};
+  const traceRisk = status.trace?.risk || {};
+  switch (action) {
+    case "lock":
+      return Boolean(
+        (forward.packetId || forward.commitHeight) &&
+          (!before || movedUp(balances.escrow, beforeBalances.escrow) || movedDown(balances.bankA, beforeBalances.bankA))
+      );
+    case "proveForwardMint":
+      return Boolean(
+        status.security?.forwardConsumed ||
+          forward.receiveTxHash ||
+          (!before || movedUp(balances.voucher, beforeBalances.voucher) || movedUp(balances.poolCollateral, beforeBalances.poolCollateral))
+      );
+    case "depositCollateral":
+      if (before) {
+        return movedUp(balances.poolCollateral, beforeBalances.poolCollateral) || movedDown(balances.voucher, beforeBalances.voucher);
+      }
+      return statusPositive(balances.poolCollateral) || Boolean(traceRisk.collateralDeposited);
+    case "borrow":
+      return Boolean(!before || movedUp(balances.poolDebt, beforeBalances.poolDebt) || movedUp(balances.bankB, beforeBalances.bankB));
+    case "repay":
+      return Boolean(!before || movedDown(balances.poolDebt, beforeBalances.poolDebt));
+    case "withdrawCollateral":
+      return Boolean(
+        traceRisk.withdrawTxHash ||
+          traceRisk.collateralWithdrawn ||
+          !before ||
+          movedDown(balances.poolCollateral, beforeBalances.poolCollateral) ||
+          movedUp(balances.voucher, beforeBalances.voucher)
+      );
+    case "burn":
+      return Boolean(
+        reverse.packetId ||
+          reverse.commitHeight ||
+          (!before || movedDown(balances.voucher, beforeBalances.voucher))
+      );
+    case "topUpRepayCash":
+      return Boolean(!before || movedUp(balances.bankB, beforeBalances.bankB));
+    default:
+      return true;
+  }
+}
+
+async function readDemoStatusAfterVisibleChange(action, beforeStatus) {
+  const deadline = Date.now() + VISIBLE_STATE_RETRY_MS;
+  let status = await readDemoStatusForPayload();
+  while (
+    (!visibleStateReached(action, status, beforeStatus) || !finalActionStatusReady(action, status)) &&
+    Date.now() < deadline
+  ) {
+    setActiveOperationStage("Waiting for visible dashboard state");
+    await sleep(750);
+    status = await readDemoStatusForPayload();
+  }
+  return status;
+}
+
+function finalActionStatusReady(action, status) {
+  if (action !== "depositCollateral") return true;
+  return nextValidActionFromStatus(status).action !== "depositCollateral";
+}
+
 function lendingLifecycleFromStatus(status) {
   const balances = status?.balances || {};
   const trace = status?.trace || {};
@@ -692,6 +833,7 @@ function lendingLifecycleFromStatus(status) {
   const risk = trace.risk || {};
   const reverse = trace.reverse || {};
   const settlement = status?.risk?.settlement || {};
+  const afterLiquidation = status?.risk?.afterLiquidation || {};
   const settlementTrace = trace.liquidatorSettlement || {};
   const activeCollateral = statusPositive(balances.poolCollateral);
   const activeDebt = statusPositive(balances.poolDebt);
@@ -730,14 +872,46 @@ function lendingLifecycleFromStatus(status) {
         settlementTrace.burnTxHash ||
         reverse.settlementMode === "authorized-liquidator")
   );
+  const settlementUnlocked = Boolean(settlementMatchesReverse && (settlement.unlocked || settlementTrace.unlockTxHash));
+  const borrowerReverseStarted = reverseStarted && !settlementStarted;
+  const borrowerReverseComplete = Boolean(borrowerReverseStarted && (status.security?.reverseConsumed || reverse.receiveTxHash));
+  const liquidationExecuted = Boolean(afterLiquidation.executed || risk.liquidationTxHash || lending.liquidated);
+  const settlementVoucher = statusPositive(settlement.seizedVoucherBalance || balances.liquidatorVoucher);
   return {
     activeCollateral,
     activeDebt,
     freeVoucher,
     debtWasOpened,
     borrowerCollateralWithdrawn,
-    borrowerReverseStarted: reverseStarted && !settlementStarted,
+    borrowerReverseStarted,
+    borrowerReverseComplete,
+    liquidationExecuted,
+    settlementStarted,
+    settlementUnlocked,
+    settlementVoucher,
   };
+}
+
+function forwardProofActionFromStatus(status) {
+  const forward = status?.trace?.forward || {};
+  const progress = status?.progress || {};
+  const headerReady = statusHeightAtLeast(forward.finalizedHeight, forward.commitHeight);
+  const trustReady =
+    statusHeightAtLeast(progress.trustedAOnB, forward.commitHeight) ||
+    statusHeightAtLeast(forward.trustedHeight, forward.commitHeight);
+  if (!headerReady && !trustReady) return "finalizeForwardHeader";
+  return trustReady ? "proveForwardMint" : "updateForwardClient";
+}
+
+function reverseProofActionFromStatus(status) {
+  const reverse = status?.trace?.reverse || {};
+  const progress = status?.progress || {};
+  const headerReady = statusHeightAtLeast(reverse.finalizedHeight, reverse.commitHeight);
+  const trustReady =
+    statusHeightAtLeast(progress.trustedBOnA, reverse.commitHeight) ||
+    statusHeightAtLeast(reverse.trustedHeight, reverse.commitHeight);
+  if (!headerReady && !trustReady) return "finalizeReverseHeader";
+  return trustReady ? "proveReverseUnlock" : "updateReverseClient";
 }
 
 function nextValidActionFromStatus(status) {
@@ -746,56 +920,77 @@ function nextValidActionFromStatus(status) {
   const trace = status.trace || {};
   const balances = status.balances || {};
   const market = status.market || {};
-  const progress = status.progress || {};
   const lifecycle = lendingLifecycleFromStatus(status);
   const forward = trace.forward || {};
   const reverse = trace.reverse || {};
   const forwardDelivered =
     Boolean(status.security?.forwardConsumed) ||
-    statusPositive(balances.voucher) ||
-    statusPositive(balances.poolCollateral);
+    Boolean(forward.receiveTxHash);
   const forwardPending = Boolean(forward.packetId || forward.commitHeight) && !forwardDelivered;
   const reverseDelivered =
     Boolean(status.security?.reverseConsumed) ||
     Boolean(reverse.receiveTxHash) ||
-    Boolean(status.risk?.settlement?.unlocked);
+    Boolean(status.risk?.settlement?.unlocked) ||
+    Boolean(trace.liquidatorSettlement?.unlockTxHash);
   const reversePending = Boolean(reverse.packetId || reverse.commitHeight) && !reverseDelivered;
-  if (!trace.handshake?.ready && !trace.handshake?.sourceRouteOpen && !trace.handshake?.destinationRouteOpen) {
-    return { action: "openRoute", label: "Open route" };
-  }
-  if (forwardPending) {
-    const commitHeight = BigInt(forward.commitHeight || 0);
-    const trustedHeight = BigInt(progress.trustedAOnB || forward.trustedHeight || 0);
-    if (commitHeight > 0n && trustedHeight < commitHeight) {
-      return { action: "updateForwardClient", label: "Import Bank A header on Bank B" };
+
+  if (lifecycle.liquidationExecuted) {
+    if (lifecycle.settlementVoucher && !lifecycle.settlementStarted) {
+      return { action: "settleSeizedVoucher", label: "Settle Seized Voucher" };
     }
-    return { action: "proveForwardMint", label: "Receive voucher" };
+    if (lifecycle.settlementStarted && !lifecycle.settlementUnlocked) {
+      const action = reversePending ? reverseProofActionFromStatus(status) : "proveReverseUnlock";
+      return { action, label: reverseProofStepLabel(action) };
+    }
+    return { action: "refresh", label: "Refresh state" };
   }
-  if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher && !lifecycle.borrowerReverseStarted) {
+
+  if (lifecycle.borrowerReverseComplete) return { action: "refresh", label: "Refresh state" };
+
+  if (lifecycle.borrowerReverseStarted || reversePending) {
+    const action = reverseProofActionFromStatus(status);
+    return { action, label: reverseProofStepLabel(action) };
+  }
+
+  if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher) {
     return { action: "burn", label: "Burn voucher and start Bank A unlock" };
   }
-  if (lifecycle.freeVoucher && !lifecycle.activeDebt && !lifecycle.activeCollateral && !lifecycle.debtWasOpened) {
-    return { action: "depositCollateral", label: "Deposit voucher collateral" };
+
+  if (forwardPending) {
+    const action = forwardProofActionFromStatus(status);
+    return { action, label: forwardProofStepLabel(action) };
   }
-  if (lifecycle.activeDebt) return { action: "repay", label: "Repay" };
+
+  if (lifecycle.freeVoucher && !lifecycle.activeDebt && !lifecycle.activeCollateral) {
+    return lifecycle.debtWasOpened
+      ? { action: "burn", label: "Burn voucher and start Bank A unlock" }
+      : { action: "depositCollateral", label: "Deposit voucher collateral" };
+  }
+
+  if (lifecycle.activeDebt) {
+    if (repayFundingShortfallFromStatus(status) > 0.000001) {
+      return { action: "topUpRepayCash", label: "Add demo bCASH for repayment" };
+    }
+    return { action: "repay", label: "Repay bCASH debt" };
+  }
+
   if (lifecycle.activeCollateral && lifecycle.debtWasOpened) {
     return { action: "withdrawCollateral", label: "Withdraw collateral to return" };
   }
+
   if (lifecycle.activeCollateral && statusNumber(market.availableToBorrow) > 0) {
-    return { action: "borrow", label: "Borrow" };
+    return { action: "borrow", label: "Borrow bCASH" };
   }
+
   if (lifecycle.freeVoucher && !lifecycle.activeDebt) {
     return { action: "depositCollateral", label: "Deposit more voucher collateral" };
   }
-  if (reversePending) {
-    const commitHeight = BigInt(reverse.commitHeight || 0);
-    const trustedHeight = BigInt(progress.trustedBOnA || reverse.trustedHeight || 0);
-    if (commitHeight > 0n && trustedHeight < commitHeight) {
-      return { action: "updateReverseClient", label: "Import Bank B header on Bank A" };
-    }
-    return { action: "proveReverseUnlock", label: "Verify reverse proof and unlock" };
+
+  if (!trace.handshake?.ready && !trace.handshake?.sourceRouteOpen && !trace.handshake?.destinationRouteOpen) {
+    return { action: "openRoute", label: "Open Bank A to Bank B route" };
   }
-  if (statusNumber(balances.bankA) > 0) return { action: "lock", label: "Bridge collateral" };
+
+  if (statusNumber(balances.bankA) > 0) return { action: "lock", label: "Lock aBANK on Bank A" };
   return { action: "refresh", label: "Refresh state" };
 }
 
@@ -1117,6 +1312,7 @@ export async function runActionPayload(actionRequest) {
     }
 
     const env = actionAmountEnv(request);
+    const beforeStatus = await readDemoStatusForPayload();
     let result;
     try {
       result = action === "fullFlow" ? await runFlowStrict() : await runDemoActionInProcess(action, env);
@@ -1139,7 +1335,8 @@ export async function runActionPayload(actionRequest) {
       }
     }
 
-    const status = await readDemoStatusForPayload();
+    const status = result.ok ? await readDemoStatusAfterVisibleChange(action, beforeStatus) : await readDemoStatusForPayload();
+    const responseStatus = statusWithIdleController(status);
     const trace = await readTrace();
     return {
       statusCode: result.ok ? 200 : result.statusCode || 500,
@@ -1154,8 +1351,8 @@ export async function runActionPayload(actionRequest) {
               ? `Completed demo action: ${operationLabel(action)}${request.amount ? ` (${request.amount}).` : "."}`
               : result.error,
         trace,
-        status,
-        nextAction: nextActionPayload(status),
+        status: responseStatus,
+        nextAction: nextActionPayload(responseStatus),
       },
     };
   });
@@ -1189,7 +1386,7 @@ export async function deploySeedPayload() {
   return withControllerLock("deploySeed", async () => {
     const result = await deployAndSeed();
     setActiveOperationStage("Reading refreshed state");
-    const status = await readDemoStatusForPayload();
+    const status = statusWithIdleController(await readDemoStatusForPayload());
     return {
       ok: true,
       ready: result.ready,
@@ -1208,7 +1405,7 @@ export async function resetSeededPayload() {
   return withControllerLock("resetSeeded", async () => {
     const result = await deployAndSeed({ reset: true });
     setActiveOperationStage("Reading refreshed state");
-    const status = await readDemoStatusForPayload();
+    const status = statusWithIdleController(await readDemoStatusForPayload());
     return {
       ok: true,
       ready: result.ready,
@@ -1253,7 +1450,7 @@ export async function resumeSessionPayload() {
         runtimeReadyConfirmed = true;
         invalidatePreparedContext();
         setActiveOperationStage("Reading refreshed state");
-        const status = await readDemoStatusForPayload();
+        const status = statusWithIdleController(await readDemoStatusForPayload());
         const nextAction = nextValidActionFromStatus(status);
         const updates = proofReadiness.updates || [];
         const partial = updates.some((update) => update.targetHeight < update.latestHeight);

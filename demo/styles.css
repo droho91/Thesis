@@ -564,6 +564,27 @@ a.button-secondary {
   line-height: 1.5;
 }
 
+.recommendation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.recommendation-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 8px;
+  border: 1px solid rgba(29, 78, 216, 0.12);
+  border-radius: 999px;
+  color: #1e3a8a;
+  background: rgba(239, 246, 255, 0.82);
+  font-size: 0.72rem;
+  font-weight: 840;
+  line-height: 1.1;
+}
+
 .workflow-side .primary-action-card {
   grid-template-columns: 1fr;
   margin-top: 0;
@@ -1010,6 +1031,23 @@ button.is-loading::after {
 
 button.is-waiting {
   opacity: 0.62;
+}
+
+button.is-current-action:not(:disabled) {
+  border-color: rgba(29, 78, 216, 0.46);
+  box-shadow:
+    0 0 0 2px rgba(29, 78, 216, 0.1),
+    0 14px 30px rgba(29, 78, 216, 0.13);
+}
+
+button.is-current-action:not(:disabled)::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
 }
 
 body[data-workflow-risk="risk"] .primary-action-card,

@@ -328,16 +328,33 @@ export async function finalizeReverseHeaderStep({ config, ctx, sourceChainId, de
 export async function updateReverseClientStep({ config, ctx, sourceChainId, destinationChainId }) {
   setPhase("step-updateReverseClient");
   const reverse = await ensureReversePacket(config, ctx, sourceChainId, destinationChainId);
+  const commitHeight = BigInt(reverse.commitHeight);
   const before = await latestTrustedAnchor(ctx.A.lightClient, destinationChainId);
+  if (before?.height >= commitHeight) {
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        reverse: {
+          trustedHeight: before.height.toString(),
+          trustedHeaderHash: before.headerHash,
+          trustedStateRoot: before.stateRoot,
+        },
+      },
+      {
+        phase: "reverse-header-trusted",
+        label: "Bank A already trusts Bank B header",
+        summary: `Bank A already trusts Bank B Besu header #${before.height.toString()}.`,
+      }
+    );
+  }
+
   let header = null;
   try {
     header = await trustReverseHeader(config, ctx, destinationChainId, reverse.commitHeight);
   } catch (error) {
     const after = await latestTrustedAnchor(ctx.A.lightClient, destinationChainId).catch(() => null);
-    const progressed =
-      after &&
-      (!before || after.height > before.height) &&
-      after.height < BigInt(reverse.commitHeight);
+    const progressed = after && (!before || after.height > before.height);
     if (!progressed) throw error;
 
     return writeTracePatch(
@@ -350,13 +367,19 @@ export async function updateReverseClientStep({ config, ctx, sourceChainId, dest
           trustedStateRoot: after.stateRoot,
         },
       },
-      {
-        phase: "reverse-header-partial",
-        label: "Partially updated Bank A Besu light client",
-        summary:
-          `Bank A now trusts Bank B Besu header #${after.height.toString()} and still needs ` +
-          `header #${BigInt(reverse.commitHeight).toString()} before reverse proof execution. Retry Sync Trust on Bank A.`,
-      }
+      after.height >= commitHeight
+        ? {
+            phase: "reverse-header-trusted",
+            label: "Updated Bank A Besu light client",
+            summary: `Bank A now trusts Bank B Besu header #${after.height.toString()}.`,
+          }
+        : {
+            phase: "reverse-header-partial",
+            label: "Partially updated Bank A Besu light client",
+            summary:
+              `Bank A now trusts Bank B Besu header #${after.height.toString()} and still needs ` +
+              `header #${commitHeight.toString()} before reverse proof execution. Retry Sync Trust on Bank A.`,
+          }
     );
   }
   return writeTracePatch(

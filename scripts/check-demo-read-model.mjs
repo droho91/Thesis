@@ -70,27 +70,28 @@ assert.doesNotMatch(demoHtml, /data-action="verifyTimeoutAbsence"/, "UI should n
 assert.doesNotMatch(demoHtml, /Show Timeout/, "UI timeout CTA should execute the refund instead of showing an explanation-only model");
 
 const returnReadyBranch = demoApp.indexOf(
-  "if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher && !lifecycle.borrowerReverseStarted)"
+  "if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher)"
 );
-const activateBranch = demoApp.indexOf("if (voucherReady && !collateralActive && !debtActive &&");
+const forwardPendingBranch = demoApp.indexOf("if (forwardPending)");
+const voucherBranch = demoApp.indexOf("if (lifecycle.freeVoucher && !lifecycle.activeCollateral && !lifecycle.activeDebt)");
 assert.ok(returnReadyBranch !== -1, "workflow model should detect withdrawn collateral ready to return");
-assert.ok(activateBranch !== -1, "workflow model should retain initial voucher activation step");
+assert.ok(voucherBranch !== -1, "workflow model should retain initial voucher activation step");
 assert.ok(
-  returnReadyBranch < activateBranch,
-  "workflow model should prioritize return after withdraw before treating free voucher as a new deposit"
+  returnReadyBranch < forwardPendingBranch,
+  "workflow model should prioritize return after withdraw before any bridge continuation"
 );
 assert.match(
   demoApp,
-  /if \(bridgeStarted && !voucherReady && !collateralActive && !debtActive && !lifecycle\.returnStarted\)/,
-  "bridge-in-progress should not mask the reverse return flow after burn"
+  /if \(forwardPending\)/,
+  "bridge-in-progress should be driven only by a pending forward packet"
 );
 assert.match(
   demoApp,
-  /if \(voucherReady && !collateralActive && !debtActive && !lifecycle\.borrowerCollateralWithdrawn && !lifecycle\.debtWasOpened\)/,
+  /const returning = lifecycle\.borrowerCollateralWithdrawn \|\| lifecycle\.debtWasOpened;/,
   "activate should only handle newly bridged vouchers, not withdrawn closeout collateral"
 );
-assert.match(demoApp, /function forwardConsumed\(status\)/, "UI should use current receipt state for forward packet completion");
-assert.match(demoApp, /return !forwardConsumed\(status\)/, "forward pending state should not trust stale trace receive tx hashes");
+assert.match(demoApp, /function forwardReceiptConsumed\(status\)/, "UI should use current receipt state for forward packet completion");
+assert.match(demoApp, /return !forwardReceiptConsumed\(status\)/, "forward pending state should not trust old visible voucher balances");
 assert.match(demoApp, /return !reverseConsumed\(status\) && !settlement\.unlocked/, "reverse pending state should not trust stale trace receive tx hashes");
 assert.match(
   demoApp,
@@ -108,6 +109,21 @@ assert.match(
   reverseBridgeActions,
   /reverse-header-partial/,
   "reverse client update should persist partial light-client progress instead of failing the UI"
+);
+assert.match(
+  forwardBridgeActions,
+  /forward-header-partial/,
+  "forward client update should persist partial light-client progress instead of failing the UI"
+);
+assert.match(
+  forwardBridgeActions,
+  /Bank B already trusts Bank A header/,
+  "forward client update should recover when heartbeat already advanced the trusted header"
+);
+assert.match(
+  reverseBridgeActions,
+  /Bank A already trusts Bank B header/,
+  "reverse client update should recover when heartbeat already advanced the trusted header"
 );
 assert.match(demoApp, /settlementMatchesReverse/, "UI should ignore stale settlement traces from a previous reverse packet");
 assert.match(besuGenerator, /bonsai-historical-block-limit=\$\{BONSAI_HISTORICAL_BLOCK_LIMIT\}/, "generated Besu config should retain local demo historical Bonsai state");
@@ -162,24 +178,52 @@ assert.match(demoApp, /function actionReachedExpectedState\(action, status = cur
 assert.match(demoApp, /recoverCompletedActionFromStatus/, "UI should recover completed long-running actions from refreshed status");
 assert.match(demoApp, /STRICT_VISIBLE_COMPLETION_ACTIONS/, "UI should keep financial actions open until the dashboard state actually changes");
 assert.match(demoApp, /"resetSeeded"/, "Fresh Reset should be tracked as a strict visible-completion action");
-assert.match(demoApp, /currentRunningAction\.nextAction = currentWorkflowAction/, "post-action CTAs should use the freshly recomputed UI workflow recommendation");
+assert.match(demoApp, /currentRunningAction\.uiNextAction = currentWorkflowAction/, "post-action CTAs should record the UI state-machine recommendation");
+assert.match(demoApp, /if \(serverFallback && serverEligibility\.ok\)/, "post-action CTAs should prefer the server recommendation computed from the refreshed status");
+assert.match(demoApp, /sameCtaIntent\(serverFallback, uiFallback\)/, "post-action CTAs should only merge labels when server and UI select the same action");
+assert.match(demoApp, /avoidRepeatingCompletedAction/, "post-action CTAs should not recommend a completed visible action again when only the UI fallback is available");
+assert.match(demoApp, /async function runActionButton\(button\)/, "direct action buttons should refresh state before submitting");
+assert.match(demoApp, /clearPrimaryGuide\(\)[\s\S]*await refreshStatus\(\)[\s\S]*await runAction\(action, \{ button, workflowRequestLog \}\)/, "direct action buttons should clear stale success cards and run the exact requested action");
 assert.match(demoApp, /syncControllerOperationFromStatus/, "UI refresh should attach Linky to controller actions already running on the server");
 assert.match(demoApp, /controller\?\.activeOperation/, "UI should read active controller operations from status payloads");
+assert.match(demoApp, /function activeControllerOperation\(status = currentStatus\)/, "UI should centralize active controller detection");
+assert.match(demoApp, /if \(controllerStillRunning\(status\)\) return false;/, "UI must not mark a visible state change complete while the same controller action is still running");
+assert.match(demoApp, /awaitingActionResponse[\s\S]*actionResponseMustSettle\(action\)/, "UI polling must not complete strict actions before their action request returns");
+assert.match(demoApp, /controllerBusyMessage\(activeOperation, actionToRun\)/, "primary CTA clicks should block while any controller action is still active");
+assert.match(demoApp, /Direct action blocked after refresh:[\s\S]*Active controller action/, "direct action buttons should not submit while the controller is still active");
 assert.match(demoService, /phase: phaseMatchesAction \? phase : null/, "controller status should not expose stale phases from previous actions");
+assert.match(demoService, /function statusWithIdleController\(status\)/, "completed action responses should not return their own controller operation as still active");
+assert.match(demoService, /status: responseStatus,[\s\S]*nextAction: nextActionPayload\(responseStatus\)/, "action responses should compute next actions from the idle final status");
+assert.match(demoService, /function finalActionStatusReady\(action, status\)[\s\S]*nextValidActionFromStatus\(status\)\.action !== "depositCollateral"/, "deposit responses should wait until the final recommendation advances beyond deposit");
 assert.match(demoApp, /Run \$\{nextCta\.label\}/, "success CTA copy should make clear that the button runs the next action");
 assert.match(demoApp, /it does not repeat the completed one/, "success guidance should distinguish next-action execution from the completed action");
 assert.match(demoApp, /function defaultAmountForAction\(action, status = currentStatus\)/, "primary recommendations should know safe default amounts for amount-based actions");
-assert.match(demoApp, /nextCta\?\.type === "action"[\s\S]*primeRecommendedAmount\(nextCta\.action, currentStatus\)/, "success recommendations should prime amount fields before enabling the next CTA");
-assert.match(demoApp, /button === primaryWorkflowCta[\s\S]*primeRecommendedAmount\(action, currentStatus\)/, "primary recommendation clicks should prime missing amount fields before validation");
-assert.match(demoApp, /refreshStatus\(\)[\s\S]*primeRecommendedAmount\(actionToRun, currentStatus\)[\s\S]*await runAction\(actionToRun/, "primary recommendation clicks should refresh state and run the currently valid action");
+assert.match(demoApp, /nextCta\?\.type === "action"[\s\S]*primeRecommendedAmount\(nextCta\.action, currentStatus, \{ force: true \}\)/, "success recommendations should prime amount fields before enabling the next CTA");
+assert.match(demoApp, /button === primaryWorkflowCta[\s\S]*primeRecommendedAmount\(action, currentStatus, \{ force: true \}\)/, "primary recommendation clicks should use the current recommended amount before validation");
+assert.match(demoApp, /refreshStatus\(\)[\s\S]*const actionToRun = cta\.action[\s\S]*primeRecommendedAmount\(actionToRun, currentStatus, \{ force: true \}\)[\s\S]*await runAction\(actionToRun, \{ button, workflowRequestLog \}\)/, "primary recommendation clicks should refresh state and run only the requested CTA action with current defaults");
+assert.doesNotMatch(demoApp, /if \(!requestedEligibility\.ok && currentWorkflowAction\?\.type === "action"\)/, "primary recommendation clicks must not silently fall back to a different current action");
+assert.match(demoApp, /No alternate action was submitted automatically/, "ineligible refreshed CTAs should explain that no alternate action was submitted");
+assert.match(demoApp, /Requested CTA action/, "controller debug output should record the requested CTA action");
+assert.match(demoApp, /Action actually submitted/, "controller debug output should record the action actually submitted");
+assert.match(demoApp, /function bindPrimaryWorkflowCta\(cta\)/, "primary CTA should bind the exact action displayed on the button");
+assert.match(demoApp, /const boundCta = primaryWorkflowCtaBinding\(\)/, "primary CTA clicks should execute the displayed bound action");
+assert.match(demoApp, /Server nextAction/, "controller debug output should record the server next action");
 assert.match(demoApp, /function freshSeededBaseline\(status = currentStatus\)/, "Fresh Reset completion should require a clean seeded baseline, not merely an old deployed state");
 assert.match(demoApp, /action === "resetSeeded" && currentRunningAction\.controller/, "Fresh Reset should not complete while the reset controller is still active");
 assert.match(demoApp, /movedUp\(state\.collateral, before\.collateral\) \|\| movedDown\(state\.voucher, before\.voucher\)/, "deposit completion should require before/after balance movement");
+assert.match(demoApp, /function updateAmountActionAvailability\(status\)[\s\S]*const busy = document\.body\.classList\.contains\("is-busy"\)[\s\S]*button\.disabled = busy \|\| !safetyAllowed \|\| !validation\.ok/, "amount action buttons must stay disabled while a strict action is still processing");
 assert.match(demoApp, /movedDown\(state\.collateral, before\.collateral\) \|\| movedUp\(state\.voucher, before\.voucher\)/, "withdraw completion should require before/after balance movement");
-assert.match(demoService, /if \(lifecycle\.activeDebt\) return \{ action: "repay"/, "service recommendations should prioritize debt repayment before more borrowing");
+assert.match(demoApp, /traceRisk\.withdrawTxHash \|\| traceRisk\.collateralWithdrawn \|\| lifecycle\.borrowerCollateralWithdrawn/, "withdraw completion should not poll forever after the withdraw trace is recorded");
+assert.match(demoService, /if \(lifecycle\.activeDebt\)[\s\S]*topUpRepayCash[\s\S]*return \{ action: "repay"/, "service recommendations should prioritize debt repayment before more borrowing");
 assert.match(demoService, /return \{ action: "withdrawCollateral", label: "Withdraw collateral to return" \}/, "service recommendations should direct debt-closed positions toward collateral withdrawal");
-assert.match(demoApp, /state\.voucher > POSITION_EPSILON \|\| state\.collateral > POSITION_EPSILON\) return false/, "UI should not keep recommending Receive Voucher after voucher/collateral is already visible");
-assert.match(demoService, /const forwardDelivered =/, "service recommendations should treat visible voucher/collateral as forward delivery");
+assert.match(demoApp, /function forwardReceiptConsumed\(status\)/, "UI should distinguish the latest packet receipt from older visible voucher balances");
+assert.match(demoApp, /function forwardPacketPending\(status\)[\s\S]*return !forwardReceiptConsumed\(status\)/, "UI should re-enable Receive Voucher after a new lock even when old voucher remains visible");
+assert.match(demoApp, /!forwardPending &&[\s\S]*state\.voucher > POSITION_EPSILON/, "UI should only treat visible voucher as delivered when no newer packet is pending");
+assert.match(demoService, /const forwardDelivered =[\s\S]*forward\.receiveTxHash/, "service recommendations should use the latest forward receipt, not old voucher balances, for packet delivery");
+assert.match(demoService, /readDemoStatusAfterVisibleChange/, "action responses should wait for visible state changes before returning next recommendations");
+assert.match(demoService, /case "depositCollateral":[\s\S]*movedUp\(balances\.poolCollateral/, "deposit should complete from real collateral/voucher movement");
+assert.match(demoService, /case "depositCollateral":[\s\S]*if \(before\)[\s\S]*movedUp\(balances\.poolCollateral, beforeBalances\.poolCollateral\)[\s\S]*return statusPositive\(balances\.poolCollateral\) \|\| Boolean\(traceRisk\.collateralDeposited\)/, "service deposit completion must ignore stale collateralDeposited trace when a before snapshot exists");
+assert.match(demoService, /case "withdrawCollateral":[\s\S]*traceRisk\.withdrawTxHash/, "withdraw action responses should stop waiting once the withdraw transaction trace is recorded");
 assert.match(demoApp, /function reverseConsumed\(status\)[\s\S]*trace\?\.liquidatorSettlement\?\.unlockTxHash/, "UI should treat reverse unlock trace/settlement state as consumed even if receipt reads lag");
 assert.match(demoService, /const reverseDelivered =/, "service recommendations should treat visible reverse settlement/unlock state as reverse delivery");
 assert.match(demoApp, /case "executeLiquidation":[\s\S]*afterLiquidation\?\.executed/, "UI should recover completed liquidation from visible accounting state");
@@ -187,6 +231,16 @@ assert.match(demoApp, /final status refresh timed out/, "generic action failures
 assert.match(demoService, /nextAction: nextActionPayload\(status\)/, "action API responses should include the server-selected next recommendation");
 assert.match(demoApp, /workflowCtaFromServerNext/, "UI should convert server nextAction responses into primary workflow CTAs");
 assert.match(demoApp, /next recommendation is/, "successful action cards should point the primary CTA at the next action instead of a generic continue step");
+assert.match(demoApp, /1\/3 Fetch Bank A header/, "forward proof workflow should label the header fetch sub-step");
+assert.match(demoApp, /2\/3 Import Bank A header on Bank B/, "forward proof workflow should label the client import sub-step");
+assert.match(demoApp, /3\/3 Verify proof and mint voucher/, "forward proof workflow should label the proof verification sub-step");
+assert.match(demoApp, /1\/3 Fetch Bank B header/, "reverse proof workflow should label the header fetch sub-step");
+assert.match(demoApp, /2\/3 Import Bank B header on Bank A/, "reverse proof workflow should label the client import sub-step");
+assert.match(demoApp, /3\/3 Verify proof and unlock aBANK/, "reverse proof workflow should label the proof verification sub-step");
+assert.match(demoService, /forwardProofActionFromStatus/, "server recommendations should choose explicit forward proof sub-steps");
+assert.match(demoService, /forwardProofStepLabel\(action\)/, "server recommendations should expose forward proof sub-step labels");
+assert.match(demoService, /reverseProofActionFromStatus/, "server recommendations should choose explicit reverse proof sub-steps");
+assert.match(demoService, /reverseProofStepLabel\(action\)/, "server recommendations should expose reverse proof sub-step labels");
 assert.match(demoStaticServer, /cache-control": "no-store"/, "demo static assets should not be browser-cached across live UI fixes");
 assert.doesNotMatch(demoHtml, /Action duration/, "Linky recommendation cards should avoid exposing raw elapsed-time implementation detail");
 assert.match(demoApp, /function isTransientStatusRead\(status\)/, "UI should distinguish transient status read timeouts from action failures");

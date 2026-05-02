@@ -45,6 +45,18 @@ async function timedDemoStage(label, run) {
   }
 }
 
+async function latestTrustedAnchor(lightClient, sourceChainId) {
+  const height = BigInt(await lightClient.latestTrustedHeight(sourceChainId));
+  if (height === 0n) return null;
+  const header = await lightClient.trustedHeader(sourceChainId, height);
+  if (!header.exists) return null;
+  return {
+    height,
+    headerHash: header.headerHash,
+    stateRoot: header.stateRoot,
+  };
+}
+
 function proofStateUnavailableError(label, proofHeight) {
   return new Error(
     `${label} proof state at height ${BigInt(proofHeight).toString()} is no longer available from the local Besu RPC. ` +
@@ -441,7 +453,60 @@ export async function finalizeForwardHeaderStep({ config, ctx, sourceChainId, de
 export async function updateForwardClientStep({ config, ctx, sourceChainId, destinationChainId }) {
   setPhase("step-updateForwardClient");
   const forward = await ensureForwardPacket(config, ctx, sourceChainId, destinationChainId);
-  const header = await trustForwardHeader(config, ctx, sourceChainId, forward.commitHeight);
+  const commitHeight = BigInt(forward.commitHeight);
+  const before = await latestTrustedAnchor(ctx.B.lightClient, sourceChainId);
+  if (before?.height >= commitHeight) {
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        forward: {
+          trustedHeight: before.height.toString(),
+          trustedHeaderHash: before.headerHash,
+          trustedStateRoot: before.stateRoot,
+        },
+      },
+      {
+        phase: "forward-header-trusted",
+        label: "Bank B already trusts Bank A header",
+        summary: `Bank B already trusts Bank A Besu header #${before.height.toString()}.`,
+      }
+    );
+  }
+
+  let header = null;
+  try {
+    header = await trustForwardHeader(config, ctx, sourceChainId, forward.commitHeight);
+  } catch (error) {
+    const after = await latestTrustedAnchor(ctx.B.lightClient, sourceChainId).catch(() => null);
+    const progressed = after && (!before || after.height > before.height);
+    if (!progressed) throw error;
+
+    return writeTracePatch(
+      config,
+      ctx,
+      {
+        forward: {
+          trustedHeight: after.height.toString(),
+          trustedHeaderHash: after.headerHash,
+          trustedStateRoot: after.stateRoot,
+        },
+      },
+      after.height >= commitHeight
+        ? {
+            phase: "forward-header-trusted",
+            label: "Updated Bank B Besu light client",
+            summary: `Bank B now trusts Bank A Besu header #${after.height.toString()}.`,
+          }
+        : {
+            phase: "forward-header-partial",
+            label: "Partially updated Bank B Besu light client",
+            summary:
+              `Bank B now trusts Bank A Besu header #${after.height.toString()} and still needs ` +
+              `header #${commitHeight.toString()} before forward proof execution. Retry Sync Trust on Bank B.`,
+          }
+    );
+  }
   const trace = await writeTracePatch(
     config,
     ctx,

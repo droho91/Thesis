@@ -96,6 +96,32 @@ const ACTION_CARD_BY_ACTION = {
   updateReverseClient: "redeem",
   proveReverseUnlock: "redeem",
 };
+const FORWARD_PROOF_STEP_LABELS = {
+  finalizeForwardHeader: "1/3 Fetch Bank A header",
+  updateForwardClient: "2/3 Import Bank A header on Bank B",
+  proveForwardMint: "3/3 Verify proof and mint voucher",
+};
+const REVERSE_PROOF_STEP_LABELS = {
+  finalizeReverseHeader: "1/3 Fetch Bank B header",
+  updateReverseClient: "2/3 Import Bank B header on Bank A",
+  proveReverseUnlock: "3/3 Verify proof and unlock aBANK",
+};
+const WORKFLOW_STEP_TITLES = {
+  connect: "Prepare Account",
+  bridge: "Bridge Collateral",
+  activate: "Deposit",
+  borrow: "Borrow",
+  manage: "Manage Position",
+  return: "Close Position",
+};
+const DO_NOT_REPEAT_COMPLETED_ACTIONS = new Set([
+  "depositCollateral",
+  "borrow",
+  "repay",
+  "withdrawCollateral",
+  "burn",
+  "proveReverseUnlock",
+]);
 const ACTION_GUIDE = {
   deploySeed: {
     runningTitle: "Prepare Fast Demo Session",
@@ -444,19 +470,130 @@ function workflowCtaFromServerNext(nextAction) {
   };
 }
 
+function ctaDebugName(cta) {
+  if (!cta) return "none";
+  if (cta.type === "action") return `${cta.label || actionTitle(cta.action)} (${cta.action})`;
+  return `${cta.label || cta.type} (${cta.type})`;
+}
+
+function ctaLabel(cta, fallback = "Continue") {
+  if (!cta) return fallback;
+  if (cta.label) return cta.label;
+  if (cta.type === "action") return actionTitle(cta.action);
+  if (cta.type === "deploySeed") return "Prepare Fast Demo Session";
+  if (cta.type === "resetSeeded") return "Fresh Reset";
+  if (cta.type === "refresh") return "Refresh state";
+  if (cta.type === "return") return "Return to recommendation";
+  if (cta.type === "portal") return "Open panel";
+  return fallback;
+}
+
+function ctaIntent(cta) {
+  if (!cta) return "No action";
+  if (cta.type === "action") return `Action: ${ctaLabel(cta)}`;
+  if (cta.type === "deploySeed" || cta.type === "resetSeeded") return "Setup action";
+  if (cta.type === "portal") return "Review panel";
+  if (cta.type === "refresh") return "Refresh only";
+  if (cta.type === "return") return "Navigation";
+  return "Workflow action";
+}
+
+function bindPrimaryWorkflowCta(cta) {
+  if (!primaryWorkflowCta) return;
+  delete primaryWorkflowCta.dataset.ctaType;
+  delete primaryWorkflowCta.dataset.ctaAction;
+  delete primaryWorkflowCta.dataset.ctaPortal;
+  delete primaryWorkflowCta.dataset.ctaLabel;
+  if (!cta?.type) return;
+  primaryWorkflowCta.dataset.ctaType = cta.type;
+  if (cta.action) primaryWorkflowCta.dataset.ctaAction = cta.action;
+  if (cta.portal) primaryWorkflowCta.dataset.ctaPortal = cta.portal;
+  if (cta.label) primaryWorkflowCta.dataset.ctaLabel = cta.label;
+}
+
+function primaryWorkflowCtaBinding() {
+  if (!primaryWorkflowCta?.dataset.ctaType) return null;
+  const type = primaryWorkflowCta.dataset.ctaType;
+  const cta = { type, label: primaryWorkflowCta.dataset.ctaLabel || undefined };
+  if (type === "action") cta.action = primaryWorkflowCta.dataset.ctaAction;
+  if (type === "portal") cta.portal = primaryWorkflowCta.dataset.ctaPortal;
+  return cta;
+}
+
+function sameCtaIntent(left, right) {
+  if (!left || !right) return false;
+  if (left.type !== right.type) return false;
+  if (left.type === "action") return left.action === right.action;
+  if (left.type === "portal") return left.portal === right.portal;
+  return true;
+}
+
+function forwardProofStepLabel(action) {
+  return FORWARD_PROOF_STEP_LABELS[action] || "Receive voucher collateral on Bank B";
+}
+
+function reverseProofStepLabel(action) {
+  return REVERSE_PROOF_STEP_LABELS[action] || "Verify reverse proof and unlock aBANK on Bank A";
+}
+
+function avoidRepeatingCompletedAction(cta, completedAction) {
+  return Boolean(
+    cta?.type === "action" &&
+      cta.action === completedAction &&
+      DO_NOT_REPEAT_COMPLETED_ACTIONS.has(completedAction)
+  );
+}
+
 function rememberNextActionFromPayload(payload) {
   if (!currentRunningAction) return;
   const serverCta = workflowCtaFromServerNext(payload?.nextAction);
   currentRunningAction.serverNextAction = serverCta;
-  currentRunningAction.nextAction =
-    currentRunningAction.action === "resetSeeded" || currentRunningAction.action === "deploySeed"
-      ? serverCta || currentWorkflowAction
-      : currentWorkflowAction || serverCta;
+  currentRunningAction.uiNextAction = currentWorkflowAction;
+  const serverFallback = avoidRepeatingCompletedAction(serverCta, currentRunningAction.action) ? null : serverCta;
+  const uiCta = currentWorkflowAction;
+  const uiFallback = avoidRepeatingCompletedAction(uiCta, currentRunningAction.action)
+    ? { type: "refresh", label: "Refresh state" }
+    : uiCta;
+  const uiEligibility = workflowCtaEligibility(uiFallback, currentStatus, { recommended: true });
+  const serverEligibility = workflowCtaEligibility(serverFallback, currentStatus, { recommended: true });
+  if (serverFallback && serverEligibility.ok) {
+    currentRunningAction.nextAction =
+      uiFallback && uiEligibility.ok && sameCtaIntent(serverFallback, uiFallback)
+        ? { ...serverFallback, label: serverFallback.label || uiFallback.label }
+        : serverFallback;
+    return;
+  }
+  currentRunningAction.nextAction = uiFallback && uiEligibility.ok ? uiFallback : { type: "refresh", label: "Refresh state" };
 }
 
-function workflowCtaEligibility(cta, status = currentStatus) {
-  if (cta?.type === "action") return actionEligibility(cta.action, status);
+function workflowCtaEligibility(cta, status = currentStatus, { recommended = false } = {}) {
+  const activeOperation = activeControllerOperation(status);
+  if (cta?.type === "action" && activeOperation?.action) {
+    return { ok: false, message: controllerBusyMessage(activeOperation, cta.action) };
+  }
+  if (cta?.type === "action") {
+    const amountOverride = recommended && AMOUNT_ACTIONS[cta.action] ? defaultAmountForAction(cta.action, status) : null;
+    return actionEligibility(cta.action, status, { amountOverride });
+  }
   return { ok: true, message: "" };
+}
+
+function activeControllerOperation(status = currentStatus) {
+  return status?.controller?.activeOperation || null;
+}
+
+function controllerStillRunning(status = currentStatus) {
+  return Boolean(activeControllerOperation(status)?.action);
+}
+
+function controllerBusyMessage(activeOperation, requestedAction = null) {
+  const activeLabel = activeOperation?.label || guideForAction(activeOperation?.action).runningTitle;
+  const requestedLabel = requestedAction ? guideForAction(requestedAction).runningTitle : "another action";
+  return `${activeLabel} is still running. Wait for it to finish before starting ${requestedLabel}.`;
+}
+
+function actionResponseMustSettle(action) {
+  return STRICT_VISIBLE_COMPLETION_ACTIONS.has(action);
 }
 
 function isReadOnlyControl(button) {
@@ -876,6 +1013,11 @@ function renderPrimaryGuide(actionState) {
   );
   setPrimaryGuideVisible(true);
   setText("primaryActionTitle", `${prefix}: ${actionState.phase === "success" && nextCta?.label ? nextCta.label : guide.runningTitle}`);
+  setText("primaryActionState", `State: ${controllerStatus}`);
+  setText(
+    "primaryActionIntent",
+    actionState.phase === "success" && nextCta?.label ? ctaIntent(nextCta) : `Action: ${guide.runningTitle}`
+  );
   setText(
     "primaryActionDescription",
     actionState.phase === "running"
@@ -927,11 +1069,13 @@ function renderPrimaryGuide(actionState) {
   );
   if (primaryWorkflowCta) {
     if (actionState.phase === "success" && nextCta?.type === "action") {
-      primeRecommendedAmount(nextCta.action, currentStatus);
+      primeRecommendedAmount(nextCta.action, currentStatus, { force: true });
     }
-    const nextValidation = nextCta ? workflowCtaEligibility(nextCta, currentStatus) : { ok: true, message: "" };
+    bindPrimaryWorkflowCta(actionState.phase === "success" ? nextCta : null);
+    const nextValidation = nextCta ? workflowCtaEligibility(nextCta, currentStatus, { recommended: true }) : { ok: true, message: "" };
     primaryWorkflowCta.disabled = actionState.phase === "running" || (actionState.phase === "success" && !nextValidation.ok);
     primaryWorkflowCta.title = actionState.phase === "success" && !nextValidation.ok ? nextValidation.message : "";
+    primaryWorkflowCta.dataset.state = actionState.phase === "success" && !nextValidation.ok ? "blocked" : actionState.phase;
     primaryWorkflowCta.textContent =
       actionState.phase === "running"
         ? guide.runningTitle
@@ -1070,13 +1214,16 @@ function securityHas(status, key) {
   return Object.prototype.hasOwnProperty.call(status?.security || {}, key);
 }
 
-function forwardConsumed(status) {
+function forwardReceiptConsumed(status) {
   return Boolean(
     status?.security?.forwardConsumed ||
-      status?.trace?.forward?.receiveTxHash ||
-      positive(status?.balances?.voucher) ||
-      positive(status?.balances?.poolCollateral)
+      status?.trace?.forward?.receiveTxHash
   );
+}
+
+function forwardConsumed(status) {
+  if (forwardReceiptConsumed(status)) return true;
+  return !forwardPacketPending(status) && (positive(status?.balances?.voucher) || positive(status?.balances?.poolCollateral));
 }
 
 function reverseConsumed(status) {
@@ -1199,120 +1346,124 @@ function setWorkflowStepStatus(id, state, text) {
   strong.textContent = text;
 }
 
-function workflowModel(status) {
+function repayFundingShortfall(status = currentStatus) {
+  const state = financialState(status);
+  const target = state.debt > POSITION_EPSILON ? state.debt + repayCloseBuffer(state.debt) : 0;
+  return Math.max(0, target - state.bankB);
+}
+
+function workflowStepsForStatus(status) {
   const state = financialState(status);
   const lifecycle = lifecycleState(status);
-  const forward = status?.trace?.forward || {};
-  const health = healthFromStatus(status);
-  const deployed = state.deployed;
-  const bridgeStarted =
-    state.escrow > 0 ||
-    Boolean(forward.commitHeight || forward.packetId) ||
-    forwardConsumed(status) ||
-    state.voucher > 0 ||
-    state.collateral > 0 ||
-    state.debt > 0 ||
-    lifecycle.returnStarted ||
-    lifecycle.liquidationExecuted;
-  const voucherReady = state.voucher > 0;
-  const collateralActive = lifecycle.activeCollateral;
-  const debtActive = lifecycle.activeDebt;
-  const activeIdlePosition = collateralActive && !debtActive;
-  const closeoutContext =
-    lifecycle.debtWasOpened ||
-    lifecycle.borrowerCollateralWithdrawn ||
-    lifecycle.returnStarted ||
-    selectedWorkflowStep === "return";
-  const closeoutWithdrawReady = activeIdlePosition && closeoutContext && state.withdrawable > POSITION_EPSILON;
-  const elevatedRisk = debtActive && ["Watch", "Danger", "Liquidatable"].includes(health.status);
-  const locked = safetyLocked(status);
-  const reverseAction = reverseProofAction(status);
+  const forwardPending = forwardPacketPending(status);
+  const reversePending = reversePacketPending(status);
+  const routeOpen = routeReady(status);
+  const forwardDelivered =
+    !forwardPending &&
+    (forwardConsumed(status) ||
+      state.voucher > POSITION_EPSILON ||
+      state.collateral > POSITION_EPSILON ||
+      state.debt > POSITION_EPSILON ||
+      lifecycle.returnStarted ||
+      lifecycle.liquidationExecuted);
+  const debtClosedAfterBorrow = lifecycle.debtWasOpened && !lifecycle.activeDebt;
 
-  const steps = {
-    connect: { complete: deployed, unlocked: true, label: deployed ? "Ready" : "Prepare account" },
+  return {
+    connect: {
+      complete: state.deployed,
+      unlocked: true,
+      label: state.deployed ? "Ready" : "Start here",
+    },
     bridge: {
-      complete: voucherReady || collateralActive || debtActive,
-      unlocked: deployed,
-      label: voucherReady || collateralActive || debtActive ? "Complete" : bridgeStarted ? "In progress" : "Ready",
+      complete: forwardDelivered,
+      unlocked: state.deployed,
+      label: forwardDelivered ? "Done" : forwardPending ? "Proof pending" : routeOpen ? "Route ready" : state.deployed ? "Open route" : "Waiting",
     },
     activate: {
       complete: lifecycle.collateralWasDeposited || lifecycle.returnStarted || lifecycle.liquidationExecuted,
-      unlocked: voucherReady || collateralActive || debtActive || lifecycle.returnStarted,
-      label: voucherReady && collateralActive
-        ? "Top-up ready"
-        : lifecycle.collateralWasDeposited || lifecycle.returnStarted
-          ? "Active"
-          : voucherReady
+      unlocked: lifecycle.freeVoucher || lifecycle.activeCollateral || lifecycle.activeDebt || lifecycle.returnStarted,
+      label:
+        lifecycle.collateralWasDeposited || lifecycle.returnStarted
+          ? "Deposited"
+          : lifecycle.freeVoucher
             ? "Ready"
-            : "Locked",
+            : "Waiting",
     },
     borrow: {
       complete: lifecycle.debtWasOpened || lifecycle.liquidationExecuted,
-      unlocked: collateralActive || debtActive || lifecycle.debtWasOpened,
-      label: lifecycle.debtWasOpened ? "Used" : collateralActive ? "Ready" : "Locked",
+      unlocked: lifecycle.activeCollateral || lifecycle.activeDebt || lifecycle.debtWasOpened,
+      label: lifecycle.debtWasOpened ? "Borrowed" : lifecycle.activeCollateral ? "Ready" : "Waiting",
     },
     manage: {
-      complete: lifecycle.borrowerCollateralWithdrawn || lifecycle.liquidationExecuted,
-      unlocked: debtActive || activeIdlePosition || lifecycle.liquidationExecuted,
-      label: debtActive
-        ? elevatedRisk
-          ? "Needs attention"
-          : "Active"
+      complete: lifecycle.borrowerCollateralWithdrawn || lifecycle.returnStarted || lifecycle.liquidationExecuted,
+      unlocked: lifecycle.activeDebt || lifecycle.activeCollateral || lifecycle.debtWasOpened || lifecycle.liquidationExecuted,
+      label: lifecycle.activeDebt
+        ? "Debt open"
         : lifecycle.borrowerCollateralWithdrawn
           ? "Withdrawn"
-          : activeIdlePosition
-            ? "Flexible"
-            : lifecycle.liquidationExecuted
-              ? "Risk path"
-              : "Locked",
+          : debtClosedAfterBorrow && lifecycle.activeCollateral
+            ? "Closeout ready"
+            : lifecycle.activeCollateral
+              ? "Optional"
+              : lifecycle.liquidationExecuted
+                ? "Risk path"
+                : "Waiting",
     },
     return: {
       complete: lifecycle.returnComplete,
       unlocked:
-        closeoutWithdrawReady ||
-        lifecycle.freeVoucher ||
         lifecycle.returnStarted ||
+        lifecycle.freeVoucher ||
         lifecycle.settlementVoucher ||
         lifecycle.liquidationExecuted ||
-        lifecycle.borrowerCollateralWithdrawn,
+        debtClosedAfterBorrow,
       label: lifecycle.returnComplete
-        ? "Complete"
-        : lifecycle.returnStarted
+        ? "Done"
+        : reversePending
           ? "Proof pending"
           : lifecycle.settlementVoucher
             ? "Settle"
-            : closeoutWithdrawReady
-              ? "Withdraw first"
-              : lifecycle.freeVoucher
-                ? "Ready"
-                : "Locked",
+            : lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher
+              ? "Burn ready"
+              : debtClosedAfterBorrow && lifecycle.activeCollateral
+                ? "Withdraw first"
+                : "Waiting",
     },
   };
+}
 
-  if (!deployed) {
+function workflowRecommendation(status) {
+  const state = financialState(status);
+  const lifecycle = lifecycleState(status);
+  const health = healthFromStatus(status);
+  const routeOpen = routeReady(status);
+  const forwardPending = forwardPacketPending(status);
+  const reverseAction = reverseProofAction(status);
+  const reversePending = reversePacketPending(status);
+  const elevatedRisk = lifecycle.activeDebt && ["Watch", "Danger", "Liquidatable"].includes(health.status);
+
+  if (!state.deployed) {
     return {
       step: "connect",
       title: "Prepare fast demo session",
       status: "Start here",
       summary: "Confirm the local Besu runtime before collateral transfer and borrowing actions.",
       cta: { type: "deploySeed", label: "Prepare Fast Demo Session" },
-      description: "Reuse the existing seeded runtime when valid. Use Fresh Reset when you need the clean post-seed baseline.",
-      hint: "This fast prepare does not undo oracle shocks, liquidations, repayments, or previous demo actions.",
-      steps,
+      description: "Use the fast prepare action to reuse a valid seeded runtime. Fresh Reset remains a separate deliberate reset control.",
+      hint: "No transfer, borrow, repay, or proof action runs until the account is prepared.",
       risk: "waiting",
     };
   }
 
-  if (locked) {
+  if (safetyLocked(status)) {
     return {
       step: "manage",
       title: "Recover account safety",
       status: "Safety mode",
-      summary: "Safety controls are active. Recover the account before continuing lending actions.",
+      summary: "Safety controls are active. Recover before changing collateral or debt.",
       cta: { type: "action", action: "recoverClient", label: "Recover Account" },
-      description: "Resolve the safety state before making position changes.",
-      hint: "Collateral and borrowing actions are paused while recovery is active.",
-      steps,
+      description: "The only recommended protocol action is recovery while the light-client safety state is active.",
+      hint: "Collateral, bridge, and lending actions stay disabled until recovery finishes.",
       risk: "risk",
     };
   }
@@ -1323,24 +1474,23 @@ function workflowModel(status) {
         step: "return",
         title: "Settle seized collateral",
         status: "Liquidation executed",
-        summary: "The authorized liquidator now holds seized voucher collateral. Settle it through the reverse bridge route.",
+        summary: "The authorized liquidator holds seized voucher collateral.",
         cta: { type: "action", action: "settleSeizedVoucher", label: "Settle Seized Voucher" },
-        description: "Burn the seized voucher and commit a settlement packet for the origin collateral.",
+        description: "Burn the seized voucher and create the reverse settlement packet for origin collateral.",
         hint: `${formatAmount(status?.risk?.settlement?.seizedVoucherBalance || status?.balances?.liquidatorVoucher, "vA")} held by the authorized liquidator.`,
-        steps,
         risk: "risk",
       };
     }
     if (lifecycle.settlementStarted && !lifecycle.settlementUnlocked) {
+      const action = reverseAction || "proveReverseUnlock";
       return {
         step: "return",
         title: "Complete liquidator settlement",
         status: "Proof pending",
-        summary: "The settlement packet exists on Bank B. Complete the reverse proof so Bank A releases origin collateral.",
-        cta: { type: "action", action: reverseAction || "proveReverseUnlock", label: "Verify reverse proof and unlock aBANK on Bank A" },
-        description: "Import the needed Bank B header if necessary, then verify the reverse packet proof and unlock origin collateral.",
-        hint: "This remains script-assisted for proof generation, while the contracts verify packet execution.",
-        steps,
+        summary: "The settlement packet exists on Bank B.",
+        cta: { type: "action", action, label: reverseProofStepLabel(action) },
+        description: "Run the next reverse proof sub-step so Bank A can release origin collateral.",
+        hint: "Header fetch, light-client import, and proof verification are separated so each button has one job.",
         risk: "risk",
       };
     }
@@ -1348,88 +1498,11 @@ function workflowModel(status) {
       step: "return",
       title: "Risk settlement complete",
       status: lifecycle.settlementUnlocked ? "Settled" : "Liquidation path",
-      summary: "The liquidation branch has reached settlement. Use Risk Admin to inspect remaining debt, bad debt, reserves, and origin unlock status.",
+      summary: "The liquidation branch no longer has a pending settlement action.",
       cta: { type: "portal", portal: "risk", label: "Review Risk Admin" },
-      description: "Review the liquidation accounting and seized-voucher settlement evidence.",
-      hint: lifecycle.settlementUnlocked ? "Origin collateral for the liquidator has been unlocked on Bank A." : "No seized voucher is waiting for settlement.",
-      steps,
+      description: "Review liquidation accounting, reserves, bad debt, and settlement evidence.",
+      hint: lifecycle.settlementUnlocked ? "Origin collateral for the liquidator is unlocked on Bank A." : "No seized voucher is waiting for settlement.",
       risk: "risk",
-    };
-  }
-
-  if (!bridgeStarted && !voucherReady && !collateralActive && !debtActive) {
-    return {
-      step: "bridge",
-      title: "Bridge collateral",
-      status: "Ready",
-      summary: "Move source-bank collateral into this lending account to begin borrowing.",
-      cta: {
-        type: "action",
-        action: routeReady(status) ? "lock" : "openRoute",
-        label: routeReady(status) ? "Lock aBANK on Bank A" : "Open Bank A to Bank B route",
-      },
-      description: routeReady(status)
-        ? "Choose an amount and lock aBANK into Bank A escrow."
-        : "Open the permissioned route before locking collateral.",
-      hint: `${formatAmount(state.bankA, "aBANK")} available on Bank A.`,
-      steps,
-      risk: "safe",
-    };
-  }
-
-  if (bridgeStarted && !voucherReady && !collateralActive && !debtActive && !lifecycle.returnStarted) {
-    return {
-      step: "bridge",
-      title: "Bridge in progress",
-      status: "In progress",
-      summary: "Your collateral transfer is being checked. Continue once to make it usable for borrowing.",
-      cta: { type: "action", action: bridgeProofAction(status), label: "Receive voucher collateral on Bank B" },
-      description: "Verify the forward packet proof so the transferred collateral becomes a Bank B voucher.",
-      hint: "The controller may import a header or generate a storage proof before the voucher appears.",
-      steps,
-      risk: "waiting",
-    };
-  }
-
-  if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher && !lifecycle.borrowerReverseStarted) {
-    return {
-      step: "return",
-      title: "Return collateral to Bank A",
-      status: "Ready",
-      summary: "Your voucher collateral is back in the Bank B wallet. Burn it and commit a reverse packet for source-bank unlock.",
-      cta: { type: "action", action: "burn", label: "Burn voucher and start Bank A unlock" },
-      description: "Burn voucher collateral on Bank B and create the reverse settlement packet.",
-      hint: `${formatAmount(state.voucher, "vA")} free voucher available to return.`,
-      steps,
-      risk: "safe",
-    };
-  }
-
-  if (voucherReady && !collateralActive && !debtActive && !lifecycle.borrowerCollateralWithdrawn && !lifecycle.debtWasOpened) {
-    return {
-      step: "activate",
-      title: "Activate collateral",
-      status: "Ready",
-      summary: "Your collateral is available. Activate it to unlock borrowing power.",
-      cta: { type: "action", action: "depositCollateral", label: "Deposit voucher collateral" },
-      description: "Deposit available collateral into the lending account.",
-      hint: `${formatAmount(state.voucher, "vA")} available to activate.`,
-      steps,
-      risk: "safe",
-    };
-  }
-
-  if (lifecycle.borrowerReverseStarted && !lifecycle.borrowerReverseComplete) {
-    return {
-      step: "return",
-      title: "Complete collateral release",
-      status: "Proof pending",
-      summary: "The reverse packet has been committed. Complete proof verification so Bank A unlocks the origin collateral.",
-      cta: { type: "action", action: reverseAction || "proveReverseUnlock", label: "Verify reverse proof and unlock aBANK on Bank A" },
-      description: "Import the needed Bank B header if necessary, then verify the reverse packet proof and release origin collateral.",
-      hint: "Header relay and proof generation are script-assisted; unlock execution is contract-verified.",
-      steps,
-      risk: "safe",
     };
   }
 
@@ -1438,66 +1511,175 @@ function workflowModel(status) {
       step: "return",
       title: "Collateral returned",
       status: "Complete",
-      summary: "The borrower closeout path is complete: debt repaid, collateral withdrawn, voucher burned, and origin collateral unlocked.",
+      summary: "The borrower closeout path has completed.",
       cta: { type: "portal", portal: "technical", label: "Review Proof" },
-      description: "Inspect the proof and packet evidence behind the completed return path.",
-      hint: "The account can start another borrow cycle, but the guided closeout lifecycle is complete.",
-      steps,
+      description: "Inspect the proof and packet evidence behind the completed reverse unlock.",
+      hint: "The account can start another borrow cycle, but the current guided closeout is complete.",
       risk: "safe",
     };
   }
 
-  if (collateralActive && !debtActive) {
-    const borrowLabel = lifecycle.debtWasOpened ? "Borrow again" : "Borrow";
-    const recommendedAction =
-      closeoutWithdrawReady
-        ? { type: "action", action: "withdrawCollateral", label: "Withdraw collateral to return" }
-        : state.availableBorrow > POSITION_EPSILON
-        ? { type: "action", action: "borrow", label: borrowLabel }
-        : state.voucher > POSITION_EPSILON
-          ? { type: "action", action: "depositCollateral", label: "Deposit more voucher collateral" }
-          : state.withdrawable > POSITION_EPSILON
-            ? { type: "action", action: "withdrawCollateral", label: "Withdraw safe collateral" }
-            : { type: "action", action: routeReady(status) ? "lock" : "openRoute", label: "Bridge more collateral" };
-    const idleSummary = lifecycle.debtWasOpened
-      ? "Collateral is active and no debt is open. You can borrow again, deposit more voucher collateral, bridge more, withdraw safe collateral, or close the position."
-      : "Collateral is active and no debt is open. You can borrow, deposit more voucher collateral, bridge more, withdraw safe collateral, or close the position.";
-    const closeoutSummary = lifecycle.debtWasOpened
-      ? "Debt is closed and collateral is still active in the lending pool. Continue borrowing if you want another loan, or close the position by withdrawing voucher collateral for return."
-      : "No debt is open and collateral is still active in the lending pool. Borrow when ready, or close the position by withdrawing voucher collateral for return.";
+  if (lifecycle.borrowerReverseStarted || reversePending) {
+    const action = reverseAction || "proveReverseUnlock";
     return {
-      step: closeoutWithdrawReady ? "return" : "manage",
-      title: closeoutWithdrawReady ? "Close position and return collateral" : "Choose how to use active collateral",
-      status: lifecycle.debtWasOpened ? "Debt closed" : "No debt",
-      summary: closeoutWithdrawReady ? closeoutSummary : idleSummary,
-      cta: recommendedAction,
-      description: closeoutWithdrawReady
-        ? "Withdraw active collateral first; after it is free in your Bank B wallet, burn the voucher and verify the reverse proof."
-        : "This is an idle lending position, not a forced closeout. Pick the action that best fits the live demo story.",
-      hint: `${formatAmount(state.availableBorrow, "bCASH")} available to borrow; ${formatAmount(state.withdrawable, "vA")} withdrawable.`,
-      steps,
+      step: "return",
+      title: "Complete collateral release",
+      status: "Proof pending",
+      summary: "A reverse packet exists and needs proof verification.",
+      cta: { type: "action", action, label: reverseProofStepLabel(action) },
+      description: "Run the next reverse proof sub-step only; it will not repeat the burn action.",
+      hint: "The reverse path is ordered as header fetch, light-client import, then proof unlock.",
+      risk: "waiting",
+    };
+  }
+
+  if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher) {
+    return {
+      step: "return",
+      title: "Return collateral to Bank A",
+      status: "Burn ready",
+      summary: "Voucher collateral is free in the Bank B wallet.",
+      cta: { type: "action", action: "burn", label: "Burn voucher and start Bank A unlock" },
+      description: "Burn the free voucher and commit the reverse packet for source-bank unlock.",
+      hint: `${formatAmount(state.voucher, "vA")} free voucher available to return.`,
+      risk: "safe",
+    };
+  }
+
+  if (forwardPending) {
+    const action = bridgeProofAction(status);
+    return {
+      step: "bridge",
+      title: "Bridge in progress",
+      status: "Proof pending",
+      summary: "The forward packet exists and is waiting for its next proof sub-step.",
+      cta: { type: "action", action, label: forwardProofStepLabel(action) },
+      description: "Run only the next bridge proof sub-step so voucher collateral becomes visible on Bank B.",
+      hint: "The bridge path is ordered as header fetch, light-client import, then proof mint.",
+      risk: "waiting",
+    };
+  }
+
+  if (lifecycle.freeVoucher && !lifecycle.activeCollateral && !lifecycle.activeDebt) {
+    const returning = lifecycle.borrowerCollateralWithdrawn || lifecycle.debtWasOpened;
+    return returning
+      ? {
+          step: "return",
+          title: "Return collateral to Bank A",
+          status: "Burn ready",
+          summary: "Debt is closed and voucher collateral is free.",
+          cta: { type: "action", action: "burn", label: "Burn voucher and start Bank A unlock" },
+          description: "Burn the voucher before running the reverse proof unlock.",
+          hint: `${formatAmount(state.voucher, "vA")} free voucher available to return.`,
+          risk: "safe",
+        }
+      : {
+          step: "activate",
+          title: "Activate collateral",
+          status: "Deposit ready",
+          summary: "Voucher collateral is ready to become lending collateral.",
+          cta: { type: "action", action: "depositCollateral", label: "Deposit voucher collateral" },
+          description: "Deposit the free voucher into the lending pool to unlock borrowing power.",
+          hint: `${formatAmount(state.voucher, "vA")} available to deposit.`,
+          risk: "safe",
+        };
+  }
+
+  if (lifecycle.activeDebt) {
+    const shortfall = repayFundingShortfall(status);
+    const needsCash = shortfall > POSITION_EPSILON;
+    return {
+      step: "manage",
+      title: needsCash ? "Add demo cash for repayment" : elevatedRisk ? "Repay debt to improve health" : "Repay active debt",
+      status: needsCash ? "Needs cash" : elevatedRisk ? health.status : "Debt open",
+      summary: needsCash
+        ? "The account needs more demo bCASH before it can close the debt cleanly."
+        : "Debt is open. Repayment is the primary recommendation; withdrawal stays a separate safe-collateral button.",
+      cta: needsCash
+        ? { type: "action", action: "topUpRepayCash", label: "Add demo bCASH for repayment" }
+        : { type: "action", action: "repay", label: elevatedRisk ? "Repay debt to improve health" : "Repay bCASH debt" },
+      description: needsCash
+        ? "Mint demo bCASH to model the borrower reacquiring repayment cash, then repay from the same manage panel."
+        : "Repay bCASH first. Safe collateral withdrawal remains available only when its own limit allows it.",
+      hint: needsCash
+        ? `${formatAmount(shortfall, "bCASH")} more is needed for a clean closeout buffer.`
+        : `${formatAmount(state.debt, "bCASH")} debt outstanding.`,
+      risk: elevatedRisk ? "risk" : "safe",
+    };
+  }
+
+  if (lifecycle.activeCollateral && lifecycle.debtWasOpened) {
+    return {
+      step: "return",
+      title: "Withdraw collateral to close",
+      status: "Debt closed",
+      summary: "Debt is closed and collateral is still active in the lending pool.",
+      cta: { type: "action", action: "withdrawCollateral", label: "Withdraw collateral to return" },
+      description: "Withdraw active collateral first; after it is free in your Bank B wallet, burn it and run the reverse proof.",
+      hint: `${formatAmount(state.withdrawable, "vA")} withdrawable.`,
+      risk: "safe",
+    };
+  }
+
+  if (lifecycle.activeCollateral) {
+    if (state.availableBorrow > POSITION_EPSILON) {
+      return {
+        step: "borrow",
+        title: "Borrow against collateral",
+        status: "Borrow ready",
+        summary: "Collateral is active and no debt is open.",
+        cta: { type: "action", action: "borrow", label: "Borrow bCASH" },
+        description: "Borrow within the displayed policy and liquidity limit.",
+        hint: `${formatAmount(state.availableBorrow, "bCASH")} available to borrow.`,
+        risk: "safe",
+      };
+    }
+    if (state.voucher > POSITION_EPSILON) {
+      return {
+        step: "activate",
+        title: "Deposit remaining voucher",
+        status: "Top-up ready",
+        summary: "Free voucher collateral is available while collateral is already active.",
+        cta: { type: "action", action: "depositCollateral", label: "Deposit more voucher collateral" },
+        description: "Deposit the remaining free voucher before borrowing or returning collateral.",
+        hint: `${formatAmount(state.voucher, "vA")} free voucher available.`,
+        risk: "safe",
+      };
+    }
+    return {
+      step: "manage",
+      title: "Active collateral is idle",
+      status: "No debt",
+      summary: "Collateral is active, but no borrowing power is currently available.",
+      cta: { type: "refresh", label: "Refresh state" },
+      description: "Refresh the dashboard before choosing a manual collateral action.",
+      hint: `${formatAmount(state.withdrawable, "vA")} withdrawable if you want to use the separate withdraw button.`,
       risk: "safe",
       mode: "activeIdlePosition",
     };
   }
 
-  const manageAction = currentLoanTab === "withdraw" ? "withdrawCollateral" : "repay";
   return {
-    step: "manage",
-    title: elevatedRisk ? "Repay debt to improve health" : "Repay debt or withdraw safe collateral",
-    status: elevatedRisk ? health.status : "Debt active",
-    summary: elevatedRisk
-      ? "Your health factor needs attention. Repaying debt is the clearest way to improve safety."
-      : "Your loan is active. Repay, monitor safety, or withdraw only if the position remains healthy.",
+    step: "bridge",
+    title: routeOpen ? "Lock collateral on Bank A" : "Open collateral route",
+    status: routeOpen ? "Route ready" : "Route not open",
+    summary: "No Bank B collateral is active yet.",
     cta: {
       type: "action",
-      action: elevatedRisk ? "repay" : manageAction,
-      label: elevatedRisk ? "Repay debt to improve health" : currentLoanTab === "withdraw" ? "Withdraw safe collateral" : "Repay bCASH debt",
+      action: routeOpen ? "lock" : "openRoute",
+      label: routeOpen ? "Lock aBANK on Bank A" : "Open Bank A to Bank B route",
     },
-    description: elevatedRisk ? "Repay bCASH to improve your health factor." : "Choose repay to reduce debt or withdraw only the amount that keeps health safe.",
-    hint: `${formatAmount(state.debt, "bCASH")} debt outstanding.`,
-    steps,
-    risk: elevatedRisk ? "risk" : "safe",
+    description: routeOpen ? "Choose an amount and lock aBANK into Bank A escrow." : "Open the permissioned route before locking collateral.",
+    hint: `${formatAmount(state.bankA, "aBANK")} available on Bank A.`,
+    risk: "safe",
+  };
+}
+
+function workflowModel(status) {
+  const recommendation = workflowRecommendation(status);
+  return {
+    ...recommendation,
+    steps: workflowStepsForStatus(status),
   };
 }
 
@@ -1508,9 +1690,7 @@ function hasForwardPacket(status) {
 
 function forwardPacketPending(status) {
   if (!hasForwardPacket(status)) return false;
-  const state = financialState(status);
-  if (state.voucher > POSITION_EPSILON || state.collateral > POSITION_EPSILON) return false;
-  return !forwardConsumed(status);
+  return !forwardReceiptConsumed(status);
 }
 
 function hasReversePacket(status) {
@@ -1537,7 +1717,7 @@ function closeoutWithdrawEligibility(status, baseEligibility) {
   return { ok: true, message: "Withdraw collateral to start or continue the return path." };
 }
 
-function actionEligibility(action, status = currentStatus) {
+function actionEligibility(action, status = currentStatus, validationOptions = {}) {
   if (!action) return { ok: true, message: "" };
   const state = financialState(status);
   const locked = safetyLocked(status);
@@ -1545,13 +1725,23 @@ function actionEligibility(action, status = currentStatus) {
   const forward = status?.trace?.forward || {};
   const reverse = status?.trace?.reverse || {};
   const settlement = status?.risk?.settlement || {};
-  const validation = AMOUNT_ACTIONS[action] ? validateAmountAction(action, status) : { ok: true, message: "" };
+  const validation = AMOUNT_ACTIONS[action] ? validateAmountAction(action, status, validationOptions) : { ok: true, message: "" };
   const disabled = (message) => ({ ok: false, message });
   const enabled = (message = "") => ({ ok: true, message });
 
   if (!state.deployed && action !== "recoverClient") return disabled("Prepare Fast Demo Session or Fresh Reset before running actions.");
   if (locked && !SAFETY_MODE_ACTIONS.has(action)) {
     return disabled("Safety mode is active. Recover the light client before running interchain actions.");
+  }
+
+  if (action === "borrow") {
+    if (state.collateral <= POSITION_EPSILON) return disabled("Deposit voucher collateral before borrowing.");
+    if (state.availableBorrow <= POSITION_EPSILON) {
+      return disabled(
+        "Borrow is not ready because available borrow is 0. Possible reasons: stale oracle, missing price, collateral not reflected yet, or market state not refreshed."
+      );
+    }
+    if (state.poolCash <= POSITION_EPSILON) return disabled("The lending pool has no cash available to lend.");
   }
 
   if (AMOUNT_ACTIONS[action] && !validation.ok) return validation;
@@ -1589,9 +1779,6 @@ function actionEligibility(action, status = currentStatus) {
         ? enabled("Deposit free voucher collateral into the lending pool.")
         : disabled("Receive voucher collateral first, or withdraw collateral back to your wallet before depositing.");
     case "borrow":
-      if (state.collateral <= POSITION_EPSILON) return disabled("Deposit voucher collateral before borrowing.");
-      if (state.availableBorrow <= POSITION_EPSILON) return disabled("No borrowing power is currently available.");
-      if (state.poolCash <= POSITION_EPSILON) return disabled("The lending pool has no cash available to lend.");
       return enabled("Borrow within the displayed available limit.");
     case "repay":
       if (state.debt <= POSITION_EPSILON) return disabled("There is no active debt to repay.");
@@ -1666,6 +1853,16 @@ function actionEligibility(action, status = currentStatus) {
     default:
       return enabled();
   }
+}
+
+function postActionReadinessNote(action, status = currentStatus) {
+  if (action !== "depositCollateral") return "";
+  const state = financialState(status);
+  if (state.collateral <= POSITION_EPSILON) return "";
+  const borrowEligibility = actionEligibility("borrow", status, {
+    amountOverride: defaultAmountForAction("borrow", status),
+  });
+  return borrowEligibility.ok ? "" : borrowEligibility.message;
 }
 
 function actionCompletionSnapshot(action, status = currentStatus) {
@@ -1745,6 +1942,7 @@ function actionReachedExpectedState(action, status = currentStatus, before = nul
       if (before) return movedDown(state.debt, before.debt) || (before.debt > POSITION_EPSILON && state.debt <= POSITION_EPSILON);
       return state.debt <= POSITION_EPSILON || Boolean(traceRisk.repayTxHash || traceRisk.repaid);
     case "withdrawCollateral":
+      if (traceRisk.withdrawTxHash || traceRisk.collateralWithdrawn || lifecycle.borrowerCollateralWithdrawn) return true;
       if (before) return movedDown(state.collateral, before.collateral) || movedUp(state.voucher, before.voucher);
       return Boolean(traceRisk.withdrawTxHash || traceRisk.collateralWithdrawn || lifecycle.borrowerCollateralWithdrawn);
     case "burn":
@@ -1774,14 +1972,18 @@ function syncWorkflowUi(status = currentStatus) {
   const model = workflowModel(status);
   const selectedStep = selectedWorkflowStep && model.steps[selectedWorkflowStep] ? selectedWorkflowStep : model.step;
   const reviewingPastStep = selectedStep !== model.step;
+  const recommendedAction = model.cta?.type === "action" ? model.cta.action : null;
   currentWorkflowAction = reviewingPastStep
     ? { type: "return", label: "Return to recommendation" }
     : model.cta;
 
   document.body.dataset.workflowStep = selectedStep;
   document.body.dataset.workflowRisk = model.risk;
+  document.body.dataset.workflowAction = recommendedAction || model.cta?.type || "none";
   setText("workflowPanelTitle", reviewingPastStep ? "Review journey area" : model.title);
   setText("workflowPanelStatus", reviewingPastStep ? "Review" : model.status);
+  setText("primaryActionState", reviewingPastStep ? `Viewing: ${WORKFLOW_STEP_TITLES[selectedStep] || selectedStep}` : `State: ${model.status}`);
+  setText("primaryActionIntent", reviewingPastStep ? "Action: return to current recommendation" : ctaIntent(model.cta));
   if (currentRunningAction) {
     renderPrimaryGuide(currentRunningAction);
   } else {
@@ -1800,11 +2002,13 @@ function syncWorkflowUi(status = currentStatus) {
   if (primaryWorkflowCta && !currentRunningAction) {
     const primaryValidation =
       currentWorkflowAction?.type === "action"
-        ? actionEligibility(currentWorkflowAction.action, status)
+        ? workflowCtaEligibility(currentWorkflowAction, status, { recommended: true })
         : { ok: true, message: "" };
-    primaryWorkflowCta.textContent = currentWorkflowAction?.label || "Continue";
+    primaryWorkflowCta.textContent = ctaLabel(currentWorkflowAction);
+    bindPrimaryWorkflowCta(currentWorkflowAction);
     primaryWorkflowCta.disabled = document.body.classList.contains("is-busy") || !primaryValidation.ok;
     primaryWorkflowCta.title = primaryValidation.ok ? "" : primaryValidation.message;
+    primaryWorkflowCta.dataset.state = primaryValidation.ok ? "ready" : "blocked";
     primaryWorkflowCta.classList.toggle("button-danger", model.risk === "risk" && !reviewingPastStep);
     primaryWorkflowCta.classList.toggle("button-primary", model.risk !== "risk" || reviewingPastStep);
   }
@@ -1866,14 +2070,29 @@ function syncWorkflowUi(status = currentStatus) {
     if (button.dataset.closeoutWithdraw === "true") {
       eligibility = closeoutWithdrawEligibility(status, eligibility);
     }
-    button.classList.toggle("is-current-action", action === currentWorkflowAction?.action);
+    button.classList.toggle("is-current-action", action === recommendedAction && !reviewingPastStep);
     if (button.hidden && button.id !== "topUpRepayCashButton") button.hidden = false;
     button.disabled = busy || !eligibility.ok;
+    button.dataset.actionState = busy ? "busy" : eligibility.ok ? "ready" : "blocked";
+    button.setAttribute("aria-disabled", button.disabled ? "true" : "false");
     button.title = busy
       ? "Another transaction/proof action is running. Read-only panels remain available."
       : eligibility.ok
         ? eligibility.message || button.dataset.originalTitle || ""
         : eligibility.message;
+  }
+
+  if (topUpRepayCashButton) {
+    const topUpEligibility = actionEligibility("topUpRepayCash", status);
+    const topUpRecommended = recommendedAction === "topUpRepayCash" && !reviewingPastStep;
+    topUpRepayCashButton.classList.toggle("is-current-action", topUpRecommended);
+    topUpRepayCashButton.dataset.actionState = busy ? "busy" : topUpEligibility.ok ? "ready" : "blocked";
+    topUpRepayCashButton.setAttribute("aria-disabled", topUpRepayCashButton.disabled ? "true" : "false");
+    if (!busy && topUpRecommended) {
+      topUpRepayCashButton.title = topUpEligibility.ok
+        ? topUpEligibility.message || topUpRepayCashButton.dataset.originalTitle || ""
+        : topUpEligibility.message;
+    }
   }
 
   deploySeedButton?.toggleAttribute("hidden", false);
@@ -2085,11 +2304,11 @@ function setScenarioCardState(card, state, label) {
   }
 }
 
-function validateAmountAction(action, status = currentStatus) {
+function validateAmountAction(action, status = currentStatus, { amountOverride = null } = {}) {
   const state = financialState(status);
   const risk = status?.risk || {};
   const inputId = AMOUNT_ACTIONS[action]?.inputId;
-  const amount = inputId ? inputValue(inputId) : 0;
+  const amount = amountOverride == null ? (inputId ? inputValue(inputId) : 0) : numeric(amountOverride);
   if (!AMOUNT_ACTIONS[action]) return { ok: true, amount };
   if (!state.deployed) return { ok: false, amount, message: "Prepare the demo account before submitting." };
   if (action === "depositCollateral" && state.voucher <= 0) {
@@ -2193,13 +2412,16 @@ function primeRecommendedAmount(action, status = currentStatus, { force = false 
 
 function updateAmountActionAvailability(status) {
   const locked = safetyLocked(status);
+  const busy = document.body.classList.contains("is-busy");
   for (const button of actionButtons) {
     const action = button.dataset.action;
     if (!AMOUNT_ACTIONS[action]) continue;
     const safetyAllowed = !locked || SAFETY_MODE_ACTIONS.has(action);
     const validation = validateAmountAction(action, status);
-    button.disabled = !safetyAllowed || !validation.ok;
-    button.title = safetyAllowed
+    button.disabled = busy || !safetyAllowed || !validation.ok;
+    button.title = busy
+      ? "Another transaction/proof action is running. Read-only panels remain available."
+      : safetyAllowed
       ? validation.ok
         ? ""
         : validation.message
@@ -2209,8 +2431,10 @@ function updateAmountActionAvailability(status) {
   const settlementVoucher = numeric(settlement.seizedVoucherBalance);
   for (const button of actionButtons.filter((node) => node.dataset.action === "settleSeizedVoucher")) {
     const allowed = !locked && settlementVoucher > 0 && !settlement.started;
-    button.disabled = !allowed;
-    button.title = locked
+    button.disabled = busy || !allowed;
+    button.title = busy
+      ? "Another transaction/proof action is running. Read-only panels remain available."
+      : locked
       ? "Safety mode is active. Recover the light client before settling seized collateral."
       : settlement.started
         ? "Settlement packet already exists. Complete the settlement proof."
@@ -2753,6 +2977,7 @@ function statusWithPreservedVisibleState(status) {
 
 function recoverCompletedActionFromStatus(action, status, message, output, { forceDefaults = false, beforeState = currentRunningAction?.beforeCompletionState } = {}) {
   if (!status || !actionReachedExpectedState(action, status, beforeState)) return false;
+  if (controllerStillRunning(status)) return false;
   renderStatus(status);
   refreshTransactionUi(status, { forceDefaults });
   pushActivity(action, message || `${guideForAction(action).runningTitle} completed.`, status);
@@ -2812,6 +3037,19 @@ function updateRunningController(status) {
     return;
   }
   const action = currentRunningAction.action;
+  if (
+    currentRunningAction.awaitingActionResponse &&
+    actionResponseMustSettle(action) &&
+    currentRunningAction.phase === "running"
+  ) {
+    setText(
+      "lastMessage",
+      `${currentRunningAction.guide.runningTitle} is still waiting for the controller response. The UI will not advance from a polling-only intermediate state.`
+    );
+    renderPrimaryGuide(currentRunningAction);
+    updateProofLifecycle(visibleStatus || currentStatus, currentRunningAction);
+    return;
+  }
   if (action === "resetSeeded" && currentRunningAction.controller && currentRunningAction.phase === "running") {
     setText("lastMessage", "Fresh Reset is still redeploying and reseeding the clean baseline.");
     renderPrimaryGuide(currentRunningAction);
@@ -2873,7 +3111,11 @@ function startActionPolling() {
 
 function keepActionOpenForVisibleState(action, status, message, output) {
   if (!currentRunningAction || !STRICT_VISIBLE_COMPLETION_ACTIONS.has(action)) return false;
-  if (!isTransientStatusRead(status) && actionReachedExpectedState(action, status, currentRunningAction.beforeCompletionState)) {
+  if (
+    !isTransientStatusRead(status) &&
+    actionReachedExpectedState(action, status, currentRunningAction.beforeCompletionState) &&
+    !controllerStillRunning(status)
+  ) {
     return false;
   }
   currentStatus = statusWithPreservedVisibleState(status);
@@ -2881,9 +3123,16 @@ function keepActionOpenForVisibleState(action, status, message, output) {
   refreshTransactionUi(currentStatus, { forceDefaults: true });
   setText(
     "lastMessage",
-    message || `${guideForAction(action).runningTitle} was submitted. Waiting for the visible dashboard state to catch up.`
+    controllerStillRunning(currentStatus)
+      ? `${guideForAction(action).runningTitle} reached a visible state change. Waiting for the controller to finish before enabling the next action.`
+      : message || `${guideForAction(action).runningTitle} was submitted. Waiting for the visible dashboard state to catch up.`
   );
-  setOutput(output || `[controller] Waiting for refreshed visible state after ${guideForAction(action).runningTitle}.`);
+  setOutput(
+    output ||
+      (controllerStillRunning(currentStatus)
+        ? `[controller] Visible state changed for ${guideForAction(action).runningTitle}; waiting for the active controller to clear.`
+        : `[controller] Waiting for refreshed visible state after ${guideForAction(action).runningTitle}.`)
+  );
   renderPrimaryGuide(currentRunningAction);
   startActionPolling();
   return true;
@@ -2906,6 +3155,7 @@ function beginActionUi(action, button = null) {
     phase: "running",
     startedAtMs: Date.now(),
     controller: null,
+    awaitingActionResponse: false,
     beforeCompletionState: actionCompletionSnapshot(action, currentStatus),
   };
   activeScenarioCard = scenarioCardForButton(button) || (button?.closest(".portal-scenarios") ? scenarioCardForAction(action) : null);
@@ -2934,6 +3184,7 @@ function attachToControllerOperation(activeOperation, button = null) {
     phase: "running",
     startedAtMs: Date.now() - Math.max(0, elapsedSeconds) * 1000,
     controller: activeOperation,
+    awaitingActionResponse: false,
     beforeCompletionState: actionCompletionSnapshot(action, currentStatus),
   };
   activeScenarioCard = scenarioCardForButton(button) || scenarioCardForAction(action);
@@ -3003,9 +3254,11 @@ function completeActionUi(action, ok, error = null, phaseOverride = null) {
 
 async function runDeploySeed(button = deploySeedButton) {
   if (!beginActionUi("deploySeed", button)) return;
+  if (currentRunningAction?.action === "deploySeed") currentRunningAction.awaitingActionResponse = true;
   let attachedBusyController = false;
   try {
     const payload = await requestJson("/api/deploy-seed", { method: "POST" });
+    if (currentRunningAction?.action === "deploySeed") currentRunningAction.awaitingActionResponse = false;
     const status = statusWithPreservedVisibleState(payload.status);
     actionCardPinned = false;
     setLoanTab("borrow");
@@ -3028,6 +3281,7 @@ async function runDeploySeed(button = deploySeedButton) {
     }
     setOutput(payload.output);
   } catch (error) {
+    if (currentRunningAction?.action === "deploySeed") currentRunningAction.awaitingActionResponse = false;
     if (attachBusyController(error, button)) {
       attachedBusyController = true;
       return;
@@ -3041,11 +3295,13 @@ async function runDeploySeed(button = deploySeedButton) {
   }
 }
 
-async function runResetSeeded() {
-  if (!beginActionUi("resetSeeded", resetSeededButton)) return;
+async function runResetSeeded(button = resetSeededButton) {
+  if (!beginActionUi("resetSeeded", button)) return;
+  if (currentRunningAction?.action === "resetSeeded") currentRunningAction.awaitingActionResponse = true;
   let attachedBusyController = false;
   try {
     const payload = await requestJson("/api/reset-seeded", { method: "POST" });
+    if (currentRunningAction?.action === "resetSeeded") currentRunningAction.awaitingActionResponse = false;
     const status = statusWithPreservedVisibleState(payload.status);
     actionCardPinned = false;
     setLoanTab("borrow");
@@ -3060,7 +3316,8 @@ async function runResetSeeded() {
     setText("lastMessage", "Fresh reset complete.");
     setOutput(payload.output);
   } catch (error) {
-    if (attachBusyController(error, resetSeededButton)) {
+    if (currentRunningAction?.action === "resetSeeded") currentRunningAction.awaitingActionResponse = false;
+    if (attachBusyController(error, button)) {
       attachedBusyController = true;
       return;
     }
@@ -3092,9 +3349,11 @@ async function runResetSeeded() {
 
 async function runResumeSession(button = resumeSessionButtons[0]) {
   if (!beginActionUi("resumeSession", button)) return;
+  if (currentRunningAction?.action === "resumeSession") currentRunningAction.awaitingActionResponse = true;
   let attachedBusyController = false;
   try {
     const payload = await requestJson("/api/resume-session", { method: "POST" });
+    if (currentRunningAction?.action === "resumeSession") currentRunningAction.awaitingActionResponse = false;
     const status = statusWithPreservedVisibleState(payload.status);
     actionCardPinned = false;
     renderStatus(status);
@@ -3108,6 +3367,7 @@ async function runResumeSession(button = resumeSessionButtons[0]) {
     setText("lastMessage", payload.message || "Resume Session complete.");
     setOutput(payload.output);
   } catch (error) {
+    if (currentRunningAction?.action === "resumeSession") currentRunningAction.awaitingActionResponse = false;
     if (attachBusyController(error, button)) {
       attachedBusyController = true;
       return;
@@ -3148,7 +3408,7 @@ function amountPayloadForAction(action, button = null) {
   return { amount: String(validation.amount) };
 }
 
-async function runAction(action, { button = null } = {}) {
+async function runAction(action, { button = null, workflowRequestLog = "" } = {}) {
   if (LOAN_TAB_BY_ACTION[action]) setLoanTab(LOAN_TAB_BY_ACTION[action]);
   const actionCard = button?.closest("[data-action-card]")?.dataset.actionCard || ACTION_CARD_BY_ACTION[action] || suggestActionCard(currentStatus);
   setActiveActionCard(actionCard, { pinned: true });
@@ -3161,17 +3421,30 @@ async function runAction(action, { button = null } = {}) {
   }
   const title = actionTitle(action);
   if (!beginActionUi(action, button)) return;
-  let attachedBusyController = false;
-  if (requestBody.amount) {
-    setOutput(
-      `${guideForAction(action).currentAction}\n\nAmount: ${requestBody.amount} ${AMOUNT_ACTIONS[action]?.unit || ""}\nExpected visible change: ${guideForAction(action).expectedVisibleChange}`
-    );
+  if (workflowRequestLog && currentRunningAction?.action === action) {
+    currentRunningAction.workflowRequestLog = workflowRequestLog;
   }
+  if (currentRunningAction?.action === action) {
+    currentRunningAction.awaitingActionResponse = true;
+  }
+  const runningOutput = [
+    workflowRequestLog,
+    guideForAction(action).currentAction,
+    requestBody.amount ? `Amount: ${requestBody.amount} ${AMOUNT_ACTIONS[action]?.unit || ""}` : null,
+    `Expected visible change: ${guideForAction(action).expectedVisibleChange}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  setOutput(runningOutput);
+  let attachedBusyController = false;
   try {
     const payload = await requestJson("/api/action", {
       method: "POST",
       body: JSON.stringify(requestBody),
     });
+    if (currentRunningAction?.action === action) {
+      currentRunningAction.awaitingActionResponse = false;
+    }
     const status = statusWithPreservedVisibleState(payload.status);
     renderStatus(status);
     refreshTransactionUi(status, { forceDefaults: true });
@@ -3193,8 +3466,20 @@ async function runAction(action, { button = null } = {}) {
     rememberNextActionFromPayload(payload);
     completeActionUi(action, true);
     setText("lastMessage", payload.message);
-    setOutput(payload.output || payload.message);
+    const readinessNote = postActionReadinessNote(action, status);
+    const workflowOutcomeLog = [
+      currentRunningAction?.workflowRequestLog,
+      `[controller] Server nextAction: ${ctaDebugName(currentRunningAction?.serverNextAction)}.`,
+      `[controller] Final UI nextAction: ${ctaDebugName(currentRunningAction?.nextAction)}.`,
+      readinessNote ? `[controller] ${readinessNote}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    setOutput([payload.output || payload.message, workflowOutcomeLog].filter(Boolean).join("\n\n"));
   } catch (error) {
+    if (currentRunningAction?.action === action) {
+      currentRunningAction.awaitingActionResponse = false;
+    }
     if (attachBusyController(error, button)) {
       attachedBusyController = true;
       return;
@@ -3226,7 +3511,49 @@ async function runAction(action, { button = null } = {}) {
   }
 }
 
+async function runActionButton(button) {
+  const action = button?.dataset?.action;
+  if (!action) return;
+  if (button.disabled) {
+    setText("lastMessage", button.title || `${actionTitle(action)} is not ready.`);
+    return;
+  }
+  if (currentRunningAction && currentRunningAction.phase !== "running") {
+    clearPrimaryGuide();
+  }
+  try {
+    await refreshStatus();
+  } catch (error) {
+    setText("lastMessage", `Could not refresh before ${actionTitle(action)}: ${error.message}`);
+    setOutput(error.message);
+    return;
+  }
+  const activeOperation = activeControllerOperation(currentStatus);
+  if (activeOperation?.action) {
+    const message = controllerBusyMessage(activeOperation, action);
+    setText("lastMessage", message);
+    setOutput(
+      `[controller] Direct action blocked after refresh: ${actionTitle(action)} (${action}).\n` +
+        `[controller] Active controller action: ${activeOperation.label || activeOperation.action} (${activeOperation.action}).\n` +
+        "[controller] No alternate action was submitted automatically."
+    );
+    return;
+  }
+  const eligibility = actionEligibility(action, currentStatus);
+  if (!eligibility.ok) {
+    setText("lastMessage", `${actionTitle(action)} is not ready: ${eligibility.message}`);
+    setOutput(`[controller] Direct action blocked after refresh: ${actionTitle(action)} (${action}).\n[controller] ${eligibility.message}`);
+    return;
+  }
+  const workflowRequestLog = [
+    `[controller] Direct action button: ${actionTitle(action)} (${action}).`,
+    `[controller] Refreshed eligibility: eligible${eligibility.message ? ` - ${eligibility.message}` : ""}.`,
+  ].join("\n");
+  await runAction(action, { button, workflowRequestLog });
+}
+
 async function executeWorkflowCta(cta, button = primaryWorkflowCta) {
+  if (!cta) return;
   if (cta?.type === "return") {
     selectedWorkflowStep = null;
     syncWorkflowUi(currentStatus);
@@ -3245,36 +3572,66 @@ async function executeWorkflowCta(cta, button = primaryWorkflowCta) {
     await runDeploySeed(button);
     return;
   }
+  if (cta?.type === "resetSeeded") {
+    await runResetSeeded(button);
+    return;
+  }
   if (cta?.type === "action" && cta.action) {
     const refreshed = await refreshStatus();
     currentStatus = refreshed;
     syncWorkflowUi(currentStatus);
-    let actionToRun = cta.action;
-    primeRecommendedAmount(actionToRun, currentStatus, { force: true });
-    const requestedEligibility = actionEligibility(actionToRun, currentStatus);
-    if (!requestedEligibility.ok && currentWorkflowAction?.type === "action") {
-      primeRecommendedAmount(currentWorkflowAction.action, currentStatus, { force: true });
-      const refreshedEligibility = actionEligibility(currentWorkflowAction.action, currentStatus);
-      if (refreshedEligibility.ok) actionToRun = currentWorkflowAction.action;
+    const actionToRun = cta.action;
+    const activeOperation = activeControllerOperation(currentStatus);
+    if (activeOperation?.action) {
+      const message = controllerBusyMessage(activeOperation, actionToRun);
+      setText("lastMessage", message);
+      setOutput(
+        `[controller] Refreshed state before running ${cta.label || actionTitle(actionToRun)}, but another controller action is still active.\n` +
+          `[controller] Requested CTA action: ${cta.label || actionTitle(actionToRun)} (${actionToRun}).\n` +
+          `[controller] Active controller action: ${activeOperation.label || activeOperation.action} (${activeOperation.action}).\n` +
+          `[controller] No alternate action was submitted automatically.`
+      );
+      return;
     }
     primeRecommendedAmount(actionToRun, currentStatus, { force: true });
-    await runAction(actionToRun, { button });
+    const requestedEligibility = actionEligibility(actionToRun, currentStatus);
+    const requestedLabel = cta.label || actionTitle(actionToRun);
+    if (!requestedEligibility.ok) {
+      setText(
+        "lastMessage",
+        `${requestedLabel} is not ready after refresh: ${requestedEligibility.message}`
+      );
+      setOutput(
+        `[controller] Refreshed state before running ${requestedLabel}, but the requested action is not currently eligible.\n` +
+          `[controller] Requested CTA action: ${requestedLabel} (${actionToRun}).\n` +
+          `[controller] Refreshed eligibility: not eligible - ${requestedEligibility.message}\n` +
+          `[controller] No alternate action was submitted automatically.`
+      );
+      return;
+    }
+    const workflowRequestLog = [
+      `[controller] Requested CTA action: ${requestedLabel} (${actionToRun}).`,
+      `[controller] Refreshed eligibility: eligible${requestedEligibility.message ? ` - ${requestedEligibility.message}` : ""}.`,
+      `[controller] Action actually submitted: ${actionToRun}.`,
+    ].join("\n");
+    await runAction(actionToRun, { button, workflowRequestLog });
   }
 }
 
 async function runPrimaryWorkflowAction() {
+  const boundCta = primaryWorkflowCtaBinding();
   if (currentRunningAction && currentRunningAction.phase !== "running") {
-    const nextCta = currentRunningAction.phase === "success" ? currentRunningAction.nextAction || currentWorkflowAction : null;
+    const nextCta = currentRunningAction.phase === "success" ? boundCta || currentRunningAction.nextAction || currentWorkflowAction : null;
     clearPrimaryGuide();
     if (nextCta) await executeWorkflowCta(nextCta, primaryWorkflowCta);
     return;
   }
-  await executeWorkflowCta(currentWorkflowAction, primaryWorkflowCta);
+  await executeWorkflowCta(boundCta || currentWorkflowAction, primaryWorkflowCta);
 }
 
 primaryWorkflowCta?.addEventListener("click", runPrimaryWorkflowAction);
 deploySeedButton?.addEventListener("click", () => runDeploySeed(deploySeedButton));
-resetSeededButton?.addEventListener("click", runResetSeeded);
+resetSeededButton?.addEventListener("click", () => runResetSeeded(resetSeededButton));
 resumeSessionButtons.forEach((button) => {
   button.addEventListener("click", () => runResumeSession(button));
 });
@@ -3318,7 +3675,7 @@ refreshButton?.addEventListener("click", async () => {
 });
 
 actionButtons.forEach((button) => {
-  button.addEventListener("click", () => runAction(button.dataset.action, { button }));
+  button.addEventListener("click", () => runActionButton(button));
 });
 
 workflowStepButtons.forEach((button) => {
