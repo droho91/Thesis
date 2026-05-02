@@ -8,6 +8,8 @@ import { loadRuntimeConfig, providerForChain, signerForChain, RUNTIME_CONFIG_PAT
 const TRACE_JSON_PATH = resolve(process.cwd(), "demo", "latest-run.json");
 const TRANSFER_AMOUNT = ethers.parseUnits(process.env.DEMO_AMOUNT || "100", 18);
 const DEFAULT_SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits("0.5", 18);
+const CODE_READ_RETRIES = Math.max(1, Number(process.env.DEMO_STATUS_CODE_READ_RETRIES || process.env.DEMO_CODE_READ_RETRIES || 6));
+const CODE_READ_RETRY_DELAY_MS = Number(process.env.DEMO_STATUS_CODE_READ_RETRY_DELAY_MS || process.env.DEMO_CODE_READ_RETRY_DELAY_MS || 500);
 const BPS = 10_000n;
 const WAD = 10n ** 18n;
 
@@ -341,6 +343,27 @@ function viewErrorSummary(error) {
     .join(" | ");
 }
 
+function sleep(ms) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+async function readContractCodeWithRetry(provider, address, label) {
+  let lastProblem = "RPC returned invalid/null contract code";
+  for (let attempt = 1; attempt <= CODE_READ_RETRIES; attempt++) {
+    try {
+      const code = await provider.getCode(ethers.getAddress(address), "latest");
+      if (typeof code === "string") return { code };
+      lastProblem = `RPC returned ${code === null ? "null" : typeof code} contract code`;
+    } catch (error) {
+      lastProblem = viewErrorSummary(error) || error.message;
+    }
+    if (attempt < CODE_READ_RETRIES) {
+      await sleep(CODE_READ_RETRY_DELAY_MS * attempt);
+    }
+  }
+  return { code: null, problem: `${label}: ${lastProblem}` };
+}
+
 function logOptionalStatusWarning(label, error) {
   if (process.env.DEBUG_DEMO_STATUS === "true") {
     console.warn(`[status] ${label}: ${viewErrorSummary(error)}`);
@@ -430,15 +453,43 @@ async function readLocalHealth(runtime) {
 
   const providerA = providerForChain(cfg, "A");
   const providerB = providerForChain(cfg, "B");
-  const codeChecks = await Promise.all([
-    providerA.getCode(cfg.chains.A.lightClient),
-    providerA.getCode(cfg.chains.A.transferApp),
-    providerA.getCode(cfg.chains.A.escrowVault),
-    providerB.getCode(cfg.chains.B.lightClient),
-    providerB.getCode(cfg.chains.B.transferApp),
-    providerB.getCode(cfg.chains.B.lendingPool),
-  ]);
-  if (codeChecks.some((code) => code === "0x")) {
+  const codeTargets = [
+    ["A", "lightClient", providerA, cfg.chains.A.lightClient],
+    ["A", "transferApp", providerA, cfg.chains.A.transferApp],
+    ["A", "escrowVault", providerA, cfg.chains.A.escrowVault],
+    ["B", "lightClient", providerB, cfg.chains.B.lightClient],
+    ["B", "transferApp", providerB, cfg.chains.B.transferApp],
+    ["B", "lendingPool", providerB, cfg.chains.B.lendingPool],
+  ];
+  const codeChecks = await Promise.all(
+    codeTargets.map(async ([chainKey, field, provider, address]) => {
+      try {
+        if (!ethers.isAddress(address)) return { chainKey, field, address, code: "0x", problem: "invalid address" };
+        const result = await readContractCodeWithRetry(provider, address, `${chainKey}.${field}`);
+        return { chainKey, field, address, code: result.code, problem: result.problem };
+      } catch (error) {
+        return { chainKey, field, address, code: null, problem: viewErrorSummary(error) };
+      }
+    })
+  );
+  const invalidCodeReads = codeChecks.filter((check) => check.code == null);
+  if (invalidCodeReads.length > 0) {
+    const details = invalidCodeReads
+      .map((check) => `${check.chainKey}.${check.field}${check.problem ? ` (${check.problem})` : ""}`)
+      .join(", ");
+    return {
+      ready: false,
+      deployed: false,
+      stackVersion: "besu-light-client",
+      label: "Besu world state unavailable",
+      runtime: cfgRuntime,
+      message:
+        `Besu returned invalid/null contract code for: ${details}. ` +
+        "This usually means a local validator has lost world state. Run npm run besu:down, npm run besu:up, then Fresh Reset.",
+      chains: { A: chainA, B: chainB },
+    };
+  }
+  if (codeChecks.some((check) => check.code === "0x")) {
     return {
       ready: false,
       deployed: false,

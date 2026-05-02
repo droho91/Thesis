@@ -6,20 +6,25 @@ async function probeRpc(rpc) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const call = async (method) => {
+    const call = async (method, params = []) => {
       const response = await fetch(rpc, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [] }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
         signal: controller.signal,
       });
       const payload = await response.json();
-      if (!payload.result) throw new Error(payload.error?.message || `${method} returned no result`);
+      if (payload.error) throw new Error(payload.error.message || `${method} failed`);
+      if (payload.result == null) throw new Error(`${method} returned null`);
       return payload.result;
     };
 
     const chainId = await call("eth_chainId");
     const blockNumber = await call("eth_blockNumber");
+    const emptyCode = await call("eth_getCode", ["0x0000000000000000000000000000000000000000", "latest"]);
+    if (typeof emptyCode !== "string") {
+      throw new Error(`eth_getCode returned ${emptyCode === null ? "null" : typeof emptyCode}; Besu world state is not available`);
+    }
     const height = BigInt(blockNumber);
     if (height < 1n) {
       throw new Error("RPC reachable, but block production has not started yet (latest block 0)");
@@ -44,8 +49,16 @@ console.error("[preflight] Besu bank-chain runtime is not ready.");
 console.error(`  Bank A ${CHAIN_A_RPC}: ${bankA.ok ? `ready chainId=${bankA.chainId}, block=${bankA.blockNumber}` : bankA.error}`);
 console.error(`  Bank B ${CHAIN_B_RPC}: ${bankB.ok ? `ready chainId=${bankB.chainId}, block=${bankB.blockNumber}` : bankB.error}`);
 console.error("");
-console.error("Start Docker Desktop first, then run:");
-console.error("  npm run besu:up");
+const worldStateUnavailable = [bankA.error, bankB.error].some((message) => /eth_getCode|world state/i.test(message || ""));
+if (worldStateUnavailable) {
+  console.error("One validator is responding to chain-id/block probes but cannot read world state.");
+  console.error("Reset the local demo Besu volumes, then redeploy:");
+  console.error("  npm run besu:down");
+  console.error("  npm run besu:up");
+} else {
+  console.error("Start Docker Desktop first, then run:");
+  console.error("  npm run besu:up");
+}
 console.error("");
 console.error("After both RPCs are ready, continue with:");
 console.error("  npm run deploy");

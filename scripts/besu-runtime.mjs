@@ -210,30 +210,42 @@ export function providerForRpc(rpc) {
   return new ethers.JsonRpcProvider(rpc);
 }
 
-async function rpcReady(rpc) {
+async function rpcCall(rpc, method, params = []) {
   const response = await fetch(rpc, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
-      method: "eth_chainId",
-      params: [],
+      method,
+      params,
     }),
   });
   if (!response.ok) {
     throw new Error(`RPC ${rpc} returned HTTP ${response.status}`);
   }
   const payload = await response.json();
-  if (payload.error || !payload.result) {
-    throw new Error(payload.error?.message || `RPC ${rpc} did not return a chain id`);
+  if (payload.error) {
+    throw new Error(payload.error.message || `${method} failed`);
   }
   return payload.result;
 }
 
+async function rpcReady(rpc) {
+  const chainId = await rpcCall(rpc, "eth_chainId");
+  if (!chainId) throw new Error(`RPC ${rpc} did not return a chain id`);
+  const code = await rpcCall(rpc, "eth_getCode", [ethers.ZeroAddress, "latest"]);
+  if (typeof code !== "string") {
+    throw new Error(
+      `RPC ${rpc} returned ${code === null ? "null" : typeof code} for eth_getCode. Besu world state is not available; restart with npm run besu:down && npm run besu:up.`
+    );
+  }
+  return chainId;
+}
+
 export async function waitForRpcReady(
   rpc,
-  { label = rpc, timeoutMs = Number(process.env.RPC_WAIT_TIMEOUT_MS || 120000), intervalMs = 2000 } = {}
+  { label = rpc, timeoutMs = Number(process.env.RPC_WAIT_TIMEOUT_MS || 300000), intervalMs = 2000 } = {}
 ) {
   const start = Date.now();
   let lastError = "RPC not reachable yet";
@@ -253,7 +265,7 @@ export async function waitForRpcReady(
 }
 
 export async function waitForBesuRuntimeReady({
-  timeoutMs = Number(process.env.RPC_WAIT_TIMEOUT_MS || 120000),
+  timeoutMs = Number(process.env.RPC_WAIT_TIMEOUT_MS || 300000),
   intervalMs = 2000,
 } = {}) {
   await waitForRpcReady(CHAIN_A_RPC, { label: "Bank A RPC", timeoutMs, intervalMs });
@@ -265,7 +277,7 @@ export async function waitForProviderBlockHeight(
   minHeight,
   {
     label = "RPC",
-    timeoutMs = Number(process.env.BLOCK_WAIT_TIMEOUT_MS || process.env.RPC_WAIT_TIMEOUT_MS || 120000),
+    timeoutMs = Number(process.env.BLOCK_WAIT_TIMEOUT_MS || process.env.RPC_WAIT_TIMEOUT_MS || 300000),
     intervalMs = 2000,
   } = {}
 ) {

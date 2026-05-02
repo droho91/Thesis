@@ -63,6 +63,20 @@ const AMOUNT_ACTIONS = {
   simulatePriceShock: { inputId: "shockPrice", unit: "bCASH/vA" },
   executeLiquidation: { inputId: "liquidationRepayAmount", unit: "bCASH" },
 };
+const STRICT_VISIBLE_COMPLETION_ACTIONS = new Set([
+  "resetSeeded",
+  "lock",
+  "proveForwardMint",
+  "depositCollateral",
+  "borrow",
+  "topUpRepayCash",
+  "repay",
+  "withdrawCollateral",
+  "burn",
+  "proveReverseUnlock",
+  "updateForwardClient",
+  "updateReverseClient",
+]);
 const ACTION_CARD_BY_ACTION = {
   openRoute: "bridge",
   lock: "bridge",
@@ -413,6 +427,36 @@ function guideForAction(action) {
     affectedMetrics: [],
     failureRecovery: "Check the runtime output, then retry the action from the current state.",
   };
+}
+
+function workflowCtaFromServerNext(nextAction) {
+  if (!nextAction?.action) return null;
+  if (nextAction.action === "deploySeed") {
+    return { type: "deploySeed", label: nextAction.label || "Prepare Fast Demo Session" };
+  }
+  if (nextAction.action === "refresh") {
+    return { type: "refresh", label: nextAction.label || "Refresh state" };
+  }
+  return {
+    type: "action",
+    action: nextAction.action,
+    label: nextAction.label || actionTitle(nextAction.action),
+  };
+}
+
+function rememberNextActionFromPayload(payload) {
+  if (!currentRunningAction) return;
+  const serverCta = workflowCtaFromServerNext(payload?.nextAction);
+  currentRunningAction.serverNextAction = serverCta;
+  currentRunningAction.nextAction =
+    currentRunningAction.action === "resetSeeded" || currentRunningAction.action === "deploySeed"
+      ? serverCta || currentWorkflowAction
+      : currentWorkflowAction || serverCta;
+}
+
+function workflowCtaEligibility(cta, status = currentStatus) {
+  if (cta?.type === "action") return actionEligibility(cta.action, status);
+  return { ok: true, message: "" };
 }
 
 function isReadOnlyControl(button) {
@@ -787,13 +831,17 @@ function renderPrimaryGuide(actionState) {
     setPrimaryGuideVisible(false);
     return;
   }
+  const nextCta = actionState.phase === "success" ? actionState.nextAction || currentWorkflowAction : null;
+  const nextCopy = nextCta?.label ? `Next: ${nextCta.label}.` : guide.nextAfterSuccess;
   const prefix =
     actionState.phase === "failed"
       ? "Failed"
       : actionState.phase === "warning"
         ? "Needs reset"
-        : actionState.phase === "success"
-          ? "Completed"
+        : actionState.phase === "success" && nextCta?.label
+          ? "Next"
+          : actionState.phase === "success"
+            ? "Completed"
           : "Processing";
   const controller = actionState.controller;
   const elapsed =
@@ -804,6 +852,16 @@ function renderPrimaryGuide(actionState) {
   if (actionState.phase === "success") stage = "Rendering visible changes";
   if (actionState.phase === "warning") stage = "Fast readiness probe did not confirm runtime";
   if (actionState.phase === "failed") stage = "Stopped before visible state changed";
+  const controllerStatus =
+    actionState.phase === "running"
+      ? controller?.stage
+        ? "Active"
+        : "Waiting"
+      : actionState.phase === "success"
+        ? "Complete"
+        : actionState.phase === "warning"
+          ? "Review"
+          : "Stopped";
   const failureMessage = actionState.error?.userMessage || actionState.error?.message || null;
   const guideNode = document.getElementById("primaryActionGuide");
   if (guideNode) guideNode.dataset.phase = actionState.phase;
@@ -817,50 +875,71 @@ function renderPrimaryGuide(actionState) {
           : "head"
   );
   setPrimaryGuideVisible(true);
-  setText("primaryActionTitle", `${prefix}: ${guide.runningTitle}`);
+  setText("primaryActionTitle", `${prefix}: ${actionState.phase === "success" && nextCta?.label ? nextCta.label : guide.runningTitle}`);
   setText(
     "primaryActionDescription",
     actionState.phase === "running"
       ? "The live action card tracks the controller while read-only demo panels remain available."
-      : actionState.phase === "success"
-        ? "Completed action remains visible so the state change is easy to explain."
+      : actionState.phase === "success" && nextCta?.label
+        ? `${guide.runningTitle} completed. The button below submits the next on-chain action; it does not repeat the completed one.`
+        : actionState.phase === "success"
+          ? "Completed action remains visible so the state change is easy to explain."
         : actionState.phase === "warning"
           ? "The controller did not modify protocol state and is asking for a deliberate reset."
           : failureMessage || "Review the recovery instruction before retrying."
   );
   setText("primaryGuideMode", prefix);
-  setText("primaryGuideProcessing", guide.runningTitle);
+  setText("primaryGuideProcessing", actionState.phase === "success" && nextCta?.label ? nextCta.label : guide.runningTitle);
   setText("primaryGuideStage", stage);
-  setText("primaryGuideElapsed", `${elapsed}s`);
-  setText("primaryGuideCurrent", guide.currentAction);
-  setText("primaryGuideExpected", guide.expectedVisibleChange);
+  setText("primaryGuideElapsed", controllerStatus);
+  setText(
+    "primaryGuideCurrent",
+    actionState.phase === "success" && nextCta?.label
+      ? `Ready to run ${nextCta.label}. Last completed: ${guide.runningTitle}.`
+      : guide.currentAction
+  );
+  setText(
+    "primaryGuideExpected",
+    actionState.phase === "success" && nextCta?.label
+      ? "The next action will show its own live progress and visible state change after you start it."
+      : guide.expectedVisibleChange
+  );
   setText(
     "primaryGuideNext",
     actionState.phase === "failed" || actionState.phase === "warning"
       ? failureMessage || guide.failureRecovery
-      : guide.nextAfterSuccess
+      : nextCopy
   );
   const controllerCopy =
     controller?.label
       ? `Controller: ${controller.label} / ${stage}.`
       : actionState.phase === "running"
-        ? `Controller submitted / ${elapsed}s elapsed. Waiting for tx confirmation, proof generation, or status refresh.`
+        ? "Waiting for transaction confirmation, proof generation, or refreshed dashboard state."
         : actionState.phase === "failed" || actionState.phase === "warning"
           ? failureMessage || "Action stopped before the expected state change completed."
-          : "Action completed; visible state has been refreshed.";
+          : nextCta?.label
+            ? `Action completed; next recommendation is ${nextCta.label}.`
+            : "Action completed; visible state has been refreshed.";
   setText("primaryGuideController", controllerCopy);
   setText(
     "primaryActionHint",
-    actionState.phase === "failed" || actionState.phase === "warning" ? failureMessage || guide.failureRecovery : guide.nextAfterSuccess
+    actionState.phase === "failed" || actionState.phase === "warning" ? failureMessage || guide.failureRecovery : nextCopy
   );
   if (primaryWorkflowCta) {
-    primaryWorkflowCta.disabled = actionState.phase === "running";
+    if (actionState.phase === "success" && nextCta?.type === "action") {
+      primeRecommendedAmount(nextCta.action, currentStatus);
+    }
+    const nextValidation = nextCta ? workflowCtaEligibility(nextCta, currentStatus) : { ok: true, message: "" };
+    primaryWorkflowCta.disabled = actionState.phase === "running" || (actionState.phase === "success" && !nextValidation.ok);
+    primaryWorkflowCta.title = actionState.phase === "success" && !nextValidation.ok ? nextValidation.message : "";
     primaryWorkflowCta.textContent =
       actionState.phase === "running"
         ? guide.runningTitle
         : actionState.phase === "failed" || actionState.phase === "warning"
           ? "Review recovery step"
-          : "Continue to recommendation";
+          : nextCta?.label
+            ? `Run ${nextCta.label}`
+            : "Continue";
   }
 }
 
@@ -992,13 +1071,21 @@ function securityHas(status, key) {
 }
 
 function forwardConsumed(status) {
-  if (securityHas(status, "forwardConsumed")) return Boolean(status.security.forwardConsumed);
-  return Boolean(status?.trace?.forward?.receiveTxHash);
+  return Boolean(
+    status?.security?.forwardConsumed ||
+      status?.trace?.forward?.receiveTxHash ||
+      positive(status?.balances?.voucher) ||
+      positive(status?.balances?.poolCollateral)
+  );
 }
 
 function reverseConsumed(status) {
-  if (securityHas(status, "reverseConsumed")) return Boolean(status.security.reverseConsumed);
-  return Boolean(status?.trace?.reverse?.receiveTxHash || status?.risk?.settlement?.unlocked);
+  return Boolean(
+    status?.security?.reverseConsumed ||
+      status?.trace?.reverse?.receiveTxHash ||
+      status?.risk?.settlement?.unlocked ||
+      status?.trace?.liquidatorSettlement?.unlockTxHash
+  );
 }
 
 function reverseProofAction(status) {
@@ -1421,6 +1508,8 @@ function hasForwardPacket(status) {
 
 function forwardPacketPending(status) {
   if (!hasForwardPacket(status)) return false;
+  const state = financialState(status);
+  if (state.voucher > POSITION_EPSILON || state.collateral > POSITION_EPSILON) return false;
   return !forwardConsumed(status);
 }
 
@@ -1576,6 +1665,108 @@ function actionEligibility(action, status = currentStatus) {
       return enabled("Run the scripted scenario using the current deployed runtime.");
     default:
       return enabled();
+  }
+}
+
+function actionCompletionSnapshot(action, status = currentStatus) {
+  const state = financialState(status);
+  return {
+    action,
+    bankA: state.bankA,
+    escrow: state.escrow,
+    voucher: state.voucher,
+    collateral: state.collateral,
+    debt: state.debt,
+    bankB: state.bankB,
+    forwardConsumed: forwardConsumed(status),
+    reverseConsumed: reverseConsumed(status),
+    forwardTrusted: numeric(status?.progress?.trustedAOnB || status?.trace?.forward?.trustedHeight),
+    reverseTrusted: numeric(status?.progress?.trustedBOnA || status?.trace?.reverse?.trustedHeight),
+  };
+}
+
+function movedUp(afterValue, beforeValue) {
+  return numeric(afterValue) > numeric(beforeValue) + POSITION_EPSILON;
+}
+
+function movedDown(afterValue, beforeValue) {
+  return numeric(afterValue) < numeric(beforeValue) - POSITION_EPSILON;
+}
+
+function freshSeededBaseline(status = currentStatus) {
+  const state = financialState(status);
+  return Boolean(
+    status?.deployed &&
+      state.bankA > POSITION_EPSILON &&
+      state.poolCash > POSITION_EPSILON &&
+      state.escrow <= POSITION_EPSILON &&
+      state.voucher <= POSITION_EPSILON &&
+      state.collateral <= POSITION_EPSILON &&
+      state.debt <= POSITION_EPSILON &&
+      !hasForwardPacket(status) &&
+      !hasReversePacket(status)
+  );
+}
+
+function actionReachedExpectedState(action, status = currentStatus, before = null) {
+  const state = financialState(status);
+  const lifecycle = lifecycleState(status);
+  const forward = status?.trace?.forward || {};
+  const reverse = status?.trace?.reverse || {};
+  const traceRisk = status?.trace?.risk || {};
+  const settlement = status?.risk?.settlement || {};
+  switch (action) {
+    case "deploySeed":
+      return Boolean(status?.deployed && numeric(status?.balances?.bankA) > POSITION_EPSILON && numeric(status?.balances?.poolCash) > POSITION_EPSILON);
+    case "resetSeeded":
+      return freshSeededBaseline(status);
+    case "openRoute":
+      return routeReady(status);
+    case "lock":
+      if (before) return hasForwardPacket(status) && (movedUp(state.escrow, before.escrow) || movedDown(state.bankA, before.bankA));
+      return hasForwardPacket(status);
+    case "finalizeForwardHeader":
+      return hasForwardPacket(status) && heightAtLeast(forward.finalizedHeight, forward.commitHeight);
+    case "updateForwardClient":
+      return hasForwardPacket(status) && (heightAtLeast(status?.progress?.trustedAOnB, forward.commitHeight) || heightAtLeast(forward.trustedHeight, forward.commitHeight));
+    case "proveForwardMint":
+      if (before) return forwardConsumed(status) || movedUp(state.voucher, before.voucher) || movedUp(state.collateral, before.collateral);
+      return Boolean(status?.security?.forwardConsumed || state.voucher > POSITION_EPSILON || state.collateral > POSITION_EPSILON);
+    case "depositCollateral":
+      if (before) return movedUp(state.collateral, before.collateral) || movedDown(state.voucher, before.voucher);
+      return state.collateral > POSITION_EPSILON;
+    case "borrow":
+      if (before) return movedUp(state.debt, before.debt) || movedUp(state.bankB, before.bankB);
+      return state.debt > POSITION_EPSILON;
+    case "topUpRepayCash":
+      if (before) return movedUp(state.bankB, before.bankB) || state.bankB >= state.debt;
+      return state.debt > POSITION_EPSILON && state.bankB >= state.debt;
+    case "repay":
+      if (before) return movedDown(state.debt, before.debt) || (before.debt > POSITION_EPSILON && state.debt <= POSITION_EPSILON);
+      return state.debt <= POSITION_EPSILON || Boolean(traceRisk.repayTxHash || traceRisk.repaid);
+    case "withdrawCollateral":
+      if (before) return movedDown(state.collateral, before.collateral) || movedUp(state.voucher, before.voucher);
+      return Boolean(traceRisk.withdrawTxHash || traceRisk.collateralWithdrawn || lifecycle.borrowerCollateralWithdrawn);
+    case "burn":
+      if (before) return hasReversePacket(status) && movedDown(state.voucher, before.voucher);
+      return hasReversePacket(status);
+    case "finalizeReverseHeader":
+      return hasReversePacket(status) && heightAtLeast(reverse.finalizedHeight, reverse.commitHeight);
+    case "updateReverseClient":
+      return hasReversePacket(status) && (heightAtLeast(status?.progress?.trustedBOnA, reverse.commitHeight) || heightAtLeast(reverse.trustedHeight, reverse.commitHeight));
+    case "proveReverseUnlock":
+      if (before) return reverseConsumed(status) && !before.reverseConsumed;
+      return reverseConsumed(status);
+    case "simulatePriceShock":
+      return Boolean(traceRisk.priceShockTxHash || traceRisk.shockedVoucherPriceE18);
+    case "executeLiquidation":
+      return Boolean(status?.risk?.afterLiquidation?.executed || traceRisk.liquidationTxHash);
+    case "settleSeizedVoucher":
+      return Boolean(settlement.started || settlement.packetId || hasReversePacket(status));
+    case "borrowerCloseout":
+      return Boolean(status?.trace?.scenario?.mode === "borrower-closeout" && status?.trace?.scenario?.completed);
+    default:
+      return false;
   }
 }
 
@@ -1977,6 +2168,27 @@ function validateAmountAction(action, status = currentStatus) {
   }
 
   return { ok: true, amount };
+}
+
+function defaultAmountForAction(action, status = currentStatus) {
+  const state = financialState(status);
+  if (action === "lock") return Math.min(state.bankA, inputValue("bridgeAmount") || state.bankA);
+  if (action === "depositCollateral") return state.voucher;
+  if (action === "borrow") return state.availableBorrow;
+  if (action === "repay") return Math.min(state.debt, state.bankB);
+  if (action === "withdrawCollateral") return state.withdrawable;
+  return 0;
+}
+
+function primeRecommendedAmount(action, status = currentStatus, { force = false } = {}) {
+  const config = AMOUNT_ACTIONS[action];
+  if (!config) return;
+  const input = document.getElementById(config.inputId);
+  if (!input || (!force && numeric(input.value) > POSITION_EPSILON)) return;
+  const fallback = defaultAmountForAction(action, status);
+  if (fallback > POSITION_EPSILON) {
+    setInputValue(config.inputId, fallback, { force: true });
+  }
 }
 
 function updateAmountActionAvailability(status) {
@@ -2523,6 +2735,37 @@ function pushFailedActivity(action, error) {
   return activity;
 }
 
+function isTransientStatusRead(status) {
+  return Boolean(status?.statusReadTimedOut || (status?.transient && status?.label === "Status read timeout"));
+}
+
+function statusWithPreservedVisibleState(status) {
+  if (!isTransientStatusRead(status) || !currentStatus?.deployed) return status;
+  return {
+    ...currentStatus,
+    controller: status.controller || currentStatus.controller,
+    transient: true,
+    statusReadTimedOut: true,
+    label: status.label || currentStatus.label,
+    message: status.message || currentStatus.message,
+  };
+}
+
+function recoverCompletedActionFromStatus(action, status, message, output, { forceDefaults = false, beforeState = currentRunningAction?.beforeCompletionState } = {}) {
+  if (!status || !actionReachedExpectedState(action, status, beforeState)) return false;
+  renderStatus(status);
+  refreshTransactionUi(status, { forceDefaults });
+  pushActivity(action, message || `${guideForAction(action).runningTitle} completed.`, status);
+  currentStatus = status;
+  selectedWorkflowStep = null;
+  syncWorkflowUi(currentStatus);
+  if (currentRunningAction) currentRunningAction.nextAction = currentWorkflowAction;
+  completeActionUi(action, true);
+  setText("lastMessage", message || `${guideForAction(action).runningTitle} completed.`);
+  setOutput(output || `[controller] ${guideForAction(action).runningTitle} completed and visible state was refreshed.`);
+  return true;
+}
+
 async function requestJson(path, options = {}) {
   const response = await fetch(path, {
     headers: { "content-type": "application/json" },
@@ -2541,19 +2784,24 @@ async function requestJson(path, options = {}) {
 
 async function refreshStatus() {
   const status = await requestJson("/api/status");
-  renderStatus(status);
-  applyActionAvailability(status);
-  refreshTransactionUi(status);
-  return status;
+  const visibleStatus = statusWithPreservedVisibleState(status);
+  currentStatus = visibleStatus;
+  renderStatus(visibleStatus);
+  syncControllerOperationFromStatus(visibleStatus);
+  applyActionAvailability(visibleStatus);
+  refreshTransactionUi(visibleStatus);
+  return visibleStatus;
 }
 
 function updateRunningController(status) {
   if (!currentRunningAction) return;
-  currentRunningAction.controller = status?.controller?.activeOperation || null;
+  const visibleStatus = statusWithPreservedVisibleState(status);
+  const transientStatusRead = isTransientStatusRead(status);
+  currentRunningAction.controller = visibleStatus?.controller?.activeOperation || null;
   const elapsed = currentRunningAction.controller?.elapsedSeconds ?? Math.round((Date.now() - currentRunningAction.startedAtMs) / 1000);
-  if (status?.deployed === false && currentRunningAction.phase === "running") {
+  if (!transientStatusRead && visibleStatus?.deployed === false && currentRunningAction.phase === "running") {
     const error = new Error(
-      status.message ||
+      visibleStatus.message ||
         "The cached deployment is not present on the running chains. Prepare the demo session again before continuing."
     );
     error.userMessage = error.message;
@@ -2563,19 +2811,42 @@ function updateRunningController(status) {
     setOutput(error.message);
     return;
   }
-  if (!currentRunningAction.controller && elapsed > 10 && currentRunningAction.phase === "running") {
-    const error = new Error("The controller is no longer running this action. Refresh state or use Resume Session before retrying.");
-    error.userMessage = error.message;
-    completeActionUi(currentRunningAction.action, false, error);
+  const action = currentRunningAction.action;
+  if (action === "resetSeeded" && currentRunningAction.controller && currentRunningAction.phase === "running") {
+    setText("lastMessage", "Fresh Reset is still redeploying and reseeding the clean baseline.");
+    renderPrimaryGuide(currentRunningAction);
+    updateProofLifecycle(visibleStatus || currentStatus, currentRunningAction);
+    return;
+  }
+  if (!transientStatusRead && recoverCompletedActionFromStatus(action, visibleStatus, `${currentRunningAction.guide.runningTitle} completed.`)) {
     setBusy(false);
-    setText("lastMessage", error.message);
-    setOutput(error.message);
+    return;
+  }
+  if (transientStatusRead && currentRunningAction.phase === "running") {
+    setText(
+      "lastMessage",
+      `${currentRunningAction.guide.runningTitle} is still running. Status refresh timed out, so the UI is keeping the last visible state and waiting for the controller response.`
+    );
+    renderPrimaryGuide(currentRunningAction);
+    updateProofLifecycle(visibleStatus || currentStatus, currentRunningAction);
+    return;
+  }
+  if (!currentRunningAction.controller && currentRunningAction.phase === "running") {
+    if (recoverCompletedActionFromStatus(action, visibleStatus, `${currentRunningAction.guide.runningTitle} completed.`)) {
+      setBusy(false);
+      return;
+    }
+    setText(
+      "lastMessage",
+      `${currentRunningAction.guide.runningTitle} is finalizing. Waiting for the controller response or a visible state change.`
+    );
+    renderPrimaryGuide(currentRunningAction);
     return;
   }
   renderPrimaryGuide(currentRunningAction);
-  updateProofLifecycle(status || currentStatus, currentRunningAction);
+  updateProofLifecycle(visibleStatus || currentStatus, currentRunningAction);
   const label = currentRunningAction.controller?.label || currentRunningAction.guide.runningTitle;
-  setText("lastMessage", `Running ${label} for ${elapsed}s. Waiting for tx confirmation, proof generation, or status refresh if needed.`);
+  setText("lastMessage", `Running ${label}. Waiting for tx confirmation, proof generation, or status refresh if needed.`);
 }
 
 function stopActionPolling() {
@@ -2589,14 +2860,33 @@ function startActionPolling() {
     if (!currentRunningAction || currentRunningAction.phase !== "running") return;
     try {
       const status = await requestJson("/api/status");
-      currentStatus = status;
-      renderStatus(status);
+      const visibleStatus = statusWithPreservedVisibleState(status);
+      currentStatus = visibleStatus;
+      renderStatus(visibleStatus);
       setScenarioCardState(activeScenarioCard, "running", "Running");
-      updateRunningController(status);
+      updateRunningController(visibleStatus);
     } catch (error) {
       setText("primaryGuideController", `Status refresh is waiting: ${error.message}`);
     }
   }, 1500);
+}
+
+function keepActionOpenForVisibleState(action, status, message, output) {
+  if (!currentRunningAction || !STRICT_VISIBLE_COMPLETION_ACTIONS.has(action)) return false;
+  if (!isTransientStatusRead(status) && actionReachedExpectedState(action, status, currentRunningAction.beforeCompletionState)) {
+    return false;
+  }
+  currentStatus = statusWithPreservedVisibleState(status);
+  renderStatus(currentStatus);
+  refreshTransactionUi(currentStatus, { forceDefaults: true });
+  setText(
+    "lastMessage",
+    message || `${guideForAction(action).runningTitle} was submitted. Waiting for the visible dashboard state to catch up.`
+  );
+  setOutput(output || `[controller] Waiting for refreshed visible state after ${guideForAction(action).runningTitle}.`);
+  renderPrimaryGuide(currentRunningAction);
+  startActionPolling();
+  return true;
 }
 
 function beginActionUi(action, button = null) {
@@ -2616,6 +2906,7 @@ function beginActionUi(action, button = null) {
     phase: "running",
     startedAtMs: Date.now(),
     controller: null,
+    beforeCompletionState: actionCompletionSnapshot(action, currentStatus),
   };
   activeScenarioCard = scenarioCardForButton(button) || (button?.closest(".portal-scenarios") ? scenarioCardForAction(action) : null);
   setScenarioCardState(activeScenarioCard, "running", "Running");
@@ -2643,6 +2934,7 @@ function attachToControllerOperation(activeOperation, button = null) {
     phase: "running",
     startedAtMs: Date.now() - Math.max(0, elapsedSeconds) * 1000,
     controller: activeOperation,
+    beforeCompletionState: actionCompletionSnapshot(action, currentStatus),
   };
   activeScenarioCard = scenarioCardForButton(button) || scenarioCardForAction(action);
   setScenarioCardState(activeScenarioCard, "running", "Running");
@@ -2650,7 +2942,7 @@ function attachToControllerOperation(activeOperation, button = null) {
   document.body.dataset.actionPortal = guide.affectedPortal;
   setText(
     "lastMessage",
-    `${activeOperation.label || guide.runningTitle} is already running for ${elapsedSeconds}s. Waiting for it to finish.`
+    `${activeOperation.label || guide.runningTitle} is already running. Waiting for it to finish.`
   );
   setOutput(`[controller] ${activeOperation.label || guide.runningTitle} is already running. Wait for completion.`);
   renderPrimaryGuide(currentRunningAction);
@@ -2660,10 +2952,24 @@ function attachToControllerOperation(activeOperation, button = null) {
   return true;
 }
 
+function syncControllerOperationFromStatus(status, button = null) {
+  const activeOperation = status?.controller?.activeOperation;
+  if (!activeOperation?.action) return false;
+  if (currentRunningAction?.phase === "running" && currentRunningAction.action === activeOperation.action) {
+    currentRunningAction.controller = activeOperation;
+    renderPrimaryGuide(currentRunningAction);
+    updateProofLifecycle(status || currentStatus, currentRunningAction);
+    setBusy(true);
+    if (!actionPollTimer) startActionPolling();
+    return true;
+  }
+  return attachToControllerOperation(activeOperation, button);
+}
+
 function attachBusyController(error, button = null) {
   if (error?.statusCode !== 409) return false;
   const activeOperation = error.payload?.controller?.activeOperation;
-  return attachToControllerOperation(activeOperation, button);
+  return syncControllerOperationFromStatus({ controller: { activeOperation } }, button);
 }
 
 function completeActionUi(action, ok, error = null, phaseOverride = null) {
@@ -2700,21 +3006,23 @@ async function runDeploySeed(button = deploySeedButton) {
   let attachedBusyController = false;
   try {
     const payload = await requestJson("/api/deploy-seed", { method: "POST" });
+    const status = statusWithPreservedVisibleState(payload.status);
     actionCardPinned = false;
     setLoanTab("borrow");
-    renderStatus(payload.status);
-    refreshTransactionUi(payload.status, { forceDefaults: true });
-    currentStatus = payload.status;
+    renderStatus(status);
+    refreshTransactionUi(status, { forceDefaults: true });
+    currentStatus = status;
     selectedWorkflowStep = null;
     syncWorkflowUi(currentStatus);
     if (payload.ready) {
-      pushActivity("deploySeed", payload.message || "The interchain lending runtime is confirmed for live demo actions.", payload.status);
+      pushActivity("deploySeed", payload.message || "The interchain lending runtime is confirmed for live demo actions.", status);
+      rememberNextActionFromPayload(payload);
       completeActionUi("deploySeed", true);
       setText("lastMessage", payload.message || "Demo runtime confirmed ready.");
     } else {
       const warning = new Error(payload.message || "Existing runtime config was not confirmed ready.");
       setText("deploymentStatus", "Fresh Reset required");
-      pushWarningActivity("deploySeed", warning.message, payload.status);
+      pushWarningActivity("deploySeed", warning.message, status);
       completeActionUi("deploySeed", false, warning, "warning");
       setText("lastMessage", warning.message);
     }
@@ -2738,20 +3046,39 @@ async function runResetSeeded() {
   let attachedBusyController = false;
   try {
     const payload = await requestJson("/api/reset-seeded", { method: "POST" });
+    const status = statusWithPreservedVisibleState(payload.status);
     actionCardPinned = false;
     setLoanTab("borrow");
-    renderStatus(payload.status);
-    refreshTransactionUi(payload.status, { forceDefaults: true });
-    pushActivity("resetSeeded", "A fresh interchain lending runtime was deployed and seeded for a clean demo baseline.", payload.status);
-    currentStatus = payload.status;
+    renderStatus(status);
+    refreshTransactionUi(status, { forceDefaults: true });
+    pushActivity("resetSeeded", "A fresh interchain lending runtime was deployed and seeded for a clean demo baseline.", status);
+    currentStatus = status;
     selectedWorkflowStep = null;
     syncWorkflowUi(currentStatus);
+    rememberNextActionFromPayload(payload);
     completeActionUi("resetSeeded", true);
     setText("lastMessage", "Fresh reset complete.");
     setOutput(payload.output);
   } catch (error) {
     if (attachBusyController(error, resetSeededButton)) {
       attachedBusyController = true;
+      return;
+    }
+    if (isTransientStatusRead(error.payload?.status)) {
+      const status = statusWithPreservedVisibleState(error.payload.status);
+      keepActionOpenForVisibleState(
+        "resetSeeded",
+        status,
+        "Fresh Reset was submitted. Keeping the reset card open while the clean seeded state becomes visible.",
+        error.payload?.output || error.message
+      );
+      attachedBusyController = true;
+      return;
+    }
+    if (
+      !isTransientStatusRead(error.payload?.status) &&
+      recoverCompletedActionFromStatus("resetSeeded", error.payload?.status, error.payload?.message, error.payload?.output, { forceDefaults: true })
+    ) {
       return;
     }
     completeActionUi("resetSeeded", false, error);
@@ -2768,13 +3095,15 @@ async function runResumeSession(button = resumeSessionButtons[0]) {
   let attachedBusyController = false;
   try {
     const payload = await requestJson("/api/resume-session", { method: "POST" });
+    const status = statusWithPreservedVisibleState(payload.status);
     actionCardPinned = false;
-    renderStatus(payload.status);
-    refreshTransactionUi(payload.status, { forceDefaults: false });
-    currentStatus = payload.status;
+    renderStatus(status);
+    refreshTransactionUi(status, { forceDefaults: false });
+    currentStatus = status;
     selectedWorkflowStep = null;
     syncWorkflowUi(currentStatus);
-    pushActivity("resumeSession", payload.message || "Runtime session resumed and proof anchors refreshed.", payload.status);
+    pushActivity("resumeSession", payload.message || "Runtime session resumed and proof anchors refreshed.", status);
+    rememberNextActionFromPayload(payload);
     completeActionUi("resumeSession", true);
     setText("lastMessage", payload.message || "Resume Session complete.");
     setOutput(payload.output);
@@ -2795,6 +3124,9 @@ async function runResumeSession(button = resumeSessionButtons[0]) {
 function amountPayloadForAction(action, button = null) {
   const config = AMOUNT_ACTIONS[action];
   if (!config) return {};
+  if (button === primaryWorkflowCta) {
+    primeRecommendedAmount(action, currentStatus, { force: true });
+  }
   const validation = validateAmountAction(action);
   if (!validation.ok) {
     setValidation(
@@ -2840,18 +3172,48 @@ async function runAction(action, { button = null } = {}) {
       method: "POST",
       body: JSON.stringify(requestBody),
     });
-    renderStatus(payload.status);
-    refreshTransactionUi(payload.status, { forceDefaults: true });
-    pushActivity(action, payload.message, payload.status);
-    currentStatus = payload.status;
+    const status = statusWithPreservedVisibleState(payload.status);
+    renderStatus(status);
+    refreshTransactionUi(status, { forceDefaults: true });
+    currentStatus = status;
     selectedWorkflowStep = null;
     syncWorkflowUi(currentStatus);
+    if (
+      keepActionOpenForVisibleState(
+        action,
+        status,
+        `${title} submitted. Waiting for Linky's recommendation to update from the refreshed on-chain state.`,
+        payload.output || payload.message
+      )
+    ) {
+      attachedBusyController = true;
+      return;
+    }
+    pushActivity(action, payload.message, status);
+    rememberNextActionFromPayload(payload);
     completeActionUi(action, true);
     setText("lastMessage", payload.message);
     setOutput(payload.output || payload.message);
   } catch (error) {
     if (attachBusyController(error, button)) {
       attachedBusyController = true;
+      return;
+    }
+    if (isTransientStatusRead(error.payload?.status)) {
+      const status = statusWithPreservedVisibleState(error.payload.status);
+      keepActionOpenForVisibleState(
+        action,
+        status,
+        `${title} submitted, but the final status refresh timed out. Keeping the action open while the UI waits for visible state.`,
+        error.payload?.output || error.message
+      );
+      attachedBusyController = true;
+      return;
+    }
+    if (
+      !isTransientStatusRead(error.payload?.status) &&
+      recoverCompletedActionFromStatus(action, error.payload?.status, error.payload?.message, error.payload?.output, { forceDefaults: true })
+    ) {
       return;
     }
     completeActionUi(action, false, error);
@@ -2864,27 +3226,50 @@ async function runAction(action, { button = null } = {}) {
   }
 }
 
-async function runPrimaryWorkflowAction() {
-  if (currentRunningAction && currentRunningAction.phase !== "running") {
-    clearPrimaryGuide();
-    return;
-  }
-  if (currentWorkflowAction?.type === "return") {
+async function executeWorkflowCta(cta, button = primaryWorkflowCta) {
+  if (cta?.type === "return") {
     selectedWorkflowStep = null;
     syncWorkflowUi(currentStatus);
     return;
   }
-  if (currentWorkflowAction?.type === "portal") {
-    setActivePortal(currentWorkflowAction.portal);
+  if (cta?.type === "portal") {
+    setActivePortal(cta.portal);
     return;
   }
-  if (currentWorkflowAction?.type === "deploySeed") {
-    await runDeploySeed(primaryWorkflowCta);
+  if (cta?.type === "refresh") {
+    currentStatus = await refreshStatus();
+    syncWorkflowUi(currentStatus);
     return;
   }
-  if (currentWorkflowAction?.type === "action" && currentWorkflowAction.action) {
-    await runAction(currentWorkflowAction.action, { button: primaryWorkflowCta });
+  if (cta?.type === "deploySeed") {
+    await runDeploySeed(button);
+    return;
   }
+  if (cta?.type === "action" && cta.action) {
+    const refreshed = await refreshStatus();
+    currentStatus = refreshed;
+    syncWorkflowUi(currentStatus);
+    let actionToRun = cta.action;
+    primeRecommendedAmount(actionToRun, currentStatus, { force: true });
+    const requestedEligibility = actionEligibility(actionToRun, currentStatus);
+    if (!requestedEligibility.ok && currentWorkflowAction?.type === "action") {
+      primeRecommendedAmount(currentWorkflowAction.action, currentStatus, { force: true });
+      const refreshedEligibility = actionEligibility(currentWorkflowAction.action, currentStatus);
+      if (refreshedEligibility.ok) actionToRun = currentWorkflowAction.action;
+    }
+    primeRecommendedAmount(actionToRun, currentStatus, { force: true });
+    await runAction(actionToRun, { button });
+  }
+}
+
+async function runPrimaryWorkflowAction() {
+  if (currentRunningAction && currentRunningAction.phase !== "running") {
+    const nextCta = currentRunningAction.phase === "success" ? currentRunningAction.nextAction || currentWorkflowAction : null;
+    clearPrimaryGuide();
+    if (nextCta) await executeWorkflowCta(nextCta, primaryWorkflowCta);
+    return;
+  }
+  await executeWorkflowCta(currentWorkflowAction, primaryWorkflowCta);
 }
 
 primaryWorkflowCta?.addEventListener("click", runPrimaryWorkflowAction);

@@ -20,11 +20,16 @@ function functionBlock(source, name) {
 }
 
 const demoRunner = await readFile(resolve(process.cwd(), "scripts", "run-lending-demo.mjs"), "utf8");
+const packageJson = await readFile(resolve(process.cwd(), "package.json"), "utf8");
 const besuGenerator = await readFile(resolve(process.cwd(), "scripts", "generate-besu-qbft-networks.mjs"), "utf8");
+const besuClean = await readFile(resolve(process.cwd(), "scripts", "clean-besu-data.mjs"), "utf8");
 const seedDemo = await readFile(resolve(process.cwd(), "scripts", "seed-lending-demo.mjs"), "utf8");
+const besuRuntime = await readFile(resolve(process.cwd(), "scripts", "besu-runtime.mjs"), "utf8");
+const preflightBesu = await readFile(resolve(process.cwd(), "scripts", "preflight-besu-runtime.mjs"), "utf8");
 const demoReadModel = await readFile(resolve(process.cwd(), "scripts", "demo-read-model.mjs"), "utf8");
 const demoService = await readFile(resolve(process.cwd(), "scripts", "demo-service.mjs"), "utf8");
 const demoApi = await readFile(resolve(process.cwd(), "scripts", "demo-api.mjs"), "utf8");
+const demoStaticServer = await readFile(resolve(process.cwd(), "scripts", "demo-static-server.mjs"), "utf8");
 const lendingActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "lending-actions.mjs"), "utf8");
 const forwardBridgeActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "forward-bridge-actions.mjs"), "utf8");
 const reverseBridgeActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "reverse-bridge-actions.mjs"), "utf8");
@@ -146,9 +151,66 @@ assert.match(
   "forward header fetch should be allowed during the light-client heartbeat"
 );
 assert.match(demoService, /probeOnChainDeploymentHealth\(config, STATUS_READ_TIMEOUT_MS\)/, "heartbeat should verify cached deployment code before touching light clients");
-assert.match(demoApp, /controller is no longer running this action/i, "UI should release stale processing state when the controller is no longer active");
+assert.match(demoService, /HEARTBEAT_IDLE_TIMEOUT_MS/, "actions should wait for long heartbeat refreshes instead of failing after a short fixed delay");
+assert.match(demoService, /Waiting for light-client heartbeat/, "UI-visible controller stage should explain when an action is waiting for heartbeat refresh");
+assert.doesNotMatch(
+  demoService,
+  /Retry the action in a few seconds/,
+  "heartbeat contention should not be surfaced as an immediate user retry failure"
+);
+assert.match(demoApp, /function actionReachedExpectedState\(action, status = currentStatus, before = null\)/, "UI should verify visible protocol state before resolving a stale controller");
+assert.match(demoApp, /recoverCompletedActionFromStatus/, "UI should recover completed long-running actions from refreshed status");
+assert.match(demoApp, /STRICT_VISIBLE_COMPLETION_ACTIONS/, "UI should keep financial actions open until the dashboard state actually changes");
+assert.match(demoApp, /"resetSeeded"/, "Fresh Reset should be tracked as a strict visible-completion action");
+assert.match(demoApp, /currentRunningAction\.nextAction = currentWorkflowAction/, "post-action CTAs should use the freshly recomputed UI workflow recommendation");
+assert.match(demoApp, /syncControllerOperationFromStatus/, "UI refresh should attach Linky to controller actions already running on the server");
+assert.match(demoApp, /controller\?\.activeOperation/, "UI should read active controller operations from status payloads");
+assert.match(demoService, /phase: phaseMatchesAction \? phase : null/, "controller status should not expose stale phases from previous actions");
+assert.match(demoApp, /Run \$\{nextCta\.label\}/, "success CTA copy should make clear that the button runs the next action");
+assert.match(demoApp, /it does not repeat the completed one/, "success guidance should distinguish next-action execution from the completed action");
+assert.match(demoApp, /function defaultAmountForAction\(action, status = currentStatus\)/, "primary recommendations should know safe default amounts for amount-based actions");
+assert.match(demoApp, /nextCta\?\.type === "action"[\s\S]*primeRecommendedAmount\(nextCta\.action, currentStatus\)/, "success recommendations should prime amount fields before enabling the next CTA");
+assert.match(demoApp, /button === primaryWorkflowCta[\s\S]*primeRecommendedAmount\(action, currentStatus\)/, "primary recommendation clicks should prime missing amount fields before validation");
+assert.match(demoApp, /refreshStatus\(\)[\s\S]*primeRecommendedAmount\(actionToRun, currentStatus\)[\s\S]*await runAction\(actionToRun/, "primary recommendation clicks should refresh state and run the currently valid action");
+assert.match(demoApp, /function freshSeededBaseline\(status = currentStatus\)/, "Fresh Reset completion should require a clean seeded baseline, not merely an old deployed state");
+assert.match(demoApp, /action === "resetSeeded" && currentRunningAction\.controller/, "Fresh Reset should not complete while the reset controller is still active");
+assert.match(demoApp, /movedUp\(state\.collateral, before\.collateral\) \|\| movedDown\(state\.voucher, before\.voucher\)/, "deposit completion should require before/after balance movement");
+assert.match(demoApp, /movedDown\(state\.collateral, before\.collateral\) \|\| movedUp\(state\.voucher, before\.voucher\)/, "withdraw completion should require before/after balance movement");
+assert.match(demoService, /if \(lifecycle\.activeDebt\) return \{ action: "repay"/, "service recommendations should prioritize debt repayment before more borrowing");
+assert.match(demoService, /return \{ action: "withdrawCollateral", label: "Withdraw collateral to return" \}/, "service recommendations should direct debt-closed positions toward collateral withdrawal");
+assert.match(demoApp, /state\.voucher > POSITION_EPSILON \|\| state\.collateral > POSITION_EPSILON\) return false/, "UI should not keep recommending Receive Voucher after voucher/collateral is already visible");
+assert.match(demoService, /const forwardDelivered =/, "service recommendations should treat visible voucher/collateral as forward delivery");
+assert.match(demoApp, /function reverseConsumed\(status\)[\s\S]*trace\?\.liquidatorSettlement\?\.unlockTxHash/, "UI should treat reverse unlock trace/settlement state as consumed even if receipt reads lag");
+assert.match(demoService, /const reverseDelivered =/, "service recommendations should treat visible reverse settlement/unlock state as reverse delivery");
+assert.match(demoApp, /case "executeLiquidation":[\s\S]*afterLiquidation\?\.executed/, "UI should recover completed liquidation from visible accounting state");
+assert.match(demoApp, /final status refresh timed out/, "generic action failures caused by transient status reads should stay open for recovery polling");
+assert.match(demoService, /nextAction: nextActionPayload\(status\)/, "action API responses should include the server-selected next recommendation");
+assert.match(demoApp, /workflowCtaFromServerNext/, "UI should convert server nextAction responses into primary workflow CTAs");
+assert.match(demoApp, /next recommendation is/, "successful action cards should point the primary CTA at the next action instead of a generic continue step");
+assert.match(demoStaticServer, /cache-control": "no-store"/, "demo static assets should not be browser-cached across live UI fixes");
+assert.doesNotMatch(demoHtml, /Action duration/, "Linky recommendation cards should avoid exposing raw elapsed-time implementation detail");
+assert.match(demoApp, /function isTransientStatusRead\(status\)/, "UI should distinguish transient status read timeouts from action failures");
+assert.match(demoApp, /statusWithPreservedVisibleState/, "UI should keep the last visible state during transient status read timeouts");
+assert.doesNotMatch(demoApp, /elapsed > 10/, "UI must not fail or resolve long-running actions based only on elapsed time");
 assert.match(demoApp, /attachBusyController/, "UI should attach to an already-running controller operation instead of showing a duplicate-submit failure");
 assert.match(demoApp, /If the chain was reset with besu:down -v/, "UI Resume recovery copy should distinguish deleted chain state from proof-anchor refresh");
+assert.match(demoService, /const timedOut = .*timed out/i, "status read fallback should detect true timeouts explicitly");
+assert.match(demoService, /statusReadTimedOut: timedOut/, "status read timeout flag should not be set for every read failure");
+assert.match(demoService, /statusReadFailed/, "non-timeout status read failures should not be mislabeled as timeouts");
+assert.match(demoService, /readContractCodeWithRetry/, "demo service deployment health should retry transient Besu null-code reads");
+assert.match(demoReadModel, /readContractCodeWithRetry/, "demo read model should retry transient Besu null-code reads before reporting world-state loss");
+assert.doesNotMatch(
+  demoService,
+  /deployed: false,[\s\S]*label: "Status read timeout"/,
+  "a transient status read timeout should not masquerade as a missing deployment"
+);
+assert.match(demoReadModel, /Besu world state unavailable/, "read model should report null contract code as Besu world-state corruption");
+assert.match(demoReadModel, /code == null/, "read model should not pass null code responses into ethers rendering");
+assert.match(besuRuntime, /eth_getCode/, "Besu readiness should verify world-state-backed RPC calls, not only chain id");
+assert.match(preflightBesu, /eth_getCode/, "Besu preflight should catch validators that return null code because world state is unavailable");
+assert.match(preflightBesu, /worldStateUnavailable/, "Besu preflight should tell the user when local Besu volumes need resetting");
+assert.match(packageJson, /clean-besu-data\.mjs/, "besu:down should clear bind-mounted Besu node data, not only Docker volumes");
+assert.match(besuClean, /nodesRoot/, "Besu clean script should remove per-node bind-mounted data directories");
 assert.match(demoHtml, /id="resumeSession"/, "UI should expose a Resume Session control");
 assert.doesNotMatch(
   demoApp,

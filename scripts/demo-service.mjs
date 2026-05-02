@@ -29,8 +29,11 @@ const node = process.execPath;
 const DEFAULT_TIMEOUT_MS = Number(process.env.DEMO_SERVICE_TIMEOUT_MS || 600000);
 const FAST_READY_TIMEOUT_MS = Number(process.env.DEMO_FAST_READY_TIMEOUT_MS || 5000);
 const STATUS_READ_TIMEOUT_MS = Number(process.env.DEMO_STATUS_READ_TIMEOUT_MS || 8000);
+const CODE_READ_RETRIES = Math.max(1, Number(process.env.DEMO_CODE_READ_RETRIES || 6));
+const CODE_READ_RETRY_DELAY_MS = Number(process.env.DEMO_CODE_READ_RETRY_DELAY_MS || 500);
 const LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS = Number(process.env.DEMO_LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS || 25000);
 const LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS = BigInt(process.env.DEMO_LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS || "12");
+const HEARTBEAT_IDLE_TIMEOUT_MS = Number(process.env.DEMO_HEARTBEAT_IDLE_TIMEOUT_MS || 300000);
 const RESUME_SESSION_MAX_HEADER_GAP = BigInt(process.env.DEMO_RESUME_MAX_HEADER_GAP || DEMO_MAX_TIMEOUT_HEADER_GAP.toString());
 const RESUME_SESSION_MAX_HEADERS = BigInt(process.env.DEMO_RESUME_MAX_HEADERS || "12");
 const RESUME_SESSION_TIMEOUT_MS = Number(process.env.DEMO_RESUME_TIMEOUT_MS || 60000);
@@ -137,13 +140,14 @@ function operationLabel(action) {
 function publicActiveOperation() {
   if (!activeOperation) return null;
   const phase = getCurrentPhase();
-  const phaseStage = phaseBelongsToAction(activeOperation.action, phase) ? stageFromDemoPhase(phase) : null;
+  const phaseMatchesAction = phaseBelongsToAction(activeOperation.action, phase);
+  const phaseStage = phaseMatchesAction ? stageFromDemoPhase(phase) : null;
   return {
     id: activeOperation.id,
     action: activeOperation.action,
     label: activeOperation.label,
     stage: phaseStage || activeOperation.stage,
-    phase,
+    phase: phaseMatchesAction ? phase : null,
     startedAt: activeOperation.startedAt,
     elapsedSeconds: Math.max(0, Math.round((Date.now() - activeOperation.startedAtMs) / 1000)),
   };
@@ -152,7 +156,26 @@ function publicActiveOperation() {
 function phaseBelongsToAction(action, phase) {
   if (!phase) return false;
   if (action === "openRoute") return phase.startsWith("step-open-route");
+  if (action === "lock") return phase.startsWith("step-lock");
+  if (action === "finalizeForwardHeader") return phase === "step-finalizeForwardHeader";
+  if (action === "updateForwardClient") return phase === "step-updateForwardClient";
   if (action === "proveForwardMint" || action === "replayForward") return phase.startsWith("step-prove-forward");
+  if (action === "depositCollateral") return phase === "step-deposit-collateral";
+  if (action === "borrow") return phase === "step-borrow";
+  if (action === "repay") return phase === "step-repay";
+  if (action === "topUpRepayCash") return phase === "step-top-up-repay-cash";
+  if (action === "withdrawCollateral") return phase === "step-withdraw-collateral";
+  if (action === "settleSeizedVoucher") return phase === "step-settle-seized-voucher";
+  if (action === "burn") return phase === "step-burn";
+  if (action === "finalizeReverseHeader") return phase === "step-finalizeReverseHeader";
+  if (action === "updateReverseClient") return phase === "step-updateReverseClient";
+  if (action === "proveReverseUnlock") return phase === "step-prove-reverse";
+  if (action === "simulatePriceShock") return phase === "step-price-shock";
+  if (action === "executeLiquidation") return phase === "step-liquidation";
+  if (action === "freezeClient") return phase === "step-freeze-client";
+  if (action === "recoverClient") return phase === "step-recover-client";
+  if (action === "borrowerCloseout") return phase.startsWith("borrower-closeout");
+  if (action === "fullFlow" || action === "riskLifecycle") return !phase.startsWith("step-");
   return false;
 }
 
@@ -183,15 +206,47 @@ function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
+function contractCodeReadError(error) {
+  return [
+    error?.code,
+    error?.shortMessage,
+    error?.info?.error?.message,
+    error?.message,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+async function readContractCodeWithRetry(provider, address, label) {
+  let lastProblem = "RPC returned invalid/null contract code";
+  for (let attempt = 1; attempt <= CODE_READ_RETRIES; attempt++) {
+    try {
+      const code = await provider.getCode(ethers.getAddress(address), "latest");
+      if (typeof code === "string") return { code };
+      lastProblem = `RPC returned ${code === null ? "null" : typeof code} contract code`;
+    } catch (error) {
+      lastProblem = contractCodeReadError(error) || error.message;
+    }
+    if (attempt < CODE_READ_RETRIES) {
+      await sleep(CODE_READ_RETRY_DELAY_MS * attempt);
+    }
+  }
+  return { code: null, error: `${label}: ${lastProblem}` };
+}
+
 async function waitForHeartbeatIdle() {
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + HEARTBEAT_IDLE_TIMEOUT_MS;
+  if (heartbeatRunning) setActiveOperationStage("Waiting for light-client heartbeat");
   while (heartbeatRunning && Date.now() < deadline) {
-    await sleep(250);
+    await sleep(500);
   }
   if (heartbeatRunning) {
-    const message = "Light-client heartbeat is still refreshing proof anchors. Retry the action in a few seconds.";
+    const message =
+      `Light-client heartbeat is still refreshing proof anchors after ${Math.round(HEARTBEAT_IDLE_TIMEOUT_MS / 1000)}s. ` +
+      "Wait for the current refresh to finish, or restart the demo UI if the controller is stuck.";
     const error = new Error(message);
-    error.statusCode = 409;
+    error.statusCode = 503;
+    error.demoSafeMessage = message;
     error.payload = {
       ok: false,
       error: message,
@@ -257,9 +312,14 @@ async function assertOnChainDeploymentHealth(config, timeoutMs = FAST_READY_TIME
     if (!ethers.isAddress(address)) {
       return Promise.resolve({ chainKey, field, address, code: "0x", invalid: true });
     }
-    return providerByChain[chainKey]
-      .getCode(ethers.getAddress(address), "latest")
-      .then((code) => ({ chainKey, field, address, code }));
+    return readContractCodeWithRetry(providerByChain[chainKey], address, `${chainKey}.${field}`).then((result) => ({
+      chainKey,
+      field,
+      address,
+      code: result.code,
+      invalid: result.code == null,
+      error: result.error,
+    }));
   });
   const [networkA, networkB, ...codeChecks] = await withTimeout(
     Promise.all([providerByChain.A.getNetwork(), providerByChain.B.getNetwork(), ...codeRequests]),
@@ -275,8 +335,8 @@ async function assertOnChainDeploymentHealth(config, timeoutMs = FAST_READY_TIME
     return BigInt(actual) === expected ? [] : [`${chainKey}.chainId expected ${expected.toString()} got ${actual.toString()}`];
   });
   const missingCode = codeChecks
-    .filter((check) => check.invalid || check.code === "0x")
-    .map((check) => `${check.chainKey}.${check.field}=${check.address ?? "missing"}`);
+    .filter((check) => check.invalid || check.code == null || check.code === "0x")
+    .map((check) => `${check.chainKey}.${check.field}=${check.address ?? "missing"}${check.error ? ` (${check.error})` : ""}`);
   const problems = [...chainMismatches, ...missingCode];
   if (problems.length > 0) {
     throw new Error(problems.join("; "));
@@ -399,18 +459,18 @@ async function preparedContextForUiAction() {
 
 async function withControllerLock(action, run) {
   if (activeOperation) throw controllerBusyError(action);
-  if (!actionCanRunDuringHeartbeat(action)) await waitForHeartbeatIdle();
 
   activeOperation = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     action,
     label: operationLabel(action),
-    stage: "Preparing controller",
+    stage: !actionCanRunDuringHeartbeat(action) && heartbeatRunning ? "Waiting for light-client heartbeat" : "Preparing controller",
     startedAt: new Date().toISOString(),
     startedAtMs: Date.now(),
   };
 
   try {
+    if (!actionCanRunDuringHeartbeat(action)) await waitForHeartbeatIdle();
     return await run();
   } finally {
     activeOperation = null;
@@ -616,6 +676,70 @@ async function refreshProofAnchors({ config, ctx, latestA, latestB, maxGap, maxH
   return { route, updates };
 }
 
+function statusNumber(value) {
+  const number = Number(String(value ?? "0").replace(/,/g, ""));
+  return Number.isFinite(number) ? number : 0;
+}
+
+function statusPositive(value) {
+  return statusNumber(value) > 0.000001;
+}
+
+function lendingLifecycleFromStatus(status) {
+  const balances = status?.balances || {};
+  const trace = status?.trace || {};
+  const lending = trace.lending || {};
+  const risk = trace.risk || {};
+  const reverse = trace.reverse || {};
+  const settlement = status?.risk?.settlement || {};
+  const settlementTrace = trace.liquidatorSettlement || {};
+  const activeCollateral = statusPositive(balances.poolCollateral);
+  const activeDebt = statusPositive(balances.poolDebt);
+  const freeVoucher = statusPositive(balances.voucher);
+  const debtWasOpened = Boolean(
+    lending.borrowed ||
+      risk.borrowed ||
+      risk.debtBeforeRepay ||
+      risk.repayTxHash ||
+      risk.repaid ||
+      risk.liquidationTxHash ||
+      risk.debtBeforeLiquidation ||
+      activeDebt
+  );
+  const collateralWasDeposited = Boolean(
+    lending.collateralDeposited ||
+      risk.collateralDeposited ||
+      risk.collateralBeforeWithdrawal ||
+      risk.withdrawTxHash ||
+      activeCollateral ||
+      debtWasOpened
+  );
+  const borrowerCollateralWithdrawn = Boolean(
+    lending.collateralWithdrawn ||
+      risk.collateralWithdrawn ||
+      risk.withdrawTxHash ||
+      (debtWasOpened && collateralWasDeposited && !activeCollateral)
+  );
+  const reverseStarted = Boolean(reverse.packetId || reverse.commitHeight || reverse.sourceTxHash);
+  const settlementPacketId = settlement.packetId || settlementTrace.packetId;
+  const settlementMatchesReverse = Boolean(settlementPacketId && settlementPacketId === reverse.packetId);
+  const settlementStarted = Boolean(
+    settlementMatchesReverse &&
+      (settlement.started ||
+        settlementTrace.packetId ||
+        settlementTrace.burnTxHash ||
+        reverse.settlementMode === "authorized-liquidator")
+  );
+  return {
+    activeCollateral,
+    activeDebt,
+    freeVoucher,
+    debtWasOpened,
+    borrowerCollateralWithdrawn,
+    borrowerReverseStarted: reverseStarted && !settlementStarted,
+  };
+}
+
 function nextValidActionFromStatus(status) {
   if (!status?.deployed) return { action: "deploySeed", label: "Prepare Fast Demo Session" };
   if (status.security?.frozen || status.security?.recovering) return { action: "recoverClient", label: "Recover Account" };
@@ -623,10 +747,19 @@ function nextValidActionFromStatus(status) {
   const balances = status.balances || {};
   const market = status.market || {};
   const progress = status.progress || {};
+  const lifecycle = lendingLifecycleFromStatus(status);
   const forward = trace.forward || {};
   const reverse = trace.reverse || {};
-  const forwardPending = Boolean(forward.packetId || forward.commitHeight) && !status.security?.forwardConsumed;
-  const reversePending = Boolean(reverse.packetId || reverse.commitHeight) && !status.security?.reverseConsumed;
+  const forwardDelivered =
+    Boolean(status.security?.forwardConsumed) ||
+    statusPositive(balances.voucher) ||
+    statusPositive(balances.poolCollateral);
+  const forwardPending = Boolean(forward.packetId || forward.commitHeight) && !forwardDelivered;
+  const reverseDelivered =
+    Boolean(status.security?.reverseConsumed) ||
+    Boolean(reverse.receiveTxHash) ||
+    Boolean(status.risk?.settlement?.unlocked);
+  const reversePending = Boolean(reverse.packetId || reverse.commitHeight) && !reverseDelivered;
   if (!trace.handshake?.ready && !trace.handshake?.sourceRouteOpen && !trace.handshake?.destinationRouteOpen) {
     return { action: "openRoute", label: "Open route" };
   }
@@ -638,13 +771,22 @@ function nextValidActionFromStatus(status) {
     }
     return { action: "proveForwardMint", label: "Receive voucher" };
   }
-  if (Number(balances.voucher || 0) > 0 && Number(balances.poolDebt || 0) <= 0 && Number(balances.poolCollateral || 0) <= 0) {
+  if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher && !lifecycle.borrowerReverseStarted) {
+    return { action: "burn", label: "Burn voucher and start Bank A unlock" };
+  }
+  if (lifecycle.freeVoucher && !lifecycle.activeDebt && !lifecycle.activeCollateral && !lifecycle.debtWasOpened) {
     return { action: "depositCollateral", label: "Deposit voucher collateral" };
   }
-  if (Number(balances.poolCollateral || 0) > 0 && Number(market.availableToBorrow || 0) > 0) {
+  if (lifecycle.activeDebt) return { action: "repay", label: "Repay" };
+  if (lifecycle.activeCollateral && lifecycle.debtWasOpened) {
+    return { action: "withdrawCollateral", label: "Withdraw collateral to return" };
+  }
+  if (lifecycle.activeCollateral && statusNumber(market.availableToBorrow) > 0) {
     return { action: "borrow", label: "Borrow" };
   }
-  if (Number(balances.poolDebt || 0) > 0) return { action: "repay", label: "Repay" };
+  if (lifecycle.freeVoucher && !lifecycle.activeDebt) {
+    return { action: "depositCollateral", label: "Deposit more voucher collateral" };
+  }
   if (reversePending) {
     const commitHeight = BigInt(reverse.commitHeight || 0);
     const trustedHeight = BigInt(progress.trustedBOnA || reverse.trustedHeight || 0);
@@ -653,19 +795,26 @@ function nextValidActionFromStatus(status) {
     }
     return { action: "proveReverseUnlock", label: "Verify reverse proof and unlock" };
   }
-  if (Number(balances.bankA || 0) > 0) return { action: "lock", label: "Bridge collateral" };
+  if (statusNumber(balances.bankA) > 0) return { action: "lock", label: "Bridge collateral" };
   return { action: "refresh", label: "Refresh state" };
+}
+
+function nextActionPayload(status) {
+  return nextValidActionFromStatus(status || {});
 }
 
 async function readDemoStatusForPayload() {
   try {
     return await withTimeout(readDemoStatus(), STATUS_READ_TIMEOUT_MS, "read demo status");
   } catch (error) {
+    const timedOut = /timed out/i.test(error.message || "");
     return {
       ready: false,
-      deployed: false,
+      transient: true,
+      statusReadTimedOut: timedOut,
+      statusReadFailed: !timedOut,
       stackVersion: "besu-light-client",
-      label: "Status read timeout",
+      label: timedOut ? "Status read timeout" : "Status read failed",
       message: error.message,
       controller: controllerState(),
     };
@@ -990,6 +1139,8 @@ export async function runActionPayload(actionRequest) {
       }
     }
 
+    const status = await readDemoStatusForPayload();
+    const trace = await readTrace();
     return {
       statusCode: result.ok ? 200 : result.statusCode || 500,
       body: {
@@ -1002,8 +1153,9 @@ export async function runActionPayload(actionRequest) {
             : result.ok
               ? `Completed demo action: ${operationLabel(action)}${request.amount ? ` (${request.amount}).` : "."}`
               : result.error,
-        trace: await readTrace(),
-        status: await readDemoStatusForPayload(),
+        trace,
+        status,
+        nextAction: nextActionPayload(status),
       },
     };
   });
@@ -1037,6 +1189,7 @@ export async function deploySeedPayload() {
   return withControllerLock("deploySeed", async () => {
     const result = await deployAndSeed();
     setActiveOperationStage("Reading refreshed state");
+    const status = await readDemoStatusForPayload();
     return {
       ok: true,
       ready: result.ready,
@@ -1045,7 +1198,8 @@ export async function deploySeedPayload() {
       message: result.message,
       output: result.output,
       trace: await readTrace(),
-      status: await readDemoStatusForPayload(),
+      status,
+      nextAction: nextActionPayload(status),
     };
   });
 }
@@ -1054,6 +1208,7 @@ export async function resetSeededPayload() {
   return withControllerLock("resetSeeded", async () => {
     const result = await deployAndSeed({ reset: true });
     setActiveOperationStage("Reading refreshed state");
+    const status = await readDemoStatusForPayload();
     return {
       ok: true,
       ready: result.ready,
@@ -1061,7 +1216,8 @@ export async function resetSeededPayload() {
       message: result.message,
       output: result.output,
       trace: await readTrace(),
-      status: await readDemoStatusForPayload(),
+      status,
+      nextAction: nextActionPayload(status),
     };
   });
 }

@@ -93,7 +93,19 @@ npm test
 
 ## Run The Besu Demo
 
-Start two local Besu QBFT bank chains:
+For a thesis-defense clean run, reset the local chains, redeploy, seed, and start the browser controller in one command:
+
+```bash
+npm run demo:fresh
+```
+
+If this is the first time running the project on the machine, generate the local Besu runtime files once before using the fresh demo command:
+
+```bash
+npm run besu:generate
+```
+
+To run the same flow manually, start two local Besu QBFT bank chains:
 
 ```bash
 npm run besu:generate

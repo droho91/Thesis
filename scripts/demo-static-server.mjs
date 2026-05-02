@@ -26,11 +26,19 @@ async function fileForRequest(root, req) {
   return info.isDirectory() ? resolve(file, "index.html") : file;
 }
 
+const noStoreHeaders = {
+  "cache-control": "no-store",
+  pragma: "no-cache",
+};
+
 export async function serveStaticDemo(root, req, res) {
   try {
     const file = await fileForRequest(root, req);
     if (!file) return sendText(res, 403, "Forbidden");
-    res.writeHead(200, { "content-type": types[extname(file)] || "application/octet-stream" });
+    res.writeHead(200, {
+      "content-type": types[extname(file)] || "application/octet-stream",
+      ...noStoreHeaders,
+    });
     createReadStream(file).pipe(res);
     return undefined;
   } catch {
