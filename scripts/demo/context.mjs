@@ -57,6 +57,7 @@ let LIQUIDATION_REPAY = ethers.parseUnits(process.env.DEMO_LIQUIDATION_REPAY || 
 let SHOCKED_VOUCHER_PRICE_E18 = ethers.parseUnits(process.env.DEMO_SHOCKED_VOUCHER_PRICE || "0.5", 18);
 const DEMO_TX_GAS_LIMIT = BigInt(process.env.DEMO_TX_GAS_LIMIT || "8000000");
 const DEMO_TX_WAIT_TIMEOUT_MS = Number(process.env.DEMO_TX_WAIT_TIMEOUT_MS || process.env.TX_WAIT_TIMEOUT_MS || 120000);
+const DEMO_APPROVAL_ALLOWANCE = ethers.parseUnits(process.env.DEMO_APPROVAL_ALLOWANCE || "1000000", 18);
 const DEMO_REPAY_BUFFER_BPS = BigInt(process.env.DEMO_REPAY_BUFFER_BPS || "1");
 const DEMO_REPAY_MIN_BUFFER = ethers.parseUnits(process.env.DEMO_REPAY_MIN_BUFFER || "0.01", 18);
 const DEMO_MAX_TIMEOUT_HEADER_GAP = BigInt(process.env.DEMO_MAX_TIMEOUT_HEADER_GAP || "600");
@@ -299,6 +300,30 @@ async function txStep(label, send) {
   const tx = await send();
   console.log(`[demo] ${label} tx=${tx.hash}`);
   return waitForTx(tx, label);
+}
+
+async function approveIfNeeded(token, owner, spender, amount, label, options = {}) {
+  const requiredAmount = asBigInt(amount);
+  const allowance = await readWithRetry(`${label} allowance`, () => token.allowance(owner, spender));
+
+  if (asBigInt(allowance) >= requiredAmount) {
+    console.log(`[demo] ${label} skipped; allowance is already sufficient`);
+    return {
+      skipped: true,
+      allowance,
+      txHash: null,
+    };
+  }
+
+  const requestedApproval = asBigInt(options.approvalAmount || DEMO_APPROVAL_ALLOWANCE);
+  const approvalAmount = requestedApproval >= requiredAmount ? requestedApproval : requiredAmount;
+  const receipt = await txStep(label, () => token.approve(spender, approvalAmount, txOptions()));
+
+  return {
+    skipped: false,
+    allowance,
+    txHash: receipt.hash,
+  };
 }
 
 async function writeTrace(trace) {
@@ -743,7 +768,7 @@ async function validateRiskSeeded(config, ctx) {
 }
 
 async function ensureRiskSeeded(config, ctx) {
-  if (ctx.__demoFastPath && process.env.DEMO_FORCE_RISK_RESEED !== "true") {
+  if (ctx.__validateSeedOnly && process.env.DEMO_FORCE_RISK_RESEED !== "true") {
     await validateRiskSeeded(config, ctx);
     return;
   }
@@ -1684,7 +1709,7 @@ async function prepareStepContext(options = {}) {
     await ensureDeploymentCode(config);
   }
   const ctx = await loadContext(config);
-  ctx.__demoFastPath = Boolean(options.fastDemoMode);
+  ctx.__validateSeedOnly = Boolean(options.validateSeedOnly);
   return { config, ctx, sourceChainId: chainId(config, "A"), destinationChainId: chainId(config, "B") };
 }
 
@@ -1693,7 +1718,7 @@ async function ensureForwardPacket(config, ctx, sourceChainId, destinationChainI
   if (trace.forward?.packetId && trace.forward?.sequence && trace.forward?.commitHeight) {
     const committed = await ctx.A.packetStore.committedPacket(trace.forward.packetId).catch(() => false);
     if (!committed) {
-      throw new Error("Forward packet is missing from Bank A. Run Lock aBANK before the header or proof steps.");
+      throw new Error("Forward packet is missing from Bank A. Run Transfer Collateral to Bank B before the header or proof steps.");
     }
 
     const amount = amountFromTrace(trace.forward, FORWARD_AMOUNT);
@@ -1715,7 +1740,7 @@ async function ensureForwardPacket(config, ctx, sourceChainId, destinationChainI
     };
   }
 
-  throw new Error("No forward packet exists yet. Run Lock aBANK before the header or proof steps.");
+  throw new Error("No forward packet exists yet. Run Transfer Collateral to Bank B before the header or proof steps.");
 }
 
 async function ensureForwardPacketReceived(config, ctx, sourceChainId, destinationChainId) {
@@ -1900,6 +1925,7 @@ export {
   BORROW_AMOUNT,
   BORROW_AMOUNT_CONFIGURED,
   CHANNEL_STATE,
+  DEMO_APPROVAL_ALLOWANCE,
   CONNECTION_STATE,
   DEMO_MAX_TIMEOUT_HEADER_GAP,
   DEMO_PACKET_TIMEOUT_HEIGHT,
@@ -1919,6 +1945,7 @@ export {
   SHOCKED_VOUCHER_PRICE_E18,
   WITHDRAW_AMOUNT,
   applyDemoAmountOverrides,
+  approveIfNeeded,
   amountFromTrace,
   asBigInt,
   baseTrace,

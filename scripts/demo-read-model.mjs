@@ -400,7 +400,7 @@ export async function localHealth() {
       label: "No deployment",
       stackVersion: "besu-light-client",
       runtime,
-      message: "Start the Besu bank chains with npm run besu:generate and npm run besu:up, then press Prepare Fast Demo Session or Fresh Reset.",
+      message: "Start the Besu bank chains with npm run besu:generate and npm run besu:up, then press Prepare Demo Session or Fresh Reset.",
     };
   }
   return readLocalHealth(runtime);
@@ -509,7 +509,7 @@ async function readLocalHealth(runtime) {
       label: "Stale interchain lending deployment",
       runtime: cfgRuntime,
       message:
-        "Runtime config exists, but one or more configured contract addresses have no code on the running chains. If you used besu:down -v, run Prepare Fast Demo Session or npm run deploy and npm run seed; Resume Session cannot recover deleted chain state.",
+        "Runtime config exists, but one or more configured contract addresses have no code on the running chains. If you used besu:down -v, run Prepare Demo Session or npm run deploy and npm run seed; Resume Session cannot recover deleted chain state.",
       chains: { A: chainA, B: chainB },
     };
   }

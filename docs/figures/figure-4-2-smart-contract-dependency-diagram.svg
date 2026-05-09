@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1180" viewBox="0 0 900 1180" role="img" aria-labelledby="title desc">
+  <title id="title">Figure 4.2: Smart Contract Dependency Diagram</title>
+  <desc id="desc">A portrait smart contract dependency diagram grouping lending, policy, packet, proof, and client contracts in the multi-blockchain lending prototype.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M1 1 L9 5 L1 9 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .page { fill: #ffffff; }
+      .title { font: 700 24px Arial, Helvetica, sans-serif; fill: #111827; }
+      .group { fill: #f8fafc; stroke: #1f2937; stroke-width: 1.45; }
+      .group-alt { fill: #fbfbfb; stroke: #1f2937; stroke-width: 1.45; }
+      .group-title { font: 700 16.5px Arial, Helvetica, sans-serif; fill: #111827; }
+      .contract { fill: #ffffff; stroke: #334155; stroke-width: 1.2; }
+      .contract-soft { fill: #ffffff; stroke: #64748b; stroke-width: 1.1; }
+      .contract-title { font: 700 13px Arial, Helvetica, sans-serif; fill: #111827; }
+      .contract-note { font: 400 11.5px Arial, Helvetica, sans-serif; fill: #475569; }
+      .edge { fill: none; stroke: #334155; stroke-width: 1.45; marker-end: url(#arrow); }
+      .assoc { fill: none; stroke: #64748b; stroke-width: 1.2; stroke-dasharray: 5 5; marker-end: url(#arrow); }
+      .edge-label { font: 400 11px Arial, Helvetica, sans-serif; fill: #475569; }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="900" height="1180"/>
+  <text class="title" x="450" y="42" text-anchor="middle">Figure 4.2: Smart Contract Dependency Diagram</text>
+
+  <!-- Policy / Oracle Contracts -->
+  <rect class="group" x="70" y="78" width="760" height="145" rx="8"/>
+  <text class="group-title" x="450" y="108" text-anchor="middle">Policy / Oracle Contracts</text>
+
+  <rect class="contract" x="130" y="138" width="285" height="58" rx="6"/>
+  <text class="contract-title" x="273" y="162" text-anchor="middle">BankPolicyEngine</text>
+  <text class="contract-note" x="273" y="180" text-anchor="middle">permissions and exposure caps</text>
+
+  <rect class="contract" x="485" y="138" width="285" height="58" rx="6"/>
+  <text class="contract-title" x="628" y="162" text-anchor="middle">ManualAssetOracle</text>
+  <text class="contract-note" x="628" y="180" text-anchor="middle">valuation input</text>
+
+  <!-- Lending / Asset Contracts -->
+  <rect class="group-alt" x="70" y="252" width="760" height="275" rx="8"/>
+  <text class="group-title" x="450" y="282" text-anchor="middle">Lending / Asset Contracts</text>
+
+  <rect class="contract" x="285" y="317" width="330" height="66" rx="6"/>
+  <text class="contract-title" x="450" y="343" text-anchor="middle">PolicyControlledLendingPool</text>
+  <text class="contract-note" x="450" y="363" text-anchor="middle">collateralized borrowing market</text>
+
+  <rect class="contract" x="105" y="430" width="310" height="62" rx="6"/>
+  <text class="contract-title" x="260" y="454" text-anchor="middle">PolicyControlledVoucherToken</text>
+  <text class="contract-note" x="260" y="474" text-anchor="middle">voucher collateral asset</text>
+
+  <rect class="contract" x="485" y="430" width="310" height="62" rx="6"/>
+  <text class="contract-title" x="640" y="454" text-anchor="middle">PolicyControlledEscrowVault</text>
+  <text class="contract-note" x="640" y="474" text-anchor="middle">canonical collateral custody</text>
+
+  <!-- Transfer / Packet Contracts -->
+  <rect class="group" x="70" y="557" width="760" height="235" rx="8"/>
+  <text class="group-title" x="450" y="587" text-anchor="middle">Transfer / Packet Contracts</text>
+
+  <rect class="contract" x="285" y="622" width="330" height="58" rx="6"/>
+  <text class="contract-title" x="450" y="646" text-anchor="middle">PolicyControlledTransferApp</text>
+  <text class="contract-note" x="450" y="664" text-anchor="middle">packet send / receive flow</text>
+
+  <rect class="contract" x="105" y="712" width="310" height="58" rx="6"/>
+  <text class="contract-title" x="260" y="736" text-anchor="middle">IBCPacketHandler</text>
+  <text class="contract-note" x="260" y="754" text-anchor="middle">receive, ack, timeout execution</text>
+
+  <rect class="contract" x="485" y="712" width="310" height="58" rx="6"/>
+  <text class="contract-title" x="640" y="736" text-anchor="middle">IBCPacketStore</text>
+  <text class="contract-note" x="640" y="754" text-anchor="middle">commitments and receipts</text>
+
+  <!-- Proof / Client Contracts -->
+  <rect class="group-alt" x="70" y="822" width="760" height="305" rx="8"/>
+  <text class="group-title" x="450" y="852" text-anchor="middle">Proof / Client Contracts</text>
+
+  <rect class="contract" x="285" y="887" width="330" height="58" rx="6"/>
+  <text class="contract-title" x="450" y="911" text-anchor="middle">IBCProofVerifier</text>
+  <text class="contract-note" x="450" y="929" text-anchor="middle">packet proof verifier</text>
+
+  <rect class="contract" x="285" y="972" width="330" height="58" rx="6"/>
+  <text class="contract-title" x="450" y="996" text-anchor="middle">IBCEVMProofBoundary</text>
+  <text class="contract-note" x="450" y="1014" text-anchor="middle">EVM proof boundary</text>
+
+  <rect class="contract" x="105" y="1052" width="310" height="58" rx="6"/>
+  <text class="contract-title" x="260" y="1076" text-anchor="middle">BesuEVMProofVerifier</text>
+  <text class="contract-note" x="260" y="1094" text-anchor="middle">standalone proof-check wrapper</text>
+
+  <rect class="contract" x="485" y="1052" width="310" height="58" rx="6"/>
+  <text class="contract-title" x="640" y="1076" text-anchor="middle">BesuLightClient</text>
+  <text class="contract-note" x="640" y="1094" text-anchor="middle">trusted state roots</text>
+
+  <!-- Logical dependencies -->
+  <path class="edge" d="M398 317 V242 H273 V196"/>
+  <text class="edge-label" x="298" y="238">policy checks</text>
+
+  <path class="edge" d="M502 317 V242 H628 V196"/>
+  <text class="edge-label" x="570" y="238">valuation</text>
+
+  <path class="assoc" d="M400 383 V410 H260 V430"/>
+  <text class="edge-label" x="315" y="405">collateral asset</text>
+
+  <path class="assoc" d="M420 622 V535 H260 V492"/>
+  <text class="edge-label" x="292" y="532">mint / burn</text>
+
+  <path class="assoc" d="M480 622 V535 H640 V492"/>
+  <text class="edge-label" x="595" y="532">lock / release</text>
+
+  <path class="edge" d="M450 680 V695 H260 V712"/>
+  <text class="edge-label" x="305" y="693">send / receive</text>
+
+  <line class="edge" x1="415" y1="741" x2="485" y2="741"/>
+  <text class="edge-label" x="450" y="732" text-anchor="middle">store</text>
+
+  <path class="edge" d="M260 770 V808 H450 V887"/>
+  <text class="edge-label" x="286" y="808">proof validation</text>
+
+  <line class="edge" x1="450" y1="945" x2="450" y2="972"/>
+  <text class="edge-label" x="466" y="964">relies on</text>
+
+  <path class="assoc" d="M260 1052 V1040 H95 V1001 H285"/>
+  <text class="edge-label" x="110" y="1027">standalone verification</text>
+  <path class="edge" d="M450 1030 V1040 H640 V1052"/>
+</svg>

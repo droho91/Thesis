@@ -41,6 +41,7 @@ const RESUME_SESSION_TIMEOUT_MS = Number(process.env.DEMO_RESUME_TIMEOUT_MS || 6
 const REPAY_CLOSE_BUFFER_BPS = 1;
 const REPAY_CLOSE_MIN_BUFFER = 0.01;
 const VISIBLE_STATE_RETRY_MS = Number(process.env.DEMO_VISIBLE_STATE_RETRY_MS || 15000);
+const PREPARED_CONTEXT_HEALTH_TTL_MS = Number(process.env.DEMO_PREPARED_CONTEXT_HEALTH_TTL_MS || "30000");
 let activeOperation = null;
 let preparedContextCache = null;
 let runtimeReadyConfirmed = false;
@@ -109,25 +110,25 @@ async function expectedArtifactFingerprint() {
 
 function operationLabel(action) {
   const labels = {
-    deploySeed: "Prepare Fast Demo Session",
-    resetSeeded: "Fresh Reset",
+    deploySeed: "Prepare Demo Session",
+    resetSeeded: "Fresh Reset (slow setup only)",
     resumeSession: "Resume Session",
     fullFlow: "Run Risk/Liquidation Lifecycle",
     borrowerCloseout: "Close Position & Return Collateral",
     runFlow: "Run Flow",
-    openRoute: "Open connection and channel",
-    lock: "Lock canonical asset",
+    openRoute: "Establish Bank Route",
+    lock: "Transfer Collateral to Bank B",
     finalizeForwardHeader: "Read Bank A Besu header",
     updateForwardClient: "Import Bank A header on Bank B",
-    proveForwardMint: "Verify forward packet proof",
+    proveForwardMint: "Receive Verified Collateral",
     replayForward: "Replay forward packet",
-    depositCollateral: "Deposit collateral",
-    borrow: "Borrow",
-    repay: "Repay",
+    depositCollateral: "Deposit Collateral",
+    borrow: "Borrow Cash",
+    repay: "Repay Loan",
     topUpRepayCash: "Get demo bCASH",
     withdrawCollateral: "Withdraw collateral",
-    simulatePriceShock: "Simulate oracle shock",
-    executeLiquidation: "Execute liquidation",
+    simulatePriceShock: "Simulate Collateral Price Drop",
+    executeLiquidation: "Execute Liquidation",
     settleSeizedVoucher: "Settle seized voucher",
     burn: "Burn voucher",
     finalizeReverseHeader: "Read Bank B Besu header",
@@ -144,7 +145,7 @@ function operationLabel(action) {
 const FORWARD_PROOF_STEP_LABELS = {
   finalizeForwardHeader: "1/3 Fetch Bank A header",
   updateForwardClient: "2/3 Import Bank A header on Bank B",
-  proveForwardMint: "3/3 Verify proof and mint voucher",
+  proveForwardMint: "Receive Verified Collateral",
 };
 const REVERSE_PROOF_STEP_LABELS = {
   finalizeReverseHeader: "1/3 Fetch Bank B header",
@@ -153,7 +154,7 @@ const REVERSE_PROOF_STEP_LABELS = {
 };
 
 function forwardProofStepLabel(action) {
-  return FORWARD_PROOF_STEP_LABELS[action] || "Receive voucher collateral on Bank B";
+  return FORWARD_PROOF_STEP_LABELS[action] || "Receive Verified Collateral";
 }
 
 function reverseProofStepLabel(action) {
@@ -315,7 +316,7 @@ function invalidatePreparedContext() {
 
 function staleCachedDeploymentError(reason) {
   const message =
-    "Cached deployment is no longer valid on the currently running Besu chains. Run Prepare Fast Demo Session, or run npm run deploy and npm run seed after besu:down -v.";
+    "Cached deployment is no longer valid on the currently running Besu chains. Run Prepare Demo Session, or run npm run deploy and npm run seed after besu:down -v.";
   const error = new Error(message);
   error.statusCode = 409;
   error.demoSafeMessage = message;
@@ -474,6 +475,9 @@ async function preparedContextForUiAction() {
   setActiveOperationStage("Preparing context");
   const fingerprint = await runtimeConfigFingerprint();
   if (preparedContextCache?.fingerprint === fingerprint) {
+    if (Date.now() - (preparedContextCache.checkedAtMs || 0) < PREPARED_CONTEXT_HEALTH_TTL_MS) {
+      return preparedContextCache.prepared;
+    }
     setActiveOperationStage("Checking cached deployment");
     const health = await probeOnChainDeploymentHealthWithGrace(preparedContextCache.prepared.config);
     if (!health.ready) {
@@ -481,17 +485,18 @@ async function preparedContextForUiAction() {
       invalidatePreparedContext();
       throw staleCachedDeploymentError(health.reason);
     }
+    preparedContextCache.checkedAtMs = Date.now();
     return preparedContextCache.prepared;
   }
 
   const semanticConfigChanged = Boolean(preparedContextCache && preparedContextCache.fingerprint !== fingerprint);
-  const useFastPrepare = runtimeReadyConfirmed && !semanticConfigChanged;
+  const useCachedPrepare = runtimeReadyConfirmed && !semanticConfigChanged;
   const prepared = await prepareStepContext({
-    fastDemoMode: true,
-    skipRuntimeReady: useFastPrepare,
-    skipDeploymentCode: useFastPrepare,
+    validateSeedOnly: true,
+    skipRuntimeReady: useCachedPrepare,
+    skipDeploymentCode: useCachedPrepare,
   });
-  if (useFastPrepare) {
+  if (useCachedPrepare) {
     setActiveOperationStage("Checking prepared deployment");
     const health = await probeOnChainDeploymentHealthWithGrace(prepared.config);
     if (!health.ready) {
@@ -501,7 +506,7 @@ async function preparedContextForUiAction() {
     }
   }
   runtimeReadyConfirmed = true;
-  preparedContextCache = { fingerprint, prepared };
+  preparedContextCache = { fingerprint, prepared, checkedAtMs: Date.now() };
   return prepared;
 }
 
@@ -694,7 +699,7 @@ async function refreshProofAnchors({ config, ctx, latestA, latestB, maxGap, maxH
     return {
       route,
       updates: [],
-      skipped: "Route is not open yet; light-client proof anchors will refresh after Open route.",
+      skipped: "Route is not open yet; light-client proof anchors will refresh after Establish Bank Route.",
     };
   }
 
@@ -915,7 +920,7 @@ function reverseProofActionFromStatus(status) {
 }
 
 function nextValidActionFromStatus(status) {
-  if (!status?.deployed) return { action: "deploySeed", label: "Prepare Fast Demo Session" };
+  if (!status?.deployed) return { action: "deploySeed", label: "Prepare Demo Session" };
   if (status.security?.frozen || status.security?.recovering) return { action: "recoverClient", label: "Recover Account" };
   const trace = status.trace || {};
   const balances = status.balances || {};
@@ -964,14 +969,14 @@ function nextValidActionFromStatus(status) {
   if (lifecycle.freeVoucher && !lifecycle.activeDebt && !lifecycle.activeCollateral) {
     return lifecycle.debtWasOpened
       ? { action: "burn", label: "Burn voucher and start Bank A unlock" }
-      : { action: "depositCollateral", label: "Deposit voucher collateral" };
+      : { action: "depositCollateral", label: "Deposit Collateral" };
   }
 
   if (lifecycle.activeDebt) {
     if (repayFundingShortfallFromStatus(status) > 0.000001) {
       return { action: "topUpRepayCash", label: "Add demo bCASH for repayment" };
     }
-    return { action: "repay", label: "Repay bCASH debt" };
+    return { action: "repay", label: "Repay Loan" };
   }
 
   if (lifecycle.activeCollateral && lifecycle.debtWasOpened) {
@@ -979,18 +984,18 @@ function nextValidActionFromStatus(status) {
   }
 
   if (lifecycle.activeCollateral && statusNumber(market.availableToBorrow) > 0) {
-    return { action: "borrow", label: "Borrow bCASH" };
+    return { action: "borrow", label: "Borrow Cash" };
   }
 
   if (lifecycle.freeVoucher && !lifecycle.activeDebt) {
-    return { action: "depositCollateral", label: "Deposit more voucher collateral" };
+    return { action: "depositCollateral", label: "Deposit Collateral" };
   }
 
   if (!trace.handshake?.ready && !trace.handshake?.sourceRouteOpen && !trace.handshake?.destinationRouteOpen) {
-    return { action: "openRoute", label: "Open Bank A to Bank B route" };
+    return { action: "openRoute", label: "Establish Bank Route" };
   }
 
-  if (statusNumber(balances.bankA) > 0) return { action: "lock", label: "Lock aBANK on Bank A" };
+  if (statusNumber(balances.bankA) > 0) return { action: "lock", label: "Transfer Collateral to Bank B" };
   return { action: "refresh", label: "Refresh state" };
 }
 
@@ -1016,7 +1021,7 @@ async function readDemoStatusForPayload() {
   }
 }
 
-async function fastSeededDeploymentReady() {
+async function reusableSeededDeploymentReady() {
   const config = await loadRuntimeConfig().catch(() => null);
   if (!config?.status?.deployed || !config?.status?.seeded || !config.participants) {
     return { ready: false, reason: "No seeded runtime config is available." };
@@ -1083,8 +1088,8 @@ export async function runtimeScripts() {
 async function deployAndSeed({ reset = false } = {}) {
   if (!reset) {
     setActiveOperationStage("Checking seeded runtime");
-    const fastReady = await fastSeededDeploymentReady();
-    if (fastReady.ready) {
+    const reusableReady = await reusableSeededDeploymentReady();
+    if (reusableReady.ready) {
       runtimeReadyConfirmed = true;
       invalidatePreparedContext();
       return {
@@ -1092,7 +1097,7 @@ async function deployAndSeed({ reset = false } = {}) {
         mode: "confirmed-existing",
         message: "Existing seeded runtime confirmed ready and reused. No clean reset was performed.",
         output: [
-          `[controller] ${fastReady.reason}`,
+          `[controller] ${reusableReady.reason}`,
           "[controller] Reused current on-chain state; oracle, liquidation, balances, and previous demo actions were not reset.",
           "[controller] Use Fresh Reset for a clean redeploy and seeded baseline.",
         ].join("\n"),
@@ -1104,12 +1109,12 @@ async function deployAndSeed({ reset = false } = {}) {
       return {
         ready: false,
         warning: true,
-        mode: "fast-probe-failed",
+        mode: "reuse-probe-failed",
         message: "Existing runtime config was not confirmed ready. Run Fresh Reset before the live demo.",
         output: [
-          "[controller] Existing runtime config is not confirmed ready by the fast probe.",
-          `[controller] ${fastReady.reason}`,
-          "[controller] Skipped automatic redeploy to keep Prepare Fast Demo Session fast.",
+          "[controller] Existing runtime config is not confirmed ready for reuse.",
+          `[controller] ${reusableReady.reason}`,
+          "[controller] Skipped automatic redeploy because Prepare Demo Session only reuses confirmed seeded deployments.",
           "[controller] Use Fresh Reset before the demo window if you need a clean deployment.",
         ].join("\n"),
       };
@@ -1152,7 +1157,7 @@ async function runFlowStrict() {
   if (!(await hasDeploymentConfig())) {
     return {
       ok: false,
-      output: "[controller] No .interchain-lending.local.json found. Press Prepare Fast Demo Session or Fresh Reset before running the flow.\n",
+      output: "[controller] No .interchain-lending.local.json found. Press Prepare Demo Session or Fresh Reset before running the flow.\n",
       error: "No local deployment config.",
     };
   }
@@ -1268,7 +1273,7 @@ async function recoverOpenRouteCompletion(error) {
     recovered: true,
     output: [
       error.capturedOutput,
-      "[controller] Open route reached the expected on-chain state.",
+      "[controller] Establish Bank Route reached the expected on-chain state.",
       `[controller] Recovered the UI trace after a finalization/read error: ${error.shortMessage || error.message}`,
     ]
       .filter(Boolean)
@@ -1302,7 +1307,7 @@ export async function runActionPayload(actionRequest) {
         statusCode: 400,
         body: {
           ok: false,
-          output: "[controller] No .interchain-lending.local.json found. Press Prepare Fast Demo Session or Fresh Reset before running demo actions.\n",
+          output: "[controller] No .interchain-lending.local.json found. Press Prepare Demo Session or Fresh Reset before running demo actions.\n",
           error: "No local deployment config.",
           message: "No local deployment config.",
           trace: await readTrace(),
@@ -1536,7 +1541,7 @@ async function lightClientHeartbeatTick() {
     const health = await probeOnChainDeploymentHealth(config, STATUS_READ_TIMEOUT_MS);
     if (!health.ready) {
       warnHeartbeatSkip(
-        `cached deployment is not present on the running chains (${health.reason}). Run Prepare Fast Demo Session, or npm run deploy && npm run seed after besu:down -v.`
+        `cached deployment is not present on the running chains (${health.reason}). Run Prepare Demo Session, or npm run deploy && npm run seed after besu:down -v.`
       );
       return;
     }

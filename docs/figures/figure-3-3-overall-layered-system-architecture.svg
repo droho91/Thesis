@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1180" viewBox="0 0 900 1180" role="img" aria-labelledby="title desc">
+  <title id="title">Figure 3.3: Overall Layered System Architecture</title>
+  <desc id="desc">A portrait, layered architecture diagram for the multi-blockchain lending prototype, showing demonstration, financial application, cross-chain proof and packet, and Besu QBFT network layers.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M1 1 L9 5 L1 9 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .page { fill: #ffffff; }
+      .title { font: 700 24px Arial, Helvetica, sans-serif; fill: #111827; }
+      .layer { fill: #f8fafc; stroke: #1f2937; stroke-width: 1.45; }
+      .layer-alt { fill: #fbfbfb; stroke: #1f2937; stroke-width: 1.45; }
+      .layer-title { font: 700 17px Arial, Helvetica, sans-serif; fill: #111827; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.2; }
+      .box-soft { fill: #ffffff; stroke: #64748b; stroke-width: 1.1; }
+      .box-title { font: 700 13.2px Arial, Helvetica, sans-serif; fill: #111827; }
+      .box-text { font: 400 11.5px Arial, Helvetica, sans-serif; fill: #475569; }
+      .note { font: 400 11.5px Arial, Helvetica, sans-serif; fill: #475569; }
+      .arrow { fill: none; stroke: #334155; stroke-width: 1.5; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #64748b; stroke-width: 1.2; stroke-dasharray: 5 5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="900" height="1180"/>
+  <text class="title" x="450" y="42" text-anchor="middle">Figure 3.3: Overall Layered System Architecture</text>
+
+  <!-- Layer 1 -->
+  <rect class="layer" x="70" y="78" width="760" height="150" rx="8"/>
+  <text class="layer-title" x="450" y="108" text-anchor="middle">1. Demonstration / Orchestration Layer</text>
+
+  <rect class="box" x="165" y="138" width="240" height="58" rx="6"/>
+  <text class="box-title" x="285" y="162" text-anchor="middle">Browser Demonstration</text>
+  <text class="box-title" x="285" y="180" text-anchor="middle">Dashboard</text>
+
+  <rect class="box" x="495" y="138" width="240" height="58" rx="6"/>
+  <text class="box-title" x="615" y="162" text-anchor="middle">Demo Scripts /</text>
+  <text class="box-title" x="615" y="180" text-anchor="middle">Relayer</text>
+
+  <!-- Layer 2 -->
+  <rect class="layer-alt" x="70" y="258" width="760" height="280" rx="8"/>
+  <text class="layer-title" x="450" y="288" text-anchor="middle">2. Financial Application Layer</text>
+
+  <rect class="box" x="105" y="323" width="200" height="54" rx="6"/>
+  <text class="box-title" x="205" y="346" text-anchor="middle">Escrow Vault</text>
+  <text class="box-text" x="205" y="364" text-anchor="middle">locks canonical collateral</text>
+
+  <rect class="box" x="105" y="407" width="200" height="54" rx="6"/>
+  <text class="box-title" x="205" y="430" text-anchor="middle">Source Transfer App</text>
+  <text class="box-text" x="205" y="448" text-anchor="middle">creates packet commitment</text>
+
+  <rect class="box" x="350" y="323" width="200" height="54" rx="6"/>
+  <text class="box-title" x="450" y="346" text-anchor="middle">Voucher Collateral</text>
+  <text class="box-title" x="450" y="364" text-anchor="middle">Token</text>
+
+  <rect class="box" x="350" y="407" width="200" height="54" rx="6"/>
+  <text class="box-title" x="450" y="430" text-anchor="middle">Lending Pool</text>
+  <text class="box-text" x="450" y="448" text-anchor="middle">collateralized borrowing</text>
+
+  <rect class="box" x="595" y="323" width="200" height="54" rx="6"/>
+  <text class="box-title" x="695" y="346" text-anchor="middle">Oracle +</text>
+  <text class="box-title" x="695" y="364" text-anchor="middle">Risk Controls</text>
+
+  <rect class="box" x="595" y="407" width="200" height="54" rx="6"/>
+  <text class="box-title" x="695" y="430" text-anchor="middle">Policy Controls</text>
+  <text class="box-text" x="695" y="448" text-anchor="middle">permissions and caps</text>
+
+  <text class="note" x="205" y="504" text-anchor="middle">Bank A side</text>
+  <text class="note" x="450" y="504" text-anchor="middle">Bank B lending side</text>
+  <text class="note" x="695" y="504" text-anchor="middle">control plane</text>
+
+  <!-- Layer 3 -->
+  <rect class="layer" x="70" y="568" width="760" height="315" rx="8"/>
+  <text class="layer-title" x="450" y="598" text-anchor="middle">3. Cross-Chain Proof and Packet Layer</text>
+
+  <rect class="box" x="120" y="633" width="285" height="66" rx="6"/>
+  <text class="box-title" x="263" y="657" text-anchor="middle">Commitment / Receipt /</text>
+  <text class="box-title" x="263" y="675" text-anchor="middle">Ack / Timeout</text>
+
+  <rect class="box" x="120" y="724" width="285" height="54" rx="6"/>
+  <text class="box-title" x="263" y="748" text-anchor="middle">Packet Handler</text>
+  <text class="box-text" x="263" y="766" text-anchor="middle">packet execution logic</text>
+
+  <rect class="box" x="120" y="803" width="285" height="54" rx="6"/>
+  <text class="box-title" x="263" y="827" text-anchor="middle">Packet Store</text>
+  <text class="box-text" x="263" y="845" text-anchor="middle">commitments and receipts</text>
+
+  <rect class="box" x="495" y="633" width="285" height="54" rx="6"/>
+  <text class="box-title" x="638" y="657" text-anchor="middle">Proof Boundary</text>
+  <text class="box-text" x="638" y="675" text-anchor="middle">trusted verification interface</text>
+
+  <rect class="box" x="495" y="724" width="285" height="54" rx="6"/>
+  <text class="box-title" x="638" y="748" text-anchor="middle">Proof Verification</text>
+  <text class="box-text" x="638" y="766" text-anchor="middle">state proof checks</text>
+
+  <rect class="box" x="495" y="803" width="285" height="54" rx="6"/>
+  <text class="box-title" x="638" y="827" text-anchor="middle">Besu Light Client</text>
+  <text class="box-text" x="638" y="845" text-anchor="middle">trusted state roots</text>
+
+  <!-- Layer 4 -->
+  <rect class="layer-alt" x="70" y="913" width="760" height="205" rx="8"/>
+  <text class="layer-title" x="450" y="943" text-anchor="middle">4. Besu / QBFT Blockchain Network Layer</text>
+
+  <rect class="box-soft" x="190" y="975" width="520" height="40" rx="6"/>
+  <text class="box-title" x="450" y="1000" text-anchor="middle">Hyperledger Besu / QBFT Networks</text>
+
+  <rect class="box" x="130" y="1040" width="285" height="58" rx="6"/>
+  <text class="box-title" x="273" y="1064" text-anchor="middle">Bank A - Source Chain</text>
+  <text class="box-text" x="273" y="1082" text-anchor="middle">canonical collateral</text>
+
+  <rect class="box" x="485" y="1040" width="285" height="58" rx="6"/>
+  <text class="box-title" x="628" y="1064" text-anchor="middle">Bank B - Destination Chain</text>
+  <text class="box-text" x="628" y="1082" text-anchor="middle">voucher collateral and lending</text>
+
+  <!-- Inter-layer relationships -->
+  <line class="arrow" x1="285" y1="196" x2="285" y2="323"/>
+  <line class="arrow" x1="615" y1="196" x2="615" y2="323"/>
+  <text class="note" x="450" y="246" text-anchor="middle">interacts with application contracts and scripts</text>
+
+  <line class="arrow" x1="450" y1="538" x2="450" y2="568"/>
+  <text class="note" x="450" y="558" text-anchor="middle">relies on cross-chain state transfer and verification</text>
+
+  <line class="arrow" x1="450" y1="883" x2="450" y2="913"/>
+  <text class="note" x="450" y="903" text-anchor="middle">operates over permissioned Besu / QBFT chains</text>
+
+  <!-- Light internal cues without dense wiring -->
+  <line class="dash" x1="305" y1="434" x2="350" y2="434"/>
+  <line class="dash" x1="550" y1="434" x2="595" y2="434"/>
+  <line class="dash" x1="405" y1="751" x2="495" y2="751"/>
+</svg>

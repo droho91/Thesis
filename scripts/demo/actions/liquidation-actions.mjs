@@ -2,6 +2,7 @@ import {
   LIQUIDATION_REPAY,
   LIQUIDATION_REPAY_CONFIGURED,
   SHOCKED_VOUCHER_PRICE_E18,
+  approveIfNeeded,
   ensureRiskSeeded,
   previewField,
   readWithRetry,
@@ -66,7 +67,7 @@ export async function executeLiquidationStep({ config, ctx }) {
     ctx.B.lendingPoolAdmin.isLiquidatable(ctx.destinationUserAddress)
   );
   if (!liquidatable) {
-    throw new Error("Position is not liquidatable at the current oracle price. Run Simulate Oracle Shock first.");
+    throw new Error("Position is not liquidatable at the current oracle price. Run Simulate Collateral Price Drop first.");
   }
 
   const [debtBefore, collateralBefore, maxLiquidationRepay, reservesBefore, badDebtBefore] = await Promise.all([
@@ -89,8 +90,12 @@ export async function executeLiquidationStep({ config, ctx }) {
       ctx.B.debtAdmin.mint(ctx.liquidatorAddress, repayAmount - liquidatorBalance, txOptions())
     );
   }
-  await txStep("step approve liquidation repay", () =>
-    ctx.B.debtLiquidator.approve(config.chains.B.lendingPool, repayAmount, txOptions())
+  await approveIfNeeded(
+    ctx.B.debtLiquidator,
+    ctx.liquidatorAddress,
+    config.chains.B.lendingPool,
+    repayAmount,
+    "step approve liquidation repay"
   );
   const liquidationReceipt = await txStep("step liquidate unhealthy position", () =>
     ctx.B.lendingPoolLiquidator.liquidate(ctx.destinationUserAddress, requestedRepayAmount, txOptions())

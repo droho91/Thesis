@@ -168,18 +168,18 @@
           <article>
             <span class="action-index">Collateral</span>
             <div class="available-action-buttons">
-              <button class="button-secondary" data-action="openRoute" type="button">Open route</button>
-              <button class="button-primary-soft" data-action="lock" data-amount-input="bridgeAmount" type="button">Bridge more</button>
-              <button class="button-run" data-action="proveForwardMint" type="button">Receive voucher</button>
-              <button class="button-primary" data-action="depositCollateral" data-amount-input="depositAmount" type="button">Deposit more</button>
+              <button class="button-secondary" data-action="openRoute" type="button">Establish Bank Route</button>
+              <button class="button-primary-soft" data-action="lock" data-amount-input="bridgeAmount" type="button">Transfer Collateral</button>
+              <button class="button-run" data-action="proveForwardMint" type="button">Receive Verified Collateral</button>
+              <button class="button-primary" data-action="depositCollateral" data-amount-input="depositAmount" type="button">Deposit Collateral</button>
               <button class="button-secondary" data-action="withdrawCollateral" data-amount-input="withdrawAmount" type="button">Withdraw safe collateral</button>
             </div>
           </article>
           <article>
             <span class="action-index">Credit</span>
             <div class="available-action-buttons">
-              <button class="button-run" data-action="borrow" data-amount-input="borrowAmount" type="button">Continue borrowing</button>
-              <button class="button-secondary" data-action="repay" data-amount-input="repayAmount" type="button">Repay</button>
+              <button class="button-run" data-action="borrow" data-amount-input="borrowAmount" type="button">Borrow Cash</button>
+              <button class="button-secondary" data-action="repay" data-amount-input="repayAmount" type="button">Repay Loan</button>
               <button class="button-primary-soft" data-action="topUpRepayCash" type="button">Get demo bCASH</button>
             </div>
           </article>
@@ -214,9 +214,9 @@
               </figure>
               <div>
                 <span class="action-index">Step 1</span>
-                <h3>Prepare Fast Demo Session</h3>
+                <h3>Prepare Demo Session</h3>
                 <p id="connectPanelCopy">Reuse the current deployed contracts and seeded accounts when valid. This does not reset oracle price, liquidation state, balances, or previous demo actions.</p>
-                <button class="button-primary" id="deploySeed" type="button">Prepare Fast Demo Session</button>
+                <button class="button-primary" id="deploySeed" type="button">Prepare Demo Session</button>
               </div>
             </div>
           </article>
@@ -279,9 +279,9 @@
               <p class="validation-message" id="bridgeValidation" aria-live="polite"></p>
             </div>
             <div class="action-buttons action-buttons--primary">
-              <button class="button-secondary" data-action="openRoute" type="button">Open Bank A to Bank B Route</button>
-              <button class="button-primary" data-action="lock" data-amount-input="bridgeAmount" type="button">Lock aBANK on Bank A</button>
-              <button class="button-run" data-action="proveForwardMint" type="button">Receive Voucher on Bank B</button>
+              <button class="button-secondary" data-action="openRoute" type="button">Establish Bank Route</button>
+              <button class="button-primary" data-action="lock" data-amount-input="bridgeAmount" type="button">Transfer Collateral to Bank B</button>
+              <button class="button-run" data-action="proveForwardMint" type="button">Receive Verified Collateral</button>
             </div>
           </article>
 
@@ -302,7 +302,7 @@
                 <strong>Available collateral</strong>
                 <span id="depositCollateralHint">Waiting for voucher collateral.</span>
               </div>
-              <button class="button-primary" data-action="depositCollateral" data-amount-input="depositAmount" type="button">Deposit Voucher</button>
+              <button class="button-primary" data-action="depositCollateral" data-amount-input="depositAmount" type="button">Deposit Collateral</button>
             </div>
             <aside class="linky-helper" id="depositLinkyHelper" data-linky-helper="deposit" aria-live="polite">
               <figure class="linky linky--callout" aria-hidden="true">
@@ -461,7 +461,7 @@
                   </div>
                   <p class="validation-message" id="borrowValidation" aria-live="polite"></p>
                   <button class="button-run transaction-submit" data-action="borrow" data-amount-input="borrowAmount" type="button">
-                    Borrow bCASH
+                    Borrow Cash
                   </button>
                 </section>
 
@@ -475,7 +475,7 @@
                 >
                   <div class="transaction-panel-head">
                     <div>
-                      <strong>Repay</strong>
+                      <strong>Repay Loan</strong>
                       <span>Outstanding <b id="repayDebtInline">-</b></span>
                     </div>
                     <button class="amount-fill" data-fill-target="repayAmount" data-fill-source="debt" type="button">Max</button>
@@ -533,7 +533,7 @@
                   </div>
                   <p class="validation-message" id="repayValidation" aria-live="polite"></p>
                   <button class="button-secondary transaction-submit" data-action="repay" data-amount-input="repayAmount" type="button">
-                    Repay Debt
+                    Repay Loan
                   </button>
                 </section>
 
@@ -648,7 +648,7 @@
               <div class="advisor-main">
                 <div class="advisor-copy">
                   <span class="eyebrow">Linky recommends</span>
-                  <h2 id="primaryActionTitle">Prepare Fast Demo Session</h2>
+                  <h2 id="primaryActionTitle">Prepare Demo Session</h2>
                   <div class="recommendation-meta" aria-label="Recommendation state">
                     <span id="primaryActionState">State: Start here</span>
                     <span id="primaryActionIntent">Setup action</span>
@@ -698,7 +698,7 @@
                   <small id="primaryGuideController">Waiting for controller status.</small>
                 </div>
               </div>
-              <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Prepare Fast Demo Session</button>
+              <button class="button-primary primary-cta" id="primaryWorkflowCta" type="button">Prepare Demo Session</button>
               <small id="primaryActionHint">Use the recommendation, or choose any enabled action below.</small>
             </aside>
 
@@ -981,7 +981,7 @@
             </label>
             <p class="validation-message" id="shockValidation" aria-live="polite"></p>
             <button class="button-danger transaction-submit" data-action="simulatePriceShock" data-amount-input="shockPrice" type="button">
-              Simulate Oracle Shock
+              Simulate Collateral Price Drop
             </button>
           </article>
 
@@ -996,7 +996,7 @@
                 </div>
               </div>
             </div>
-            <p class="validation-message">Liquidation Preview uses the current on-chain oracle price. Run Simulate Oracle Shock first to update executable liquidation values.</p>
+            <p class="validation-message">Liquidation Preview uses the current on-chain oracle price. Run Simulate Collateral Price Drop first to update executable liquidation values.</p>
             <dl class="metric-grid metric-grid--three">
               <div>
                 <dt>Requested repay</dt>
@@ -1327,7 +1327,7 @@
           <div class="action-buttons action-buttons--compact proof-actions">
             <button class="button-secondary" data-action="finalizeForwardHeader" type="button">Fetch Source Header</button>
             <button class="button-secondary" data-action="updateForwardClient" type="button">Import Header on Bank B</button>
-            <button class="button-run" data-action="proveForwardMint" type="button">Verify Packet Proof</button>
+            <button class="button-run" data-action="proveForwardMint" type="button">Receive Verified Collateral</button>
             <button class="button-danger" data-action="replayForward" type="button">Attempt Replay</button>
             <button class="button-run" data-action="executeTimeoutRefund" type="button">Execute Timeout Refund</button>
             <button class="button-danger" data-action="freezeClient" type="button">Freeze Client</button>
@@ -1364,7 +1364,7 @@
               <div><dt>Risk control</dt><dd>Borrowing is bounded by available capacity, pool liquidity, policy, and oracle valuation.</dd></div>
               <div><dt>What this proves</dt><dd>Collateralized borrowing is risk-limited by policy and oracle valuation.</dd></div>
             </dl>
-            <button class="button-run" data-action="borrow" type="button">Run Borrow Step</button>
+            <button class="button-run" data-action="borrow" type="button">Borrow Cash</button>
           </article>
 
           <article class="product-card scenario-card">
@@ -1384,7 +1384,7 @@
               <div><dt>What this proves</dt><dd>The pool enforces health checks on withdrawals, not just borrowing.</dd></div>
             </dl>
             <div class="scenario-actions">
-              <button class="button-secondary" data-action="repay" type="button">Repay</button>
+              <button class="button-secondary" data-action="repay" type="button">Repay Loan</button>
               <button class="button-secondary" data-action="withdrawCollateral" type="button">Withdraw</button>
             </div>
           </article>
@@ -1410,8 +1410,8 @@
               <div><dt>What this proves</dt><dd>The risk layer reacts to adverse price movement and records pool losses.</dd></div>
             </dl>
             <div class="scenario-actions">
-              <button class="button-danger" data-action="simulatePriceShock" type="button">Shock Price</button>
-              <button class="button-danger" data-action="executeLiquidation" type="button">Liquidate</button>
+              <button class="button-danger" data-action="simulatePriceShock" type="button">Simulate Price Drop</button>
+              <button class="button-danger" data-action="executeLiquidation" type="button">Execute Liquidation</button>
               <button class="button-primary-soft" data-action="settleSeizedVoucher" type="button">Settle Voucher</button>
             </div>
           </article>
@@ -1494,7 +1494,7 @@
           </p>
           <div class="runtime-tool-actions">
             <button class="button-primary-soft" id="resumeSessionDrawer" type="button">Resume Session</button>
-            <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset</button>
+            <button class="button-secondary" id="resetSeeded" type="button">Fresh Reset (slow setup only)</button>
             <button class="button-secondary" data-action="borrowerCloseout" type="button">Close Position &amp; Return Collateral</button>
             <button class="button-secondary" data-action="fullFlow" type="button">Run Risk/Liquidation</button>
           </div>
@@ -1784,7 +1784,7 @@
               <span class="eyebrow">Latest runtime message</span>
               <h3 id="lastMessage">Ready</h3>
             </div>
-            <pre id="contractOutput">Start the Besu bank chains, then press Prepare Fast Demo Session.</pre>
+            <pre id="contractOutput">Start the Besu bank chains, then press Prepare Demo Session.</pre>
           </div>
         </aside>
       </div>

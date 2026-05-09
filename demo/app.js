@@ -99,7 +99,7 @@ const ACTION_CARD_BY_ACTION = {
 const FORWARD_PROOF_STEP_LABELS = {
   finalizeForwardHeader: "1/3 Fetch Bank A header",
   updateForwardClient: "2/3 Import Bank A header on Bank B",
-  proveForwardMint: "3/3 Verify proof and mint voucher",
+  proveForwardMint: "Receive Verified Collateral",
 };
 const REVERSE_PROOF_STEP_LABELS = {
   finalizeReverseHeader: "1/3 Fetch Bank B header",
@@ -124,19 +124,19 @@ const DO_NOT_REPEAT_COMPLETED_ACTIONS = new Set([
 ]);
 const ACTION_GUIDE = {
   deploySeed: {
-    runningTitle: "Prepare Fast Demo Session",
+    runningTitle: "Prepare Demo Session",
     currentAction: "Checking whether the existing seeded Besu/QBFT runtime can be reused. This does not reset oracle price, liquidation state, balances, or previous actions.",
-    expectedVisibleChange: "If the fast probe confirms the runtime, the account moves to Ready and keeps the current on-chain state.",
-    nextAfterSuccess: "Open the Bank A to Bank B route, then lock aBANK collateral.",
+    expectedVisibleChange: "If the reuse check confirms the runtime, the account moves to Ready and keeps the current on-chain state.",
+    nextAfterSuccess: "Establish the bank route, then transfer collateral to Bank B.",
     affectedPortal: "borrower",
     affectedMetrics: ["deploymentStatus", "bankABalance", "workflowStepConnect"],
-    failureRecovery: "Start the local Besu runtime. If a saved config exists but the fast probe fails, run Fresh Reset deliberately to redeploy and reseed.",
+    failureRecovery: "Start the local Besu runtime. If a saved config exists but cannot be reused, run Fresh Reset deliberately to redeploy and reseed.",
   },
   resetSeeded: {
-    runningTitle: "Fresh Reset",
+    runningTitle: "Fresh Reset (slow setup only)",
     currentAction: "Deliberately redeploying and reseeding the permissioned prototype baseline.",
     expectedVisibleChange: "Balances, policy, oracle, liquidity, and latest trace return to the clean seeded state.",
-    nextAfterSuccess: "Begin the guided borrower flow from Open Bank A to Bank B Route.",
+    nextAfterSuccess: "Begin the guided borrower flow from Establish Bank Route.",
     affectedPortal: "borrower",
     affectedMetrics: ["deploymentStatus", "bankABalance", "bankBBalance", "poolLiquidity"],
     failureRecovery: "Check the runtime output, then rerun Fresh Reset before the live demo window.",
@@ -151,19 +151,19 @@ const ACTION_GUIDE = {
     failureRecovery: "If the chain was reset with besu:down -v, run npm run deploy and npm run seed once. If only proof anchors are behind, keep demo:ui running and click Resume again.",
   },
   openRoute: {
-    runningTitle: "Open Bank A to Bank B Route",
+    runningTitle: "Establish Bank Route",
     currentAction: "Opening or reusing the proof-checked connection and channel. A first-time route performs several handshake transactions and storage proofs.",
     expectedVisibleChange: "The route timeline marks connection/channel ready; if already open, this should complete quickly.",
-    nextAfterSuccess: "Lock aBANK on Bank A to create the forward packet.",
+    nextAfterSuccess: "Transfer collateral to Bank B to create the forward packet.",
     affectedPortal: "borrower",
     affectedMetrics: ["routeEscrow", "routeHeader", "visualEscrowState", "deploymentStatus"],
     failureRecovery: "Retry the route step; use Fresh Reset only if the handshake was interrupted in an incompatible state.",
   },
   lock: {
-    runningTitle: "Lock aBANK on Bank A",
-    currentAction: "Submitting the source-chain escrow transaction and writing the forward packet commitment.",
+    runningTitle: "Transfer Collateral to Bank B",
+    currentAction: "Confirming escrow allowance if needed, then submitting the source-chain escrow transaction and writing the forward packet commitment.",
     expectedVisibleChange: "Locked collateral and the Bank A packet sequence update after transaction confirmation.",
-    nextAfterSuccess: "Receive voucher collateral on Bank B by verifying the forward proof.",
+    nextAfterSuccess: "Receive verified collateral on Bank B by verifying the forward proof.",
     affectedPortal: "borrower",
     affectedMetrics: ["escrowBalance", "packetSequenceA", "forwardPacketId", "routeEscrow"],
     failureRecovery: "Wait for the transaction confirmation or lower the amount if it exceeds the Bank A balance.",
@@ -187,7 +187,7 @@ const ACTION_GUIDE = {
     failureRecovery: "Fetch or retry the source header, then import the header again.",
   },
   proveForwardMint: {
-    runningTitle: "Receive Voucher on Bank B",
+    runningTitle: "Receive Verified Collateral",
     currentAction: "Importing the needed Bank A header if needed, generating a storage proof, and submitting the receive proof on Bank B.",
     expectedVisibleChange: "Voucher balance appears on Bank B and packet receipt/proof status changes to verified.",
     nextAfterSuccess: "Deposit the voucher as collateral in the Bank B lending pool.",
@@ -196,16 +196,16 @@ const ACTION_GUIDE = {
     failureRecovery: "The local Besu RPC can no longer serve the historical proof state for the packet height. Use Resume Session to refresh the proof anchor, or run Fresh Reset if the session is too stale.",
   },
   depositCollateral: {
-    runningTitle: "Deposit Voucher Collateral",
-    currentAction: "Approving the selected free voucher amount and depositing it into the Bank B lending pool.",
+    runningTitle: "Deposit Collateral",
+    currentAction: "Confirming voucher allowance if needed, then depositing the selected collateral into the Bank B lending pool.",
     expectedVisibleChange: "Active collateral increases and available borrowing power refreshes.",
-    nextAfterSuccess: "Borrow bCASH, deposit more voucher, bridge more collateral, or leave the position idle.",
+    nextAfterSuccess: "Borrow cash, deposit more collateral, transfer more collateral, or leave the position idle.",
     affectedPortal: "borrower",
     affectedMetrics: ["poolCollateral", "availableBorrowHero", "riskCollateralValue", "workflowStepActivate"],
-    failureRecovery: "Receive voucher collateral first, then retry the deposit.",
+    failureRecovery: "Receive verified collateral first, then retry the deposit.",
   },
   borrow: {
-    runningTitle: "Borrow bCASH",
+    runningTitle: "Borrow Cash",
     currentAction: "Submitting a borrow transaction bounded by policy, liquidity, and oracle valuation.",
     expectedVisibleChange: "Current debt and Bank B bCASH balance increase; health factor decreases but remains visible.",
     nextAfterSuccess: "Repay debt, withdraw safe collateral, or monitor health in Risk Admin.",
@@ -214,8 +214,8 @@ const ACTION_GUIDE = {
     failureRecovery: "Use an amount within available borrowing power and market liquidity.",
   },
   repay: {
-    runningTitle: "Repay Debt",
-    currentAction: "Approving bCASH and reducing the borrower debt balance.",
+    runningTitle: "Repay Loan",
+    currentAction: "Confirming repayment allowance if needed, then reducing the borrower debt balance.",
     expectedVisibleChange: "Debt falls and health factor improves; closeout may unlock withdrawal.",
     nextAfterSuccess: "Withdraw collateral if debt is closed or continue monitoring health.",
     affectedPortal: "borrower",
@@ -226,7 +226,7 @@ const ACTION_GUIDE = {
     runningTitle: "Top Up Demo bCASH",
     currentAction: "Minting enough demo bCASH for the borrower to close debt with a small interest buffer.",
     expectedVisibleChange: "Bank B bCASH balance increases and repayment becomes available.",
-    nextAfterSuccess: "Repay bCASH debt from the borrower portal.",
+    nextAfterSuccess: "Repay the loan from the borrower portal.",
     affectedPortal: "borrower",
     affectedMetrics: ["bankBBalance", "repayDemoCashBalance", "repayShortfall"],
     failureRecovery: "Borrow first so there is active debt to fund for repayment.",
@@ -277,17 +277,17 @@ const ACTION_GUIDE = {
     failureRecovery: "Fetch or import the Bank B header first if the reverse proof height is not trusted yet.",
   },
   simulatePriceShock: {
-    runningTitle: "Simulate Oracle Shock",
+    runningTitle: "Simulate Collateral Price Drop",
     currentAction: "Submitting a governed demo oracle update for the voucher collateral price.",
     expectedVisibleChange: "Oracle price, health factor, and liquidation eligibility update in Risk Admin.",
-    nextAfterSuccess: "Execute liquidation if the account is now below the liquidation threshold.",
+    nextAfterSuccess: "Execute Liquidation if the account is now below the liquidation threshold.",
     affectedPortal: "risk",
     affectedMetrics: ["riskOracleCollateralPrice", "riskCurrentPriceInline", "riskHealthFactor", "riskHealthAfterShock", "riskLiquidatableState"],
     failureRecovery: "Choose a positive price, usually below the current collateral price, then retry.",
   },
   executeLiquidation: {
     runningTitle: "Execute Liquidation",
-    currentAction: "The authorized liquidator repays debt, seizes voucher collateral, and records reserves or bad debt.",
+    currentAction: "The authorized liquidator confirms repay allowance if needed, repays debt, seizes voucher collateral, and records reserves or bad debt.",
     expectedVisibleChange: "Debt, collateral, reserves, bad debt, seized voucher, and settlement status update.",
     nextAfterSuccess: "Settle the seized voucher through the reverse proof path.",
     affectedPortal: "risk",
@@ -301,7 +301,7 @@ const ACTION_GUIDE = {
     nextAfterSuccess: "Verify reverse proof and unlock aBANK for the authorized liquidator on Bank A.",
     affectedPortal: "risk",
     affectedMetrics: ["riskSettlementSeizedVoucher", "riskSettlementPacket", "riskSettlementStatus", "reversePacketId"],
-    failureRecovery: "Execute liquidation first so the authorized liquidator holds seized voucher collateral.",
+    failureRecovery: "Execute Liquidation first so the authorized liquidator holds seized voucher collateral.",
   },
   replayForward: {
     runningTitle: "Attempt Replay",
@@ -458,7 +458,7 @@ function guideForAction(action) {
 function workflowCtaFromServerNext(nextAction) {
   if (!nextAction?.action) return null;
   if (nextAction.action === "deploySeed") {
-    return { type: "deploySeed", label: nextAction.label || "Prepare Fast Demo Session" };
+    return { type: "deploySeed", label: nextAction.label || "Prepare Demo Session" };
   }
   if (nextAction.action === "refresh") {
     return { type: "refresh", label: nextAction.label || "Refresh state" };
@@ -480,8 +480,8 @@ function ctaLabel(cta, fallback = "Continue") {
   if (!cta) return fallback;
   if (cta.label) return cta.label;
   if (cta.type === "action") return actionTitle(cta.action);
-  if (cta.type === "deploySeed") return "Prepare Fast Demo Session";
-  if (cta.type === "resetSeeded") return "Fresh Reset";
+  if (cta.type === "deploySeed") return "Prepare Demo Session";
+  if (cta.type === "resetSeeded") return "Fresh Reset (slow setup only)";
   if (cta.type === "refresh") return "Refresh state";
   if (cta.type === "return") return "Return to recommendation";
   if (cta.type === "portal") return "Open panel";
@@ -529,7 +529,7 @@ function sameCtaIntent(left, right) {
 }
 
 function forwardProofStepLabel(action) {
-  return FORWARD_PROOF_STEP_LABELS[action] || "Receive voucher collateral on Bank B";
+  return FORWARD_PROOF_STEP_LABELS[action] || "Receive Verified Collateral";
 }
 
 function reverseProofStepLabel(action) {
@@ -987,7 +987,7 @@ function renderPrimaryGuide(actionState) {
     (actionState.startedAtMs ? Math.max(0, Math.round((Date.now() - actionState.startedAtMs) / 1000)) : 0);
   let stage = controller?.stage || fallbackStage(actionState.action, elapsed);
   if (actionState.phase === "success") stage = "Rendering visible changes";
-  if (actionState.phase === "warning") stage = "Fast readiness probe did not confirm runtime";
+  if (actionState.phase === "warning") stage = "Reuse readiness check did not confirm runtime";
   if (actionState.phase === "failed") stage = "Stopped before visible state changed";
   const controllerStatus =
     actionState.phase === "running"
@@ -1377,7 +1377,7 @@ function workflowStepsForStatus(status) {
     bridge: {
       complete: forwardDelivered,
       unlocked: state.deployed,
-      label: forwardDelivered ? "Done" : forwardPending ? "Proof pending" : routeOpen ? "Route ready" : state.deployed ? "Open route" : "Waiting",
+      label: forwardDelivered ? "Done" : forwardPending ? "Proof pending" : routeOpen ? "Route ready" : state.deployed ? "Establish route" : "Waiting",
     },
     activate: {
       complete: lifecycle.collateralWasDeposited || lifecycle.returnStarted || lifecycle.liquidationExecuted,
@@ -1445,11 +1445,11 @@ function workflowRecommendation(status) {
   if (!state.deployed) {
     return {
       step: "connect",
-      title: "Prepare fast demo session",
+      title: "Prepare demo session",
       status: "Start here",
       summary: "Confirm the local Besu runtime before collateral transfer and borrowing actions.",
-      cta: { type: "deploySeed", label: "Prepare Fast Demo Session" },
-      description: "Use the fast prepare action to reuse a valid seeded runtime. Fresh Reset remains a separate deliberate reset control.",
+      cta: { type: "deploySeed", label: "Prepare Demo Session" },
+      description: "Reuse a valid seeded runtime when available. Fresh Reset remains a separate deliberate reset control.",
       hint: "No transfer, borrow, repay, or proof action runs until the account is prepared.",
       risk: "waiting",
     };
@@ -1578,7 +1578,7 @@ function workflowRecommendation(status) {
           title: "Activate collateral",
           status: "Deposit ready",
           summary: "Voucher collateral is ready to become lending collateral.",
-          cta: { type: "action", action: "depositCollateral", label: "Deposit voucher collateral" },
+          cta: { type: "action", action: "depositCollateral", label: "Deposit Collateral" },
           description: "Deposit the free voucher into the lending pool to unlock borrowing power.",
           hint: `${formatAmount(state.voucher, "vA")} available to deposit.`,
           risk: "safe",
@@ -1597,7 +1597,7 @@ function workflowRecommendation(status) {
         : "Debt is open. Repayment is the primary recommendation; withdrawal stays a separate safe-collateral button.",
       cta: needsCash
         ? { type: "action", action: "topUpRepayCash", label: "Add demo bCASH for repayment" }
-        : { type: "action", action: "repay", label: elevatedRisk ? "Repay debt to improve health" : "Repay bCASH debt" },
+        : { type: "action", action: "repay", label: "Repay Loan" },
       description: needsCash
         ? "Mint demo bCASH to model the borrower reacquiring repayment cash, then repay from the same manage panel."
         : "Repay bCASH first. Safe collateral withdrawal remains available only when its own limit allows it.",
@@ -1628,7 +1628,7 @@ function workflowRecommendation(status) {
         title: "Borrow against collateral",
         status: "Borrow ready",
         summary: "Collateral is active and no debt is open.",
-        cta: { type: "action", action: "borrow", label: "Borrow bCASH" },
+        cta: { type: "action", action: "borrow", label: "Borrow Cash" },
         description: "Borrow within the displayed policy and liquidity limit.",
         hint: `${formatAmount(state.availableBorrow, "bCASH")} available to borrow.`,
         risk: "safe",
@@ -1661,13 +1661,13 @@ function workflowRecommendation(status) {
 
   return {
     step: "bridge",
-    title: routeOpen ? "Lock collateral on Bank A" : "Open collateral route",
+    title: routeOpen ? "Transfer Collateral to Bank B" : "Establish Bank Route",
     status: routeOpen ? "Route ready" : "Route not open",
     summary: "No Bank B collateral is active yet.",
     cta: {
       type: "action",
       action: routeOpen ? "lock" : "openRoute",
-      label: routeOpen ? "Lock aBANK on Bank A" : "Open Bank A to Bank B route",
+      label: routeOpen ? "Transfer Collateral to Bank B" : "Establish Bank Route",
     },
     description: routeOpen ? "Choose an amount and lock aBANK into Bank A escrow." : "Open the permissioned route before locking collateral.",
     hint: `${formatAmount(state.bankA, "aBANK")} available on Bank A.`,
@@ -1729,13 +1729,13 @@ function actionEligibility(action, status = currentStatus, validationOptions = {
   const disabled = (message) => ({ ok: false, message });
   const enabled = (message = "") => ({ ok: true, message });
 
-  if (!state.deployed && action !== "recoverClient") return disabled("Prepare Fast Demo Session or Fresh Reset before running actions.");
+  if (!state.deployed && action !== "recoverClient") return disabled("Prepare Demo Session or Fresh Reset before running actions.");
   if (locked && !SAFETY_MODE_ACTIONS.has(action)) {
     return disabled("Safety mode is active. Recover the light client before running interchain actions.");
   }
 
   if (action === "borrow") {
-    if (state.collateral <= POSITION_EPSILON) return disabled("Deposit voucher collateral before borrowing.");
+    if (state.collateral <= POSITION_EPSILON) return disabled("Deposit Collateral before borrowing.");
     if (state.availableBorrow <= POSITION_EPSILON) {
       return disabled(
         "Borrow is not ready because available borrow is 0. Possible reasons: stale oracle, missing price, collateral not reflected yet, or market state not refreshed."
@@ -1777,7 +1777,7 @@ function actionEligibility(action, status = currentStatus, validationOptions = {
     case "depositCollateral":
       return state.voucher > POSITION_EPSILON
         ? enabled("Deposit free voucher collateral into the lending pool.")
-        : disabled("Receive voucher collateral first, or withdraw collateral back to your wallet before depositing.");
+        : disabled("Receive Verified Collateral first, or withdraw collateral back to your wallet before depositing.");
     case "borrow":
       return enabled("Borrow within the displayed available limit.");
     case "repay":
@@ -2819,18 +2819,18 @@ function collectChanges(before, after) {
 
 function actionTitle(action) {
   const titles = {
-    openRoute: "Prepared collateral route",
-    lock: "Started collateral transfer",
+    openRoute: "Establish Bank Route",
+    lock: "Transfer Collateral to Bank B",
     finalizeForwardHeader: "Checked source-bank confirmation",
     updateForwardClient: "Confirmed collateral transfer",
-    proveForwardMint: "Made collateral available",
-    depositCollateral: "Activated collateral",
-    borrow: "Borrowed bCASH",
-    repay: "Repaid debt",
+    proveForwardMint: "Receive Verified Collateral",
+    depositCollateral: "Deposit Collateral",
+    borrow: "Borrow Cash",
+    repay: "Repay Loan",
     topUpRepayCash: "Added demo bCASH",
     withdrawCollateral: "Withdrew collateral",
-    simulatePriceShock: "Simulated oracle shock",
-    executeLiquidation: "Executed liquidation",
+    simulatePriceShock: "Simulate Collateral Price Drop",
+    executeLiquidation: "Execute Liquidation",
     settleSeizedVoucher: "Started seized-voucher settlement",
     burn: "Started collateral return",
     finalizeReverseHeader: "Checked return confirmation",
@@ -2843,8 +2843,8 @@ function actionTitle(action) {
     verifyTimeoutAbsence: "Marked legacy timeout explanation",
     fullFlow: "Completed risk/liquidation lifecycle",
     borrowerCloseout: "Closed position and returned collateral",
-    deploySeed: "Prepared fast demo session",
-    resetSeeded: "Reset account baseline",
+    deploySeed: "Prepared demo session",
+    resetSeeded: "Fresh Reset (slow setup only)",
     resumeSession: "Resumed runtime session",
     refresh: "Refreshed account state",
   };
@@ -3287,7 +3287,7 @@ async function runDeploySeed(button = deploySeedButton) {
       return;
     }
     completeActionUi("deploySeed", false, error);
-    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Prepare Fast Demo Session failed.");
+    setText("lastMessage", error.statusCode === 409 ? "Controller is busy." : "Prepare Demo Session failed.");
     setOutput(error.message);
     pushFailedActivity("deploySeed", error);
   } finally {

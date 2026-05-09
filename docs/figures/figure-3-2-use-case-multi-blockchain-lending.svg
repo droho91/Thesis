@@ -1,0 +1,216 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1180" viewBox="0 0 900 1180" role="img" aria-labelledby="title desc">
+  <title id="title">Figure 3.2: Use Case Diagram of the Multi-Blockchain Lending System</title>
+  <desc id="desc">A portrait UML-style use case diagram for the Multi-Blockchain Lending System, showing the required actors and use cases only.</desc>
+
+  <defs>
+    <style>
+      .page { fill: #ffffff; }
+      .title { font: 700 24px Arial, Helvetica, sans-serif; fill: #111827; }
+      .boundary { fill: #f8fafc; stroke: #1f2937; stroke-width: 1.6; }
+      .boundary-label { font: 700 17px Arial, Helvetica, sans-serif; fill: #111827; }
+      .usecase { fill: #ffffff; stroke: #111827; stroke-width: 1.25; }
+      .usecase-text { font: 400 12.5px Arial, Helvetica, sans-serif; fill: #111827; }
+      .actor-line { fill: none; stroke: #111827; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
+      .actor-label { font: 700 12.5px Arial, Helvetica, sans-serif; fill: #111827; }
+      .assoc { fill: none; stroke: #64748b; stroke-width: 1.05; }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="900" height="1180"/>
+  <text class="title" x="450" y="42" text-anchor="middle">Figure 3.2: Use Case Diagram of the Multi-Blockchain Lending System</text>
+
+  <!-- System boundary -->
+  <rect class="boundary" x="175" y="82" width="550" height="1048" rx="8"/>
+  <text class="boundary-label" x="195" y="115">Multi-Blockchain Lending System</text>
+
+  <!-- Associations: Borrower -->
+  <line class="assoc" x1="112" y1="248" x2="196" y2="165"/>
+  <line class="assoc" x1="112" y1="266" x2="196" y2="210"/>
+  <line class="assoc" x1="112" y1="282" x2="196" y2="255"/>
+  <line class="assoc" x1="112" y1="300" x2="196" y2="300"/>
+  <line class="assoc" x1="112" y1="318" x2="196" y2="345"/>
+  <line class="assoc" x1="112" y1="336" x2="196" y2="390"/>
+  <line class="assoc" x1="118" y1="352" x2="196" y2="435"/>
+  <line class="assoc" x1="132" y1="366" x2="196" y2="485"/>
+
+  <!-- Associations: Liquidity Supplier -->
+  <line class="assoc" x1="775" y1="185" x2="704" y2="165"/>
+  <line class="assoc" x1="775" y1="185" x2="704" y2="210"/>
+
+  <!-- Associations: Liquidator -->
+  <line class="assoc" x1="775" y1="372" x2="704" y2="315"/>
+  <line class="assoc" x1="775" y1="372" x2="704" y2="362"/>
+  <line class="assoc" x1="775" y1="372" x2="704" y2="409"/>
+
+  <!-- Associations: Policy Administrator -->
+  <line class="assoc" x1="125" y1="690" x2="196" y2="620"/>
+  <line class="assoc" x1="125" y1="690" x2="196" y2="665"/>
+  <line class="assoc" x1="125" y1="690" x2="196" y2="710"/>
+  <line class="assoc" x1="125" y1="690" x2="196" y2="755"/>
+
+  <!-- Associations: Risk Administrator -->
+  <line class="assoc" x1="775" y1="690" x2="704" y2="620"/>
+  <line class="assoc" x1="775" y1="690" x2="704" y2="665"/>
+  <line class="assoc" x1="775" y1="690" x2="704" y2="715"/>
+  <line class="assoc" x1="775" y1="690" x2="704" y2="770"/>
+
+  <!-- Associations: Oracle Operator -->
+  <line class="assoc" x1="125" y1="850" x2="196" y2="850"/>
+
+  <!-- Associations: Relayer / Demo Orchestrator -->
+  <line class="assoc" x1="125" y1="1000" x2="196" y2="940"/>
+  <line class="assoc" x1="125" y1="1000" x2="196" y2="990"/>
+  <line class="assoc" x1="125" y1="1000" x2="196" y2="1040"/>
+
+  <!-- Borrower use cases -->
+  <ellipse class="usecase" cx="325" cy="165" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="169" text-anchor="middle">Use cross-chain route</text>
+
+  <ellipse class="usecase" cx="325" cy="210" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="214" text-anchor="middle">Lock canonical collateral</text>
+
+  <ellipse class="usecase" cx="325" cy="255" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="259" text-anchor="middle">Receive voucher collateral</text>
+
+  <ellipse class="usecase" cx="325" cy="300" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="304" text-anchor="middle">Deposit voucher collateral</text>
+
+  <ellipse class="usecase" cx="325" cy="345" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="349" text-anchor="middle">Borrow debt asset</text>
+
+  <ellipse class="usecase" cx="325" cy="390" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="394" text-anchor="middle">Repay debt</text>
+
+  <ellipse class="usecase" cx="325" cy="435" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="439" text-anchor="middle">Withdraw collateral</text>
+
+  <ellipse class="usecase" cx="325" cy="485" rx="129" ry="27"/>
+  <text class="usecase-text" x="325" y="490" text-anchor="middle">Close position / unlock collateral</text>
+
+  <!-- Liquidity Supplier use cases -->
+  <ellipse class="usecase" cx="575" cy="165" rx="129" ry="21"/>
+  <text class="usecase-text" x="575" y="169" text-anchor="middle">Supply liquidity</text>
+
+  <ellipse class="usecase" cx="575" cy="210" rx="129" ry="21"/>
+  <text class="usecase-text" x="575" y="214" text-anchor="middle">Redeem supplier liquidity</text>
+
+  <!-- Liquidator use cases -->
+  <ellipse class="usecase" cx="575" cy="315" rx="129" ry="21"/>
+  <text class="usecase-text" x="575" y="319" text-anchor="middle">Preview liquidation</text>
+
+  <ellipse class="usecase" cx="575" cy="362" rx="129" ry="21"/>
+  <text class="usecase-text" x="575" y="366" text-anchor="middle">Execute liquidation</text>
+
+  <ellipse class="usecase" cx="575" cy="409" rx="129" ry="21"/>
+  <text class="usecase-text" x="575" y="413" text-anchor="middle">Settle seized voucher collateral</text>
+
+  <!-- Policy Administrator use cases -->
+  <ellipse class="usecase" cx="325" cy="620" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="624" text-anchor="middle">Configure account permissions</text>
+
+  <ellipse class="usecase" cx="325" cy="665" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="669" text-anchor="middle">Configure source-chain permissions</text>
+
+  <ellipse class="usecase" cx="325" cy="710" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="714" text-anchor="middle">Configure asset permissions</text>
+
+  <ellipse class="usecase" cx="325" cy="755" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="759" text-anchor="middle">Configure exposure caps</text>
+
+  <!-- Risk Administrator use cases -->
+  <ellipse class="usecase" cx="575" cy="620" rx="129" ry="21"/>
+  <text class="usecase-text" x="575" y="624" text-anchor="middle">Configure collateral factor</text>
+
+  <ellipse class="usecase" cx="575" cy="665" rx="129" ry="21"/>
+  <text class="usecase-text" x="575" y="669" text-anchor="middle">Configure liquidation threshold</text>
+
+  <ellipse class="usecase" cx="575" cy="715" rx="129" ry="28"/>
+  <text class="usecase-text" x="575" y="720" text-anchor="middle">Configure oracle / valuation</text>
+
+  <ellipse class="usecase" cx="575" cy="770" rx="129" ry="21"/>
+  <text class="usecase-text" x="575" y="774" text-anchor="middle">Configure close factor / bonus</text>
+
+  <!-- Oracle Operator use case -->
+  <ellipse class="usecase" cx="325" cy="850" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="854" text-anchor="middle">Update asset prices</text>
+
+  <!-- Relayer / Demo Orchestrator use cases -->
+  <ellipse class="usecase" cx="325" cy="940" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="944" text-anchor="middle">Relay packet and proof material</text>
+
+  <ellipse class="usecase" cx="325" cy="990" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="994" text-anchor="middle">Submit reverse proof</text>
+
+  <ellipse class="usecase" cx="325" cy="1040" rx="129" ry="21"/>
+  <text class="usecase-text" x="325" y="1044" text-anchor="middle">Execute timeout / refund flow</text>
+
+  <!-- Left-side actors -->
+  <g>
+    <circle class="actor-line" cx="82" cy="248" r="13"/>
+    <line class="actor-line" x1="82" y1="261" x2="82" y2="306"/>
+    <line class="actor-line" x1="54" y1="280" x2="110" y2="280"/>
+    <line class="actor-line" x1="82" y1="306" x2="60" y2="340"/>
+    <line class="actor-line" x1="82" y1="306" x2="104" y2="340"/>
+    <text class="actor-label" x="82" y="364" text-anchor="middle">Borrower</text>
+  </g>
+
+  <g>
+    <circle class="actor-line" cx="82" cy="638" r="13"/>
+    <line class="actor-line" x1="82" y1="651" x2="82" y2="696"/>
+    <line class="actor-line" x1="54" y1="670" x2="110" y2="670"/>
+    <line class="actor-line" x1="82" y1="696" x2="60" y2="730"/>
+    <line class="actor-line" x1="82" y1="696" x2="104" y2="730"/>
+    <text class="actor-label" x="82" y="754" text-anchor="middle">Policy</text>
+    <text class="actor-label" x="82" y="771" text-anchor="middle">Administrator</text>
+  </g>
+
+  <g>
+    <circle class="actor-line" cx="82" cy="800" r="13"/>
+    <line class="actor-line" x1="82" y1="813" x2="82" y2="858"/>
+    <line class="actor-line" x1="54" y1="832" x2="110" y2="832"/>
+    <line class="actor-line" x1="82" y1="858" x2="60" y2="892"/>
+    <line class="actor-line" x1="82" y1="858" x2="104" y2="892"/>
+    <text class="actor-label" x="82" y="916" text-anchor="middle">Oracle</text>
+    <text class="actor-label" x="82" y="933" text-anchor="middle">Operator</text>
+  </g>
+
+  <g>
+    <circle class="actor-line" cx="82" cy="958" r="13"/>
+    <line class="actor-line" x1="82" y1="971" x2="82" y2="1016"/>
+    <line class="actor-line" x1="54" y1="990" x2="110" y2="990"/>
+    <line class="actor-line" x1="82" y1="1016" x2="60" y2="1050"/>
+    <line class="actor-line" x1="82" y1="1016" x2="104" y2="1050"/>
+    <text class="actor-label" x="82" y="1074" text-anchor="middle">Relayer / Demo</text>
+    <text class="actor-label" x="82" y="1091" text-anchor="middle">Orchestrator</text>
+  </g>
+
+  <!-- Right-side actors -->
+  <g>
+    <circle class="actor-line" cx="818" cy="132" r="13"/>
+    <line class="actor-line" x1="818" y1="145" x2="818" y2="190"/>
+    <line class="actor-line" x1="790" y1="164" x2="846" y2="164"/>
+    <line class="actor-line" x1="818" y1="190" x2="796" y2="224"/>
+    <line class="actor-line" x1="818" y1="190" x2="840" y2="224"/>
+    <text class="actor-label" x="818" y="248" text-anchor="middle">Liquidity</text>
+    <text class="actor-label" x="818" y="265" text-anchor="middle">Supplier</text>
+  </g>
+
+  <g>
+    <circle class="actor-line" cx="818" cy="320" r="13"/>
+    <line class="actor-line" x1="818" y1="333" x2="818" y2="378"/>
+    <line class="actor-line" x1="790" y1="352" x2="846" y2="352"/>
+    <line class="actor-line" x1="818" y1="378" x2="796" y2="412"/>
+    <line class="actor-line" x1="818" y1="378" x2="840" y2="412"/>
+    <text class="actor-label" x="818" y="436" text-anchor="middle">Liquidator</text>
+  </g>
+
+  <g>
+    <circle class="actor-line" cx="818" cy="638" r="13"/>
+    <line class="actor-line" x1="818" y1="651" x2="818" y2="696"/>
+    <line class="actor-line" x1="790" y1="670" x2="846" y2="670"/>
+    <line class="actor-line" x1="818" y1="696" x2="796" y2="730"/>
+    <line class="actor-line" x1="818" y1="696" x2="840" y2="730"/>
+    <text class="actor-label" x="818" y="754" text-anchor="middle">Risk</text>
+    <text class="actor-label" x="818" y="771" text-anchor="middle">Administrator</text>
+  </g>
+</svg>

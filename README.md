@@ -93,7 +93,7 @@ npm test
 
 ## Run The Besu Demo
 
-For a thesis-defense clean run, reset the local chains, redeploy, seed, and start the browser controller in one command:
+For a thesis-defense clean run, reset the local chains, redeploy, seed, warm up the route/allowances, and start the browser controller in one command:
 
 ```bash
 npm run demo:fresh
@@ -112,9 +112,12 @@ npm run besu:generate
 npm run besu:up
 ```
 
-Start the browser controller:
+Deploy, seed, warm up the reusable demo state, then start the browser controller:
 
 ```bash
+npm run deploy
+npm run seed
+npm run demo:warmup
 npm run demo:ui
 ```
 
@@ -124,7 +127,14 @@ Open:
 http://127.0.0.1:5173/
 ```
 
-Use `Prepare Demo Account` or `Fresh Reset`, then run the flow step by step or use `Run Guided Lifecycle`.
+Use `Prepare Demo Session` or `Fresh Reset (slow setup only)`, then run the single presentation flow step by step:
+
+1. Transfer Collateral to Bank B
+2. Receive Verified Collateral
+3. Deposit Collateral
+4. Borrow Cash
+5. Simulate Collateral Price Drop
+6. Execute Liquidation
 
 For the thesis-defense walkthrough, including the Borrower Portal, Risk Admin liquidation console, Proof Inspector, scenario panel, and known limitations, see [DEMO_FLOW.md](./DEMO_FLOW.md). For trust assumptions and limitations, see [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md).
 

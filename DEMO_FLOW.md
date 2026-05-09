@@ -8,6 +8,9 @@ This demo is a thesis prototype for a permissioned banking-chain setting. It com
 npm install
 npm run besu:generate
 npm run besu:up
+npm run deploy
+npm run seed
+npm run demo:warmup
 npm run demo:ui
 ```
 
@@ -17,17 +20,16 @@ Open:
 http://127.0.0.1:5173/
 ```
 
-Use **Prepare Demo Account** to reuse an already seeded local runtime. Use **Fresh Reset** from Demo Tools when you need a clean deployment.
+Use **Prepare Demo Session** to reuse an already seeded local runtime. Use **Fresh Reset (slow setup only)** from Demo Tools when you need a clean deployment.
 
 ## Borrower flow
 
-1. Prepare the demo account.
-2. Bridge collateral from Bank A to Bank B.
-3. Import the Bank A Besu header on Bank B and verify the storage proof.
-4. Receive the voucher collateral.
-5. Deposit voucher collateral into the Bank B lending pool.
-6. Borrow bCASH within available borrow capacity.
-7. Repay debt or withdraw collateral while health checks remain satisfied.
+1. Prepare the demo session.
+2. Transfer collateral to Bank B, which locks canonical collateral on Bank A and commits the packet.
+3. Receive verified collateral by importing the Bank A Besu header on Bank B and verifying the storage proof.
+4. Deposit collateral into the Bank B lending pool.
+5. Borrow cash within available borrow capacity.
+6. Repay the loan or withdraw collateral while health checks remain satisfied.
 
 The Borrower Portal shows collateral value, current debt, available borrow, health factor, position guidance, and recent activity.
 
@@ -40,7 +42,7 @@ Borrow capacity is based on `collateralFactorBps`. Liquidation risk is based on 
 Open **Risk Admin**.
 
 1. Review the governed demo oracle prices, collateral value, debt, available borrow, borrow capacity, liquidation threshold value, health factor, collateral factor / max LTV, liquidation threshold, liquidation trigger, utilization, reserves, and bad debt.
-2. Set or accept the shock price and run **Simulate Oracle Shock**.
+2. Set or accept the shock price and run **Simulate Collateral Price Drop**.
 3. Compare health factor before and after the price drop.
 4. Review the liquidation preview: repay amount, seized collateral, remaining debt, remaining collateral, bad debt, reserve use, and supplier loss.
 5. Run **Execute Liquidation** when the account is liquidatable.
@@ -48,7 +50,7 @@ Open **Risk Admin**.
 
 The oracle is intentionally labeled as a governed demo oracle. It is manual and demo-only, not a decentralized market oracle.
 
-The liquidation preview uses the current on-chain oracle state. Run **Simulate Oracle Shock** before expecting executable liquidation values to change. A higher oracle price update is allowed because this is a governed oracle update, but it is not a downside shock.
+The liquidation preview uses the current on-chain oracle state. Run **Simulate Collateral Price Drop** before expecting executable liquidation values to change. A higher oracle price update is allowed because this is a governed oracle update, but it is not a downside shock.
 
 “After Liquidation” is a liquidation-specific snapshot. Later repay or withdraw actions should change the live position and their own trace fields, not the liquidation snapshot.
 

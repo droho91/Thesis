@@ -4,6 +4,7 @@ import {
   DEPOSIT_AMOUNT,
   REPAY_AMOUNT,
   WITHDRAW_AMOUNT,
+  approveIfNeeded,
   ensureRiskSeeded,
   repayCloseBuffer,
   repayCloseTarget,
@@ -24,8 +25,12 @@ export async function depositCollateralStep({ config, ctx }) {
   if (depositAmount > balance) {
     throw new Error(`DEPOSIT_LIMIT: free voucher balance is ${units(balance)} vA, requested ${units(depositAmount)} vA.`);
   }
-  await txStep("step approve voucher collateral", () =>
-    ctx.B.voucherUser.approve(config.chains.B.lendingPool, depositAmount, txOptions())
+  await approveIfNeeded(
+    ctx.B.voucherUser,
+    ctx.destinationUserAddress,
+    config.chains.B.lendingPool,
+    depositAmount,
+    "step approve voucher collateral"
   );
   await txStep("step deposit collateral", () =>
     ctx.B.lendingPoolUser.depositCollateral(depositAmount, txOptions())
@@ -100,7 +105,13 @@ export async function repayStep({ config, ctx }) {
     const requiredBalance = closeDebt ? debt : repayAmount;
     if (debtBalance < requiredBalance) throw new Error("Destination user does not have enough bCASH to repay the requested amount.");
     const debtUser = ctx.B.debtAdmin.connect(ctx.destinationUser);
-    await txStep("step approve debt repayment", () => debtUser.approve(config.chains.B.lendingPool, repayAmount, txOptions()));
+    await approveIfNeeded(
+      debtUser,
+      ctx.destinationUserAddress,
+      config.chains.B.lendingPool,
+      repayAmount,
+      "step approve debt repayment"
+    );
     const repayReceipt = await txStep("step repay debt", () => ctx.B.lendingPoolUser.repay(repayAmount, txOptions()));
     repayTxHash = repayReceipt.hash;
     const debtBalanceAfter = await ctx.B.debtAdmin.balanceOf(ctx.destinationUserAddress);

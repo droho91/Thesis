@@ -4,6 +4,7 @@ import {
   DEMO_PACKET_TIMEOUT_HEIGHT,
   DENIED_AMOUNT,
   FORWARD_AMOUNT,
+  approveIfNeeded,
   asBigInt,
   compact,
   ensureForwardPacket,
@@ -332,6 +333,7 @@ async function writeForwardReceiveTrace({
         sourceAckHash: acknowledged ? sourceAckHash : null,
         acknowledgementSlot,
         acknowledgementTrustedHeight: ackAnchor ? ackAnchor.height.toString() : null,
+        acknowledgementWarning: acknowledged ? null : acknowledgementWarning || "Bank A acknowledgement remains pending.",
         voucherBalanceAfterReceive: units(voucherBalance),
         proofMode: "storage",
       },
@@ -356,8 +358,12 @@ export async function lockStep({ config, ctx, sourceChainId, destinationChainId 
   setPhase("step-lock-check-route");
   await requireOpenHandshake(config, ctx);
   await ensureRiskSeeded(config, ctx);
-  await txStep("step approve escrow", () =>
-    ctx.A.canonicalTokenUser.approve(config.chains.A.escrowVault, FORWARD_AMOUNT + DENIED_AMOUNT, txOptions())
+  await approveIfNeeded(
+    ctx.A.canonicalTokenUser,
+    ctx.sourceUserAddress,
+    config.chains.A.escrowVault,
+    FORWARD_AMOUNT + DENIED_AMOUNT,
+    "step approve escrow"
   );
 
   setPhase("step-lock-send");

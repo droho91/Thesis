@@ -634,7 +634,7 @@ export function renderStatus(status) {
     setText("borrowPreviewLiquidity", "-");
     setText("riskStatusText", "Prepare account");
     setText("positionRiskCopy", "Prepare the local demo account first; later lending actions stay locked until the route is ready.");
-    setText("positionRiskAction", "Prepare Fast Demo Session to begin.");
+    setText("positionRiskAction", "Prepare Demo Session to begin.");
     setText("verificationSummaryStatus", "Pending");
     setText("verificationSummaryOracle", "Waiting");
     setText("verificationSummaryClient", "Waiting");

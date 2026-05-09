@@ -154,7 +154,7 @@ assert.match(demoApi, /\/api\/resume-session/, "API should expose Resume Session
 assert.match(demoService, /resumeSessionPayload/, "service should implement Resume Session");
 assert.match(demoService, /RESUME_SESSION_MAX_HEADERS/, "Resume Session should bound light-client catch-up per click");
 assert.match(demoService, /Resume Session partially refreshed proof anchors/, "Resume Session should report bounded partial proof-anchor refreshes");
-assert.match(demoService, /recoverOpenRouteCompletion/, "Open route should recover the UI trace if the on-chain route opened before a final read error");
+assert.match(demoService, /recoverOpenRouteCompletion/, "Establish Bank Route should recover the UI trace if the on-chain route opened before a final read error");
 assert.match(demoService, /startLightClientHeartbeat\(\)/, "demo service should start the optional light-client heartbeat");
 assert.match(
   demoService,
@@ -217,7 +217,7 @@ assert.match(demoApp, /traceRisk\.withdrawTxHash \|\| traceRisk\.collateralWithd
 assert.match(demoService, /if \(lifecycle\.activeDebt\)[\s\S]*topUpRepayCash[\s\S]*return \{ action: "repay"/, "service recommendations should prioritize debt repayment before more borrowing");
 assert.match(demoService, /return \{ action: "withdrawCollateral", label: "Withdraw collateral to return" \}/, "service recommendations should direct debt-closed positions toward collateral withdrawal");
 assert.match(demoApp, /function forwardReceiptConsumed\(status\)/, "UI should distinguish the latest packet receipt from older visible voucher balances");
-assert.match(demoApp, /function forwardPacketPending\(status\)[\s\S]*return !forwardReceiptConsumed\(status\)/, "UI should re-enable Receive Voucher after a new lock even when old voucher remains visible");
+assert.match(demoApp, /function forwardPacketPending\(status\)[\s\S]*return !forwardReceiptConsumed\(status\)/, "UI should re-enable Receive Verified Collateral after a new lock even when old voucher remains visible");
 assert.match(demoApp, /!forwardPending &&[\s\S]*state\.voucher > POSITION_EPSILON/, "UI should only treat visible voucher as delivered when no newer packet is pending");
 assert.match(demoService, /const forwardDelivered =[\s\S]*forward\.receiveTxHash/, "service recommendations should use the latest forward receipt, not old voucher balances, for packet delivery");
 assert.match(demoService, /readDemoStatusAfterVisibleChange/, "action responses should wait for visible state changes before returning next recommendations");
@@ -233,7 +233,7 @@ assert.match(demoApp, /workflowCtaFromServerNext/, "UI should convert server nex
 assert.match(demoApp, /next recommendation is/, "successful action cards should point the primary CTA at the next action instead of a generic continue step");
 assert.match(demoApp, /1\/3 Fetch Bank A header/, "forward proof workflow should label the header fetch sub-step");
 assert.match(demoApp, /2\/3 Import Bank A header on Bank B/, "forward proof workflow should label the client import sub-step");
-assert.match(demoApp, /3\/3 Verify proof and mint voucher/, "forward proof workflow should label the proof verification sub-step");
+assert.match(demoApp, /Receive Verified Collateral/, "forward proof workflow should label the proof verification sub-step");
 assert.match(demoApp, /1\/3 Fetch Bank B header/, "reverse proof workflow should label the header fetch sub-step");
 assert.match(demoApp, /2\/3 Import Bank B header on Bank A/, "reverse proof workflow should label the client import sub-step");
 assert.match(demoApp, /3\/3 Verify proof and unlock aBANK/, "reverse proof workflow should label the proof verification sub-step");
