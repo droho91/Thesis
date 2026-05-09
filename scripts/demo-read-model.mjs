@@ -1001,7 +1001,12 @@ async function readOnchainDemoStatus(health) {
       proofKey: trace?.forward?.packetPathSlot || trace?.forward?.packetLeafSlot || null,
       proofVerificationResult: forwardProofVerified ? "Verified" : "Pending",
       receiptStatus: forwardConsumed ? "Executed once" : "Pending",
-      acknowledgementStatus: forwardAcknowledged || trace?.forward?.sourceAckHash ? "Acknowledged" : "Pending",
+      acknowledgementStatus:
+        forwardAcknowledged || trace?.forward?.sourceAckHash
+          ? "Acknowledged"
+          : trace?.forward?.acknowledgementDeferred
+            ? "Deferred settlement"
+            : "Pending",
       timeoutStatus: deniedTimedOutLive
         ? "Timed out"
         : traceSecurity.timeoutAbsence || traceSecurity.nonMembership

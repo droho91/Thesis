@@ -313,10 +313,14 @@ async function writeForwardReceiveTrace({
   acknowledgementSlot = null,
   sourceAckHash = null,
   acknowledgementWarning = null,
+  acknowledgementDeferred = false,
 }) {
   setPhase("step-prove-forward-refresh");
   const voucherBalance = await ctx.B.voucherAdmin.balanceOf(ctx.destinationUserAddress);
   const acknowledged = sourceAckHash && sourceAckHash !== ethers.ZeroHash;
+  const defaultAcknowledgementWarning = acknowledgementDeferred
+    ? "Acknowledgement proof is deferred as backend settlement finalization. Voucher collateral is already minted and available on Bank B after verified packet receipt."
+    : "Bank A acknowledgement settlement remains pending.";
   const trace = await writeTracePatch(
     config,
     ctx,
@@ -333,7 +337,8 @@ async function writeForwardReceiveTrace({
         sourceAckHash: acknowledged ? sourceAckHash : null,
         acknowledgementSlot,
         acknowledgementTrustedHeight: ackAnchor ? ackAnchor.height.toString() : null,
-        acknowledgementWarning: acknowledged ? null : acknowledgementWarning || "Bank A acknowledgement remains pending.",
+        acknowledgementDeferred,
+        acknowledgementWarning: acknowledged ? null : acknowledgementWarning || defaultAcknowledgementWarning,
         voucherBalanceAfterReceive: units(voucherBalance),
         proofMode: "storage",
       },
@@ -343,13 +348,13 @@ async function writeForwardReceiveTrace({
       label: acknowledged ? "Executed IBC packet storage proof" : "Received IBC packet storage proof",
       summary: acknowledged
         ? `Bank B verified packet ${compact(forward.packetId)}, minted voucher, and Bank A verified the acknowledgement.`
-        : `Bank B verified packet ${compact(forward.packetId)} and minted voucher. ${acknowledgementWarning || "Bank A acknowledgement remains pending."}`,
+        : `Bank B verified packet ${compact(forward.packetId)} and minted voucher. ${acknowledgementWarning || defaultAcknowledgementWarning}`,
     }
   );
   console.log(
     acknowledged
       ? `Proved and received packet ${forward.packetId}`
-      : `Received packet ${forward.packetId}; acknowledgement proof remains pending`
+      : `Received packet ${forward.packetId}; acknowledgement settlement is deferred`
   );
   return trace;
 }
@@ -567,54 +572,12 @@ export async function proveForwardMintStep({ config, ctx, sourceChainId, destina
   forward.receiveTxHash = recvReceipt?.hash || null;
   const ackHash = await ctx.B.packetHandler.acknowledgementHashes(forward.packetId);
   if (ackHash !== ethers.ZeroHash) {
-    const acknowledgement = ethers.solidityPacked(["string", "bytes32"], ["ok:", forward.packetId]);
-    let ackAnchor = null;
-    let acknowledgementSlot = null;
-    try {
-      const ackProofResult = await buildForwardAcknowledgementProof({
-        config,
-        ctx,
-        destinationChainId,
-        receiveHeight,
-        packetId: forward.packetId,
-        acknowledgementHash: ackHash,
-      });
-      ackAnchor = ackProofResult.ackAnchor;
-      acknowledgementSlot = ackProofResult.acknowledgementSlot;
-      setPhase("step-prove-forward-ack-tx");
-      await timedDemoStage("Forward receive: submit acknowledgement proof tx", () =>
-        txStep("step acknowledge forward packet", () =>
-          ctx.A.packetHandler.acknowledgePacketFromStorageProof(
-            forward.packet,
-            acknowledgement,
-            config.chains.B.packetHandler,
-            ackProofResult.proof,
-            txOptions()
-          )
-        )
-      );
-    } catch (error) {
-      const sourceAcknowledged = await ctx.A.packetHandler.packetAcknowledgements(forward.packetId).catch(() => false);
-      if (!isKnownReplay(error) && !sourceAcknowledged) {
-        const received = await ctx.B.packetHandler.packetReceipts(forward.packetId).catch(() => false);
-        if (!received) throw error;
-        const warning = `Bank A acknowledgement proof was deferred after: ${error.shortMessage || error.message}`;
-        console.warn(`[demo] ${warning}`);
-        return writeForwardReceiveTrace({
-          config,
-          ctx,
-          forward,
-          proofAnchor,
-          proofs,
-          receiveHeight,
-          ackHash,
-          ackAnchor,
-          acknowledgementSlot,
-          acknowledgementWarning: warning,
-        });
-      }
-    }
-    const sourceAckHash = await ctx.A.transferAppUser.acknowledgementHashByPacket(forward.packetId);
+    // Customer-facing verified demo stops here. Voucher availability on Bank B depends on
+    // the verified receive proof above; the reverse acknowledgement only finalizes backend
+    // settlement on Bank A and is intentionally kept out of the live customer path.
+    const warning =
+      "Acknowledgement proof is deferred as backend settlement finalization. Voucher collateral is already minted and available on Bank B after verified packet receipt.";
+    console.warn(`[demo] ${warning}`);
     return writeForwardReceiveTrace({
       config,
       ctx,
@@ -623,12 +586,86 @@ export async function proveForwardMintStep({ config, ctx, sourceChainId, destina
       proofs,
       receiveHeight,
       ackHash,
-      ackAnchor,
-      acknowledgementSlot,
-      sourceAckHash,
+      acknowledgementDeferred: true,
+      acknowledgementWarning: warning,
     });
   }
   throw new Error("Destination packet handler did not store an acknowledgement hash.");
+}
+
+// Internal/advanced settlement path kept for thesis inspection. The main customer-facing
+// action above does not call this because receive proof already makes voucher collateral
+// available on Bank B.
+async function acknowledgeForwardSettlementInternal({
+  config,
+  ctx,
+  forward,
+  proofAnchor,
+  proofs,
+  destinationChainId,
+  receiveHeight,
+  ackHash,
+}) {
+  const acknowledgement = ethers.solidityPacked(["string", "bytes32"], ["ok:", forward.packetId]);
+  let ackAnchor = null;
+  let acknowledgementSlot = null;
+  try {
+    const ackProofResult = await buildForwardAcknowledgementProof({
+      config,
+      ctx,
+      destinationChainId,
+      receiveHeight,
+      packetId: forward.packetId,
+      acknowledgementHash: ackHash,
+    });
+    ackAnchor = ackProofResult.ackAnchor;
+    acknowledgementSlot = ackProofResult.acknowledgementSlot;
+    setPhase("step-prove-forward-ack-tx");
+    await timedDemoStage("Forward receive: submit acknowledgement proof tx", () =>
+      txStep("step acknowledge forward packet", () =>
+        ctx.A.packetHandler.acknowledgePacketFromStorageProof(
+          forward.packet,
+          acknowledgement,
+          config.chains.B.packetHandler,
+          ackProofResult.proof,
+          txOptions()
+        )
+      )
+    );
+  } catch (error) {
+    const sourceAcknowledged = await ctx.A.packetHandler.packetAcknowledgements(forward.packetId).catch(() => false);
+    if (!isKnownReplay(error) && !sourceAcknowledged) {
+      const received = await ctx.B.packetHandler.packetReceipts(forward.packetId).catch(() => false);
+      if (!received) throw error;
+      const warning = `Bank A acknowledgement proof was deferred after: ${error.shortMessage || error.message}`;
+      console.warn(`[demo] ${warning}`);
+      return writeForwardReceiveTrace({
+        config,
+        ctx,
+        forward,
+        proofAnchor,
+        proofs,
+        receiveHeight,
+        ackHash,
+        ackAnchor,
+        acknowledgementSlot,
+        acknowledgementWarning: warning,
+      });
+    }
+  }
+  const sourceAckHash = await ctx.A.transferAppUser.acknowledgementHashByPacket(forward.packetId);
+  return writeForwardReceiveTrace({
+    config,
+    ctx,
+    forward,
+    proofAnchor,
+    proofs,
+    receiveHeight,
+    ackHash,
+    ackAnchor,
+    acknowledgementSlot,
+    sourceAckHash,
+  });
 }
 
 export async function replayForwardStep({ config, ctx, sourceChainId, destinationChainId }) {

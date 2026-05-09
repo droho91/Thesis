@@ -91,30 +91,20 @@ npm test
 
 `npm test` and `npm run test:solidity` both run the Solidity test suite.
 
-## Run The Besu Demo
+## Customer-Facing Verified Demo
 
-For a thesis-defense clean run, reset the local chains, redeploy, seed, warm up the route/allowances, and start the browser controller in one command:
+The live presentation uses one main flow: a banking-style customer journey backed by real protocol checks. Route setup and token allowances are warmed before the audience flow because they are infrastructure preparation. The receive step is still mandatory: Bank B mints voucher collateral only after it verifies the Bank A packet storage proof. The reverse acknowledgement is settlement finalization and is deferred from the customer-facing path.
 
-```bash
-npm run demo:fresh
-```
-
-If this is the first time running the project on the machine, generate the local Besu runtime files once before using the fresh demo command:
+If this is the first time running the project on the machine, generate the local Besu runtime files once:
 
 ```bash
 npm run besu:generate
 ```
 
-To run the same flow manually, start two local Besu QBFT bank chains:
+Before the live demo, start the two local Besu/QBFT bank chains, deploy, seed, and warm the reusable demo state:
 
 ```bash
-npm run besu:generate
 npm run besu:up
-```
-
-Deploy, seed, warm up the reusable demo state, then start the browser controller:
-
-```bash
 npm run deploy
 npm run seed
 npm run demo:warmup
@@ -127,16 +117,21 @@ Open:
 http://127.0.0.1:5173/
 ```
 
-Use `Prepare Demo Session` or `Fresh Reset (slow setup only)`, then run the single presentation flow step by step:
+During the live demo, use `Prepare Demo Session` if the UI asks for it, then run:
 
-1. Transfer Collateral to Bank B
-2. Receive Verified Collateral
-3. Deposit Collateral
-4. Borrow Cash
-5. Simulate Collateral Price Drop
-6. Execute Liquidation
+1. Prepare Demo Session
+2. Establish Bank Route if needed
+3. Transfer Collateral to Bank B
+4. Receive Verified Collateral
+5. Deposit Collateral
+6. Borrow Cash
+7. Simulate Collateral Price Drop
+8. Execute Liquidation
+9. Show technical evidence in the Technical / Thesis panel
 
-For the thesis-defense walkthrough, including the Borrower Portal, Risk Admin liquidation console, Proof Inspector, scenario panel, and known limitations, see [DEMO_FLOW.md](./DEMO_FLOW.md). For trust assumptions and limitations, see [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md).
+`Fresh Reset (slow setup only)` redeploys and reseeds a clean baseline. Use it before the demo window or for recovery, not as the main live command.
+
+For the thesis-defense walkthrough, including the Borrower Portal, Risk Admin liquidation console, Proof Inspector, appendix actions, and known limitations, see [DEMO_FLOW.md](./DEMO_FLOW.md). For trust assumptions and limitations, see [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md).
 
 ## Run The Demo From Terminal
 

@@ -113,7 +113,7 @@ function operationLabel(action) {
     deploySeed: "Prepare Demo Session",
     resetSeeded: "Fresh Reset (slow setup only)",
     resumeSession: "Resume Session",
-    fullFlow: "Run Risk/Liquidation Lifecycle",
+    fullFlow: "Run Full Scripted Appendix",
     borrowerCloseout: "Close Position & Return Collateral",
     runFlow: "Run Flow",
     openRoute: "Establish Bank Route",
@@ -919,6 +919,16 @@ function reverseProofActionFromStatus(status) {
   return trustReady ? "proveReverseUnlock" : "updateReverseClient";
 }
 
+function liquidationReadyFromStatus(status) {
+  const debtOpen = statusPositive(status?.balances?.poolDebt);
+  const healthFactorBps = statusNumber(status?.market?.healthFactorBps);
+  return Boolean(
+    status?.risk?.position?.liquidatable ||
+      status?.risk?.liquidationPreview?.executable ||
+      (debtOpen && healthFactorBps > 0 && healthFactorBps < 10000)
+  );
+}
+
 function nextValidActionFromStatus(status) {
   if (!status?.deployed) return { action: "deploySeed", label: "Prepare Demo Session" };
   if (status.security?.frozen || status.security?.recovering) return { action: "recoverClient", label: "Recover Account" };
@@ -940,14 +950,7 @@ function nextValidActionFromStatus(status) {
   const reversePending = Boolean(reverse.packetId || reverse.commitHeight) && !reverseDelivered;
 
   if (lifecycle.liquidationExecuted) {
-    if (lifecycle.settlementVoucher && !lifecycle.settlementStarted) {
-      return { action: "settleSeizedVoucher", label: "Settle Seized Voucher" };
-    }
-    if (lifecycle.settlementStarted && !lifecycle.settlementUnlocked) {
-      const action = reversePending ? reverseProofActionFromStatus(status) : "proveReverseUnlock";
-      return { action, label: reverseProofStepLabel(action) };
-    }
-    return { action: "refresh", label: "Refresh state" };
+    return { action: "refresh", label: "Show technical evidence" };
   }
 
   if (lifecycle.borrowerReverseComplete) return { action: "refresh", label: "Refresh state" };
@@ -973,10 +976,9 @@ function nextValidActionFromStatus(status) {
   }
 
   if (lifecycle.activeDebt) {
-    if (repayFundingShortfallFromStatus(status) > 0.000001) {
-      return { action: "topUpRepayCash", label: "Add demo bCASH for repayment" };
-    }
-    return { action: "repay", label: "Repay Loan" };
+    return liquidationReadyFromStatus(status)
+      ? { action: "executeLiquidation", label: "Execute Liquidation" }
+      : { action: "simulatePriceShock", label: "Simulate Collateral Price Drop" };
   }
 
   if (lifecycle.activeCollateral && lifecycle.debtWasOpened) {

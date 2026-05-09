@@ -112,7 +112,7 @@ const WORKFLOW_STEP_TITLES = {
   activate: "Deposit",
   borrow: "Borrow",
   manage: "Manage Position",
-  return: "Close Position",
+  return: "Review Evidence",
 };
 const DO_NOT_REPEAT_COMPLETED_ACTIONS = new Set([
   "depositCollateral",
@@ -340,7 +340,7 @@ const ACTION_GUIDE = {
     failureRecovery: "Wait for a fresh finalized header and retry recovery.",
   },
   fullFlow: {
-    runningTitle: "Run Risk/Liquidation Lifecycle",
+    runningTitle: "Run Full Scripted Appendix",
     currentAction: "Running the scripted route, proof, borrow, oracle shock, liquidation, timeout, and settlement path.",
     expectedVisibleChange: "Scenario cards, risk metrics, proof lifecycle, and settlement evidence update as the script advances.",
     nextAfterSuccess: "Review Risk Admin and Technical / Thesis evidence for defense discussion.",
@@ -1188,6 +1188,15 @@ function healthFromStatus(status) {
   return healthFromBps(raw);
 }
 
+function liquidationReady(status) {
+  const health = healthFromStatus(status);
+  return Boolean(
+    status?.risk?.position?.liquidatable ||
+      status?.risk?.liquidationPreview?.executable ||
+      (health.percent != null && health.percent < 100)
+  );
+}
+
 function healthFromBps(rawValue) {
   const raw = String(rawValue ?? "");
   if (!raw || raw === String(2n ** 256n - 1n)) return { label: "No debt", status: "Safe", percent: null };
@@ -1419,15 +1428,17 @@ function workflowStepsForStatus(status) {
         debtClosedAfterBorrow,
       label: lifecycle.returnComplete
         ? "Done"
-        : reversePending
-          ? "Proof pending"
-          : lifecycle.settlementVoucher
-            ? "Settle"
-            : lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher
-              ? "Burn ready"
-              : debtClosedAfterBorrow && lifecycle.activeCollateral
-                ? "Withdraw first"
-                : "Waiting",
+        : lifecycle.liquidationExecuted
+          ? "Review"
+          : reversePending
+            ? "Proof pending"
+            : lifecycle.settlementVoucher
+              ? "Settle"
+              : lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher
+                ? "Burn ready"
+                : debtClosedAfterBorrow && lifecycle.activeCollateral
+                  ? "Withdraw first"
+                  : "Waiting",
     },
   };
 }
@@ -1469,39 +1480,14 @@ function workflowRecommendation(status) {
   }
 
   if (lifecycle.liquidationExecuted) {
-    if (lifecycle.settlementVoucher && !lifecycle.settlementStarted) {
-      return {
-        step: "return",
-        title: "Settle seized collateral",
-        status: "Liquidation executed",
-        summary: "The authorized liquidator holds seized voucher collateral.",
-        cta: { type: "action", action: "settleSeizedVoucher", label: "Settle Seized Voucher" },
-        description: "Burn the seized voucher and create the reverse settlement packet for origin collateral.",
-        hint: `${formatAmount(status?.risk?.settlement?.seizedVoucherBalance || status?.balances?.liquidatorVoucher, "vA")} held by the authorized liquidator.`,
-        risk: "risk",
-      };
-    }
-    if (lifecycle.settlementStarted && !lifecycle.settlementUnlocked) {
-      const action = reverseAction || "proveReverseUnlock";
-      return {
-        step: "return",
-        title: "Complete liquidator settlement",
-        status: "Proof pending",
-        summary: "The settlement packet exists on Bank B.",
-        cta: { type: "action", action, label: reverseProofStepLabel(action) },
-        description: "Run the next reverse proof sub-step so Bank A can release origin collateral.",
-        hint: "Header fetch, light-client import, and proof verification are separated so each button has one job.",
-        risk: "risk",
-      };
-    }
     return {
       step: "return",
-      title: "Risk settlement complete",
-      status: lifecycle.settlementUnlocked ? "Settled" : "Liquidation path",
-      summary: "The liquidation branch no longer has a pending settlement action.",
-      cta: { type: "portal", portal: "risk", label: "Review Risk Admin" },
-      description: "Review liquidation accounting, reserves, bad debt, and settlement evidence.",
-      hint: lifecycle.settlementUnlocked ? "Origin collateral for the liquidator is unlocked on Bank A." : "No seized voucher is waiting for settlement.",
+      title: "Show technical evidence",
+      status: "Liquidation executed",
+      summary: "The main customer-facing demo is complete.",
+      cta: { type: "portal", portal: "technical", label: "Show Technical Evidence" },
+      description: "Open the proof panel to review packet proof, trusted height, state root, receipt replay guard, and risk evidence.",
+      hint: "Advanced settlement and recovery controls remain outside the primary live flow.",
       risk: "risk",
     };
   }
@@ -1586,25 +1572,22 @@ function workflowRecommendation(status) {
   }
 
   if (lifecycle.activeDebt) {
-    const shortfall = repayFundingShortfall(status);
-    const needsCash = shortfall > POSITION_EPSILON;
+    const canLiquidate = liquidationReady(status);
     return {
       step: "manage",
-      title: needsCash ? "Add demo cash for repayment" : elevatedRisk ? "Repay debt to improve health" : "Repay active debt",
-      status: needsCash ? "Needs cash" : elevatedRisk ? health.status : "Debt open",
-      summary: needsCash
-        ? "The account needs more demo bCASH before it can close the debt cleanly."
-        : "Debt is open. Repayment is the primary recommendation; withdrawal stays a separate safe-collateral button.",
-      cta: needsCash
-        ? { type: "action", action: "topUpRepayCash", label: "Add demo bCASH for repayment" }
-        : { type: "action", action: "repay", label: "Repay Loan" },
-      description: needsCash
-        ? "Mint demo bCASH to model the borrower reacquiring repayment cash, then repay from the same manage panel."
-        : "Repay bCASH first. Safe collateral withdrawal remains available only when its own limit allows it.",
-      hint: needsCash
-        ? `${formatAmount(shortfall, "bCASH")} more is needed for a clean closeout buffer.`
-        : `${formatAmount(state.debt, "bCASH")} debt outstanding.`,
-      risk: elevatedRisk ? "risk" : "safe",
+      title: canLiquidate ? "Execute liquidation" : "Simulate collateral price drop",
+      status: canLiquidate ? "Liquidatable" : "Debt open",
+      summary: canLiquidate
+        ? "The account is below the liquidation threshold."
+        : "Debt is open. The live demo now moves to the governed oracle price-drop scenario.",
+      cta: canLiquidate
+        ? { type: "action", action: "executeLiquidation", label: "Execute Liquidation" }
+        : { type: "action", action: "simulatePriceShock", label: "Simulate Collateral Price Drop" },
+      description: canLiquidate
+        ? "Run liquidation through the lending pool, which still checks health factor and liquidator authorization on-chain."
+        : "Apply the demo price shock before liquidation so the health-factor rule becomes visible.",
+      hint: canLiquidate ? `${health.label} health factor.` : `${formatAmount(state.debt, "bCASH")} debt outstanding.`,
+      risk: canLiquidate || elevatedRisk ? "risk" : "safe",
     };
   }
 
@@ -1849,7 +1832,7 @@ function actionEligibility(action, status = currentStatus, validationOptions = {
     case "fullFlow":
     case "riskLifecycle":
     case "borrowerCloseout":
-      return enabled("Run the scripted scenario using the current deployed runtime.");
+      return enabled("Run the scripted appendix flow using the current deployed runtime.");
     default:
       return enabled();
   }
