@@ -925,8 +925,12 @@ async function ensureRiskSeeded(config, ctx) {
         ctx.B.debtAdmin.mint(config.chains.B.admin, depositAmount - supplierBalance, txOptions())
       );
     }
-    await txStep("approve supplier liquidity", () =>
-      ctx.B.debtAdmin.approve(config.chains.B.lendingPool, depositAmount, txOptions())
+    await approveIfNeeded(
+      ctx.B.debtAdmin,
+      config.chains.B.admin,
+      config.chains.B.lendingPool,
+      depositAmount,
+      "approve supplier liquidity"
     );
     await txStep("deposit supplier liquidity", () =>
       ctx.B.lendingPoolAdmin.depositLiquidity(depositAmount, txOptions())

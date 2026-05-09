@@ -400,7 +400,8 @@ export async function localHealth() {
       label: "No deployment",
       stackVersion: "besu-light-client",
       runtime,
-      message: "Start the Besu bank chains with npm run besu:generate and npm run besu:up, then press Prepare Demo Session or Fresh Reset.",
+      message:
+        "Start the Besu bank chains with npm run besu:generate and npm run besu:up, then press Prepare Demo Session. Use Fresh Reset only for slow setup recovery.",
     };
   }
   return readLocalHealth(runtime);
@@ -497,7 +498,7 @@ async function readLocalHealth(runtime) {
       runtime: cfgRuntime,
       message:
         `Besu returned invalid/null contract code for: ${details}. ` +
-        "This usually means a local validator has lost world state. Run npm run besu:down, npm run besu:up, then Fresh Reset.",
+        "This usually means a local validator has lost world state. Run Prepare Demo Session first; use Fresh Reset only if the deployment is stale or corrupted.",
       chains: { A: chainA, B: chainB },
     };
   }

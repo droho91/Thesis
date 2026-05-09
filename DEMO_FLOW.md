@@ -29,12 +29,13 @@ Use **Prepare Demo Session** to reuse an already seeded local runtime. Use **Fre
 1. Prepare the demo session.
 2. Establish the Bank A <-> Bank B route if needed.
 3. Transfer collateral to Bank B, which locks canonical collateral on Bank A and commits the packet.
-4. Receive verified collateral by importing the Bank A Besu header on Bank B and verifying the storage proof.
-5. Deposit collateral into the Bank B lending pool.
-6. Borrow cash within available borrow capacity.
-7. Simulate a collateral price drop with the governed demo oracle.
-8. Execute liquidation only after the health factor makes the account liquidatable.
-9. Open Technical / Thesis to show packet proof, trusted height, state root, replay protection, and liquidation evidence.
+4. Fetch Source Header / Import Header if the UI recommends those proof sub-steps.
+5. Receive verified collateral by verifying the Bank A packet storage proof on Bank B.
+6. Deposit collateral into the Bank B lending pool.
+7. Borrow cash within available borrow capacity.
+8. Simulate a collateral price drop with the governed demo oracle.
+9. Execute liquidation only after the health factor makes the account liquidatable.
+10. Open Technical / Thesis to show packet proof, trusted height, state root, replay protection, and liquidation evidence.
 
 Route setup and ERC-20 approvals are infrastructure-level setup. `npm run demo:warmup` can open or reuse the route and pre-approve demo allowances before the presentation. It does not deposit collateral, borrow, shock price, liquidate, or mint voucher collateral.
 

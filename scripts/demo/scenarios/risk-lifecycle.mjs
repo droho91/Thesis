@@ -9,6 +9,7 @@ import {
   OUT_JSON_PATH,
   RUNTIME_CONFIG_PATH,
   SHOCKED_VOUCHER_PRICE_E18,
+  approveIfNeeded,
   asBigInt,
   chainId,
   compact,
@@ -65,8 +66,12 @@ export async function runRiskScenario() {
 
   setPhase("prepare-forward-policy-and-allowance");
   await ensureRiskSeeded(config, ctx);
-  await txStep("approve escrow spend", () =>
-    ctx.A.canonicalTokenUser.approve(config.chains.A.escrowVault, FORWARD_AMOUNT + DENIED_AMOUNT, txOptions())
+  await approveIfNeeded(
+    ctx.A.canonicalTokenUser,
+    ctx.sourceUserAddress,
+    config.chains.A.escrowVault,
+    FORWARD_AMOUNT + DENIED_AMOUNT,
+    "approve escrow spend"
   );
 
   setPhase("send-forward-packet");
@@ -214,8 +219,12 @@ export async function runRiskScenario() {
         `Bank B user needs ${units(depositDelta)} free voucher collateral, but only has ${units(voucherBalance)}.`
       );
     }
-    await txStep("approve voucher collateral", () =>
-      ctx.B.voucherUser.approve(config.chains.B.lendingPool, depositDelta, txOptions())
+    await approveIfNeeded(
+      ctx.B.voucherUser,
+      ctx.destinationUserAddress,
+      config.chains.B.lendingPool,
+      depositDelta,
+      "approve voucher collateral"
     );
     await txStep("deposit voucher collateral", () => ctx.B.lendingPoolUser.depositCollateral(depositDelta, txOptions()));
   }
@@ -261,8 +270,12 @@ export async function runRiskScenario() {
     readDemo("risk reserves before liquidation", () => ctx.B.lendingPoolAdmin.totalReserves()),
     readDemo("risk bad debt before liquidation", () => ctx.B.lendingPoolAdmin.totalBadDebt()),
   ]);
-  await txStep("approve liquidation repay", () =>
-    ctx.B.debtLiquidator.approve(config.chains.B.lendingPool, actualLiquidationRepay, txOptions())
+  await approveIfNeeded(
+    ctx.B.debtLiquidator,
+    ctx.liquidatorAddress,
+    config.chains.B.lendingPool,
+    actualLiquidationRepay,
+    "approve liquidation repay"
   );
   const liquidationReceipt = await txStep("liquidate unhealthy position", () =>
     ctx.B.lendingPoolLiquidator.liquidate(ctx.destinationUserAddress, LIQUIDATION_REPAY, txOptions())

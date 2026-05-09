@@ -1,6 +1,7 @@
 import {
   DEMO_MAX_TIMEOUT_HEADER_GAP,
   DENIED_AMOUNT,
+  approveIfNeeded,
   asBigInt,
   compact,
   ensureRiskSeeded,
@@ -103,12 +104,13 @@ export async function executeTimeoutRefundAction(config, ctx, sourceChainId, des
       `Source user needs ${units(DENIED_AMOUNT)} aBANK for the timeout demo, but only has ${units(sourceBalanceBefore)}.`
     );
   }
-  const escrowAllowance = await ctx.A.canonicalTokenUser.allowance(ctx.sourceUserAddress, config.chains.A.escrowVault);
-  if (escrowAllowance < DENIED_AMOUNT) {
-    await txStep(`${labelPrefix}approve escrow for denied packet`, () =>
-      ctx.A.canonicalTokenUser.approve(config.chains.A.escrowVault, DENIED_AMOUNT, txOptions())
-    );
-  }
+  await approveIfNeeded(
+    ctx.A.canonicalTokenUser,
+    ctx.sourceUserAddress,
+    config.chains.A.escrowVault,
+    DENIED_AMOUNT,
+    `${labelPrefix}approve escrow for denied packet`
+  );
   await txStep(`${labelPrefix}block destination user`, () =>
     ctx.B.policy.setAccountAllowed(ctx.destinationUserAddress, false, txOptions())
   );

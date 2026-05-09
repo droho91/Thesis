@@ -98,6 +98,7 @@ The live presentation uses one main flow: a banking-style customer journey backe
 If this is the first time running the project on the machine, generate the local Besu runtime files once:
 
 ```bash
+npm install
 npm run besu:generate
 ```
 
@@ -122,18 +123,21 @@ During the live demo, use `Prepare Demo Session` if the UI asks for it, then run
 1. Prepare Demo Session
 2. Establish Bank Route if needed
 3. Transfer Collateral to Bank B
-4. Receive Verified Collateral
-5. Deposit Collateral
-6. Borrow Cash
-7. Simulate Collateral Price Drop
-8. Execute Liquidation
-9. Show technical evidence in the Technical / Thesis panel
+4. Fetch Source Header / Import Header if the UI recommends those proof sub-steps
+5. Receive Verified Collateral
+6. Deposit Collateral
+7. Borrow Cash
+8. Simulate Collateral Price Drop
+9. Execute Liquidation
+10. Show technical evidence in the Technical / Thesis panel
 
-`Fresh Reset (slow setup only)` redeploys and reseeds a clean baseline. Use it before the demo window or for recovery, not as the main live command.
+`Fresh Reset (slow setup only)` redeploys and reseeds a clean baseline. Use it before the demo window or for recovery, not as the main live command. `npm run demo:fresh` is the same slow clean-environment path; do not use it during the live demo because it redeploys and reseeds the whole environment.
 
 For the thesis-defense walkthrough, including the Borrower Portal, Risk Admin liquidation console, Proof Inspector, appendix actions, and known limitations, see [DEMO_FLOW.md](./DEMO_FLOW.md). For trust assumptions and limitations, see [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md).
 
-## Run The Demo From Terminal
+## Appendix Terminal Scenario
+
+The browser UI is the primary thesis-defense demo. The terminal scenario is kept as an appendix/regression walkthrough and is not the recommended live presentation path.
 
 With Besu running:
 

@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { defaultBesuRuntimeEnv, loadArtifact, normalizeRuntime, waitForBesuRuntimeReady } from "./besu-runtime.mjs";
 import { loadRuntimeConfig, saveRuntimeConfig, signerForChain, RUNTIME_CONFIG_PATH } from "./interchain-config.mjs";
+import { approveIfNeeded } from "./demo/context.mjs";
 import { baseTrace, writeTrace } from "./demo/trace-writer.mjs";
 
 defaultBesuRuntimeEnv();
@@ -199,8 +200,12 @@ async function main() {
   if (suppliedLiquidity < POOL_LIQUIDITY) {
     const depositAmount = POOL_LIQUIDITY - suppliedLiquidity;
     await ensureBalanceAtLeast(debtToken, liquiditySupplierAddress, depositAmount, "fund Bank B liquidity supplier");
-    await txStep("approve supplier liquidity", () =>
-      debtToken.approve(config.chains.B.lendingPool, depositAmount, txOptions())
+    await approveIfNeeded(
+      debtToken,
+      liquiditySupplierAddress,
+      config.chains.B.lendingPool,
+      depositAmount,
+      "approve supplier liquidity"
     );
     await txStep("deposit supplier liquidity", () => lendingPoolB.depositLiquidity(depositAmount, txOptions()));
   } else {

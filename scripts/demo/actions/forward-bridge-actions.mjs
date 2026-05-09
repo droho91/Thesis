@@ -593,9 +593,11 @@ export async function proveForwardMintStep({ config, ctx, sourceChainId, destina
   throw new Error("Destination packet handler did not store an acknowledgement hash.");
 }
 
-// Internal/advanced settlement path kept for thesis inspection. The main customer-facing
-// action above does not call this because receive proof already makes voucher collateral
-// available on Bank B.
+// Reserved for appendix-only settlement inspection.
+// The main Customer-Facing Verified Demo intentionally does not call this path.
+// In the live demo, voucher collateral becomes available after Bank B verifies
+// the Bank A packet storage proof and receives the packet. Reverse acknowledgement
+// is treated as backend settlement finalization.
 async function acknowledgeForwardSettlementInternal({
   config,
   ctx,

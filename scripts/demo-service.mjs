@@ -1032,14 +1032,14 @@ async function reusableSeededDeploymentReady() {
   if (config.build?.storageWordRlp !== "canonical-trimmed-v1") {
     return {
       ready: false,
-      reason: "Seeded runtime config was created before the canonical storage-proof RLP fix. Use Fresh Reset once.",
+      reason: "Seeded runtime config was created before the canonical storage-proof RLP fix. Use Fresh Reset (slow setup only) only to recover this stale deployment.",
     };
   }
   const expectedFingerprint = await expectedArtifactFingerprint();
   if (config.build?.artifactFingerprint !== expectedFingerprint) {
     return {
       ready: false,
-      reason: "Seeded runtime config was created with different contract artifacts. Use Fresh Reset once.",
+      reason: "Seeded runtime config was created with different contract artifacts. Use Fresh Reset (slow setup only) only to recover this stale deployment.",
     };
   }
 
@@ -1101,7 +1101,7 @@ async function deployAndSeed({ reset = false } = {}) {
         output: [
           `[controller] ${reusableReady.reason}`,
           "[controller] Reused current on-chain state; oracle, liquidation, balances, and previous demo actions were not reset.",
-          "[controller] Use Fresh Reset for a clean redeploy and seeded baseline.",
+          "[controller] Fresh Reset is slow setup/recovery only; it redeploys and reseeds the whole environment.",
         ].join("\n"),
       };
     }
@@ -1112,12 +1112,12 @@ async function deployAndSeed({ reset = false } = {}) {
         ready: false,
         warning: true,
         mode: "reuse-probe-failed",
-        message: "Existing runtime config was not confirmed ready. Run Fresh Reset before the live demo.",
+        message: "Existing runtime config was not confirmed ready. Run Prepare Demo Session first; use Fresh Reset only if the deployment is stale or corrupted.",
         output: [
           "[controller] Existing runtime config is not confirmed ready for reuse.",
           `[controller] ${reusableReady.reason}`,
           "[controller] Skipped automatic redeploy because Prepare Demo Session only reuses confirmed seeded deployments.",
-          "[controller] Use Fresh Reset before the demo window if you need a clean deployment.",
+          "[controller] Fresh Reset is slow setup/recovery only because it redeploys and reseeds the whole environment.",
         ].join("\n"),
       };
     }
@@ -1159,7 +1159,7 @@ async function runFlowStrict() {
   if (!(await hasDeploymentConfig())) {
     return {
       ok: false,
-      output: "[controller] No .interchain-lending.local.json found. Press Prepare Demo Session or Fresh Reset before running the flow.\n",
+      output: "[controller] No .interchain-lending.local.json found. Run deploy/seed, then Prepare Demo Session. Use Fresh Reset only for slow setup recovery.\n",
       error: "No local deployment config.",
     };
   }
@@ -1309,7 +1309,8 @@ export async function runActionPayload(actionRequest) {
         statusCode: 400,
         body: {
           ok: false,
-          output: "[controller] No .interchain-lending.local.json found. Press Prepare Demo Session or Fresh Reset before running demo actions.\n",
+          output:
+            "[controller] No .interchain-lending.local.json found. Run deploy/seed, then Prepare Demo Session before demo actions. Use Fresh Reset only for slow setup recovery.\n",
           error: "No local deployment config.",
           message: "No local deployment config.",
           trace: await readTrace(),

@@ -130,7 +130,7 @@ const ACTION_GUIDE = {
     nextAfterSuccess: "Establish the bank route, then transfer collateral to Bank B.",
     affectedPortal: "borrower",
     affectedMetrics: ["deploymentStatus", "bankABalance", "workflowStepConnect"],
-    failureRecovery: "Start the local Besu runtime. If a saved config exists but cannot be reused, run Fresh Reset deliberately to redeploy and reseed.",
+    failureRecovery: "Start the local Besu runtime and run Prepare Demo Session. Use Fresh Reset only if the deployment is stale or corrupted.",
   },
   resetSeeded: {
     runningTitle: "Fresh Reset (slow setup only)",
@@ -139,7 +139,7 @@ const ACTION_GUIDE = {
     nextAfterSuccess: "Begin the guided borrower flow from Establish Bank Route.",
     affectedPortal: "borrower",
     affectedMetrics: ["deploymentStatus", "bankABalance", "bankBBalance", "poolLiquidity"],
-    failureRecovery: "Check the runtime output, then rerun Fresh Reset before the live demo window.",
+    failureRecovery: "Check the runtime output. Fresh Reset is slow setup/recovery only because it redeploys and reseeds the whole environment.",
   },
   resumeSession: {
     runningTitle: "Resume Session",
@@ -1712,7 +1712,9 @@ function actionEligibility(action, status = currentStatus, validationOptions = {
   const disabled = (message) => ({ ok: false, message });
   const enabled = (message = "") => ({ ok: true, message });
 
-  if (!state.deployed && action !== "recoverClient") return disabled("Prepare Demo Session or Fresh Reset before running actions.");
+  if (!state.deployed && action !== "recoverClient") {
+    return disabled("Run Prepare Demo Session before actions. Use Fresh Reset only if the deployment is stale or corrupted.");
+  }
   if (locked && !SAFETY_MODE_ACTIONS.has(action)) {
     return disabled("Safety mode is active. Recover the light client before running interchain actions.");
   }
@@ -3257,7 +3259,7 @@ async function runDeploySeed(button = deploySeedButton) {
       setText("lastMessage", payload.message || "Demo runtime confirmed ready.");
     } else {
       const warning = new Error(payload.message || "Existing runtime config was not confirmed ready.");
-      setText("deploymentStatus", "Fresh Reset required");
+      setText("deploymentStatus", "Setup check failed");
       pushWarningActivity("deploySeed", warning.message, status);
       completeActionUi("deploySeed", false, warning, "warning");
       setText("lastMessage", warning.message);
@@ -3356,7 +3358,10 @@ async function runResumeSession(button = resumeSessionButtons[0]) {
       return;
     }
     completeActionUi("resumeSession", false, error);
-    setText("lastMessage", error.statusCode === 409 ? error.userMessage || "Resume Session needs Fresh Reset." : "Resume Session failed.");
+    setText(
+      "lastMessage",
+      error.statusCode === 409 ? error.userMessage || "Resume Session needs slow setup recovery." : "Resume Session failed."
+    );
     setOutput(error.message);
     pushFailedActivity("resumeSession", error);
   } finally {
