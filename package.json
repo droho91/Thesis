@@ -10,6 +10,8 @@
     "besu:generate": "node scripts/generate-besu-qbft-networks.mjs",
     "besu:up": "node scripts/ensure-docker-ready.mjs && docker compose -f networks/besu/docker-compose.yml up -d && node scripts/wait-for-besu-rpc.mjs",
     "besu:down": "docker compose -f networks/besu/docker-compose.yml down -v && node scripts/clean-besu-data.mjs",
+    "demo:prepare": "npm run besu:generate && npm run besu:up && npm run deploy && npm run seed && npm run demo:warmup",
+    "demo:start": "npm run demo:prepare && npm run demo:ui",
     "demo:fresh": "npm run besu:down && npm run besu:up && npm run deploy && npm run seed && npm run demo:warmup && npm run demo:ui",
     "demo:reset": "npm run besu:down && npm run besu:up && npm run deploy && npm run seed",
     "demo:ui:raw": "node scripts/serve-demo-ui.mjs",

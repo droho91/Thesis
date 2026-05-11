@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import { defaultBesuRuntimeEnv, loadArtifact, normalizeRuntime, waitForBesuRuntimeReady } from "./besu-runtime.mjs";
 import { loadRuntimeConfig, saveRuntimeConfig, signerForChain, RUNTIME_CONFIG_PATH } from "./interchain-config.mjs";
-import { approveIfNeeded } from "./demo/context.mjs";
+import { approveIfNeeded, ensureDeploymentCode } from "./demo/context.mjs";
 import { baseTrace, writeTrace } from "./demo/trace-writer.mjs";
 
 defaultBesuRuntimeEnv();
@@ -108,6 +108,7 @@ async function main() {
   await waitForBesuRuntimeReady();
 
   const config = await loadRuntimeConfig();
+  await ensureDeploymentCode(config);
   const tokenArtifact = await loadArtifact("apps/BankToken.sol", "BankToken");
   const policyArtifact = await loadArtifact("apps/BankPolicyEngine.sol", "BankPolicyEngine");
   const oracleArtifact = await loadArtifact("apps/ManualAssetOracle.sol", "ManualAssetOracle");

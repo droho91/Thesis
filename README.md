@@ -95,22 +95,15 @@ npm test
 
 The live presentation uses one main flow: a banking-style customer journey backed by real protocol checks. Route setup and token allowances are warmed before the audience flow because they are infrastructure preparation. The receive step is still mandatory: Bank B mints voucher collateral only after it verifies the Bank A packet storage proof. The reverse acknowledgement is settlement finalization and is deferred from the customer-facing path.
 
-If this is the first time running the project on the machine, generate the local Besu runtime files once:
+Recommended thesis-defense command sequence:
 
 ```bash
 npm install
-npm run besu:generate
-```
-
-Before the live demo, start the two local Besu/QBFT bank chains, deploy, seed, and warm the reusable demo state:
-
-```bash
-npm run besu:up
-npm run deploy
-npm run seed
-npm run demo:warmup
+npm run demo:prepare
 npm run demo:ui
 ```
+
+`npm run demo:prepare` is the fail-fast setup path: generate Besu files, start both chains, deploy contracts, seed policy/risk state, and warm route/allowances. Use this command instead of pasting the individual setup commands into PowerShell; if Bank A or Bank B is not producing blocks, the command stops before deploy/seed can run against stale contract addresses.
 
 Open:
 
@@ -127,13 +120,15 @@ During the live demo, use `Prepare Demo Session` if the UI asks for it, then run
 5. Receive Verified Collateral
 6. Deposit Collateral
 7. Borrow Cash
-8. Simulate Collateral Price Drop
-9. Execute Liquidation
+8. Repay Loan
+9. Withdraw Collateral
 10. Show technical evidence in the Technical / Thesis panel
+
+The main demo follows a normal borrower journey: transfer collateral, deposit, borrow, repay, and withdraw. The liquidation path is kept as an appendix risk scenario because it intentionally makes the borrower position unhealthy through an oracle price shock.
 
 `Fresh Reset (slow setup only)` redeploys and reseeds a clean baseline. Use it before the demo window or for recovery, not as the main live command. `npm run demo:fresh` is the same slow clean-environment path; do not use it during the live demo because it redeploys and reseeds the whole environment.
 
-For the thesis-defense walkthrough, including the Borrower Portal, Risk Admin liquidation console, Proof Inspector, appendix actions, and known limitations, see [DEMO_FLOW.md](./DEMO_FLOW.md). For trust assumptions and limitations, see [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md).
+For the thesis-defense walkthrough, including the Borrower Portal, appendix risk scenario, Proof Inspector, appendix actions, and known limitations, see [DEMO_FLOW.md](./DEMO_FLOW.md). For trust assumptions and limitations, see [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md).
 
 ## Appendix Terminal Scenario
 

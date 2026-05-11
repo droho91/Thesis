@@ -31,6 +31,7 @@ const demoService = await readFile(resolve(process.cwd(), "scripts", "demo-servi
 const demoApi = await readFile(resolve(process.cwd(), "scripts", "demo-api.mjs"), "utf8");
 const demoStaticServer = await readFile(resolve(process.cwd(), "scripts", "demo-static-server.mjs"), "utf8");
 const lendingActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "lending-actions.mjs"), "utf8");
+const liquidationActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "liquidation-actions.mjs"), "utf8");
 const forwardBridgeActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "forward-bridge-actions.mjs"), "utf8");
 const reverseBridgeActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "reverse-bridge-actions.mjs"), "utf8");
 const timeoutActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "timeout-actions.mjs"), "utf8");
@@ -214,8 +215,9 @@ assert.match(demoApp, /movedUp\(state\.collateral, before\.collateral\) \|\| mov
 assert.match(demoApp, /function updateAmountActionAvailability\(status\)[\s\S]*const busy = document\.body\.classList\.contains\("is-busy"\)[\s\S]*button\.disabled = busy \|\| !safetyAllowed \|\| !validation\.ok/, "amount action buttons must stay disabled while a strict action is still processing");
 assert.match(demoApp, /movedDown\(state\.collateral, before\.collateral\) \|\| movedUp\(state\.voucher, before\.voucher\)/, "withdraw completion should require before/after balance movement");
 assert.match(demoApp, /traceRisk\.withdrawTxHash \|\| traceRisk\.collateralWithdrawn \|\| lifecycle\.borrowerCollateralWithdrawn/, "withdraw completion should not poll forever after the withdraw trace is recorded");
-assert.match(demoService, /if \(lifecycle\.activeDebt\)[\s\S]*liquidationReadyFromStatus\(status\)[\s\S]*executeLiquidation[\s\S]*simulatePriceShock/, "service recommendations should route active debt through price shock and liquidation in the live flow");
-assert.match(demoService, /return \{ action: "withdrawCollateral", label: "Withdraw collateral to return" \}/, "service recommendations should direct debt-closed positions toward collateral withdrawal");
+assert.match(demoService, /if \(lifecycle\.activeDebt\)[\s\S]*repayRequiredShortfallFromStatus\(status\)[\s\S]*topUpRepayCash[\s\S]*repay/, "service recommendations should route active debt through repayment in the main borrower flow");
+assert.match(liquidationActions, /priceShockTxHash[\s\S]*liquidationTxHash: null/, "price shock should clear stale liquidation trace so appendix risk evidence is not falsely marked complete");
+assert.match(demoService, /return \{ action: "withdrawCollateral", label: "Withdraw Collateral" \}/, "service recommendations should direct debt-closed positions toward collateral withdrawal");
 assert.match(demoApp, /function forwardReceiptConsumed\(status\)/, "UI should distinguish the latest packet receipt from older visible voucher balances");
 assert.match(demoApp, /function forwardPacketPending\(status\)[\s\S]*return !forwardReceiptConsumed\(status\)/, "UI should re-enable Receive Verified Collateral after a new lock even when old voucher remains visible");
 assert.match(demoApp, /!forwardPending &&[\s\S]*state\.voucher > POSITION_EPSILON/, "UI should only treat visible voucher as delivered when no newer packet is pending");

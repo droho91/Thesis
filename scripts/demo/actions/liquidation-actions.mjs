@@ -21,7 +21,7 @@ export async function simulatePriceShockStep({ config, ctx }) {
   const healthBeforeShock = await readDemo("health before shock", () =>
     ctx.B.lendingPoolAdmin.healthFactorBps(ctx.destinationUserAddress)
   );
-  await txStep("step shock voucher oracle price", () =>
+  const shockReceipt = await txStep("step shock voucher oracle price", () =>
     ctx.B.oracle.setPrice(config.chains.B.voucherToken, SHOCKED_VOUCHER_PRICE_E18, txOptions())
   );
   const [healthAfterShock, liquidatableAfterShock, maxLiquidationRepay, liquidationPreview] = await Promise.all([
@@ -43,12 +43,27 @@ export async function simulatePriceShockStep({ config, ctx }) {
     ctx,
     {
       risk: {
+        priceShockTxHash: shockReceipt.hash,
         shockedVoucherPriceE18: SHOCKED_VOUCHER_PRICE_E18.toString(),
         healthBeforeShockBps: healthBeforeShock.toString(),
         healthAfterShockBps: healthAfterShock.toString(),
         liquidatableAfterShock,
         maxLiquidationRepay: units(maxLiquidationRepay),
         seizedCollateralPreview: units(previewSeized),
+        liquidationRepaid: null,
+        liquidationRequestedRepay: null,
+        liquidationTxHash: null,
+        seizedCollateral: null,
+        collateralBeforeLiquidation: null,
+        debtBeforeLiquidation: null,
+        debtAfterLiquidation: null,
+        collateralAfterLiquidation: null,
+        reservesAfterLiquidation: null,
+        badDebtAfterLiquidation: null,
+        badDebtWrittenOff: null,
+        reservesUsed: null,
+        supplierLoss: null,
+        liquidatorVoucherBalance: null,
       },
     },
     {

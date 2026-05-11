@@ -8,13 +8,11 @@ The live presentation uses one main flow: a customer-facing verified demo. It sh
 
 ```bash
 npm install
-npm run besu:generate
-npm run besu:up
-npm run deploy
-npm run seed
-npm run demo:warmup
+npm run demo:prepare
 npm run demo:ui
 ```
+
+Use `npm run demo:prepare` as the single fail-fast preparation command. It stops immediately if the local Besu chains are not producing blocks, so deploy/seed cannot accidentally continue against stale contract addresses.
 
 Open:
 
@@ -33,9 +31,9 @@ Use **Prepare Demo Session** to reuse an already seeded local runtime. Use **Fre
 5. Receive verified collateral by verifying the Bank A packet storage proof on Bank B.
 6. Deposit collateral into the Bank B lending pool.
 7. Borrow cash within available borrow capacity.
-8. Simulate a collateral price drop with the governed demo oracle.
-9. Execute liquidation only after the health factor makes the account liquidatable.
-10. Open Technical / Thesis to show packet proof, trusted height, state root, replay protection, and liquidation evidence.
+8. Repay the loan through the lending pool.
+9. Withdraw collateral back to the borrower wallet after the debt is closed.
+10. Open Technical / Thesis to show packet proof, trusted height, state root, replay protection, verified receive path, and deferred acknowledgement settlement.
 
 Route setup and ERC-20 approvals are infrastructure-level setup. `npm run demo:warmup` can open or reuse the route and pre-approve demo allowances before the presentation. It does not deposit collateral, borrow, shock price, liquidate, or mint voucher collateral.
 
@@ -45,16 +43,15 @@ The Borrower Portal shows collateral value, current debt, available borrow, heal
 
 Borrow capacity is based on `collateralFactorBps`. Liquidation risk is based on the separate `liquidationThresholdBps`, so a borrower can be inside the borrow limit while still carrying a thinner health-factor buffer.
 
-## Admin liquidation flow
+## Appendix Risk Scenario: Price Shock and Liquidation
 
-Open **Risk Admin**.
+The liquidation scenario demonstrates risk management. It is not the normal borrower journey; it intentionally makes the borrower position unhealthy through the governed demo oracle. Keep it available for Q&A or a technical appendix demonstration.
 
-1. Review the governed demo oracle prices, collateral value, debt, available borrow, borrow capacity, liquidation threshold value, health factor, collateral factor / max LTV, liquidation threshold, liquidation trigger, utilization, reserves, and bad debt.
-2. Set or accept the shock price and run **Simulate Collateral Price Drop**.
-3. Compare health factor before and after the price drop.
-4. Review the liquidation preview: repay amount, seized collateral, remaining debt, remaining collateral, bad debt, reserve use, and supplier loss.
-5. Run **Execute Liquidation** when the account is liquidatable.
-6. Review the after-liquidation state and transaction hash. This section stays blank until **Execute Liquidation** has actually produced a liquidation transaction.
+Open **Risk Appendix**.
+
+1. Simulate Collateral Price Drop.
+2. Execute Liquidation when the account is liquidatable.
+3. Show health factor, liquidation preview, after-liquidation state, and transaction hash.
 
 The oracle is intentionally labeled as a governed demo oracle. It is manual and demo-only, not a decentralized market oracle.
 
@@ -94,7 +91,7 @@ Open **Appendix** or **Advanced Verification** for optional thesis evidence and 
 
 - Healthy Borrow Scenario: uses the borrower action flow.
 - Repay and Withdraw Scenario: shows that repayment and withdrawal remain guarded by lending checks.
-- Price Shock and Liquidation Scenario: uses the Risk Admin oracle shock and liquidation actions.
+- Price Shock and Liquidation Scenario: optional appendix risk-management path using the governed oracle shock and liquidation actions.
 - Replay Attack Rejection Scenario: submits an already received packet proof and expects rejection.
 - Timeout Refund Scenario: the UI action executes the receipt absence proof path; scripts build/relay the proof and the contract records timeout/refund state on-chain.
 - Light Client Freeze and Recovery Scenario: submits conflicting-header evidence and then recovers the client.

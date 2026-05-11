@@ -51,7 +51,7 @@
               Borrower Portal
             </button>
             <button class="portal-tab" data-portal-tab="risk" role="tab" aria-selected="false" type="button">
-              Risk Admin
+              Risk Appendix
             </button>
             <button class="portal-tab" data-portal-tab="technical" role="tab" aria-selected="false" type="button">
               Technical / Thesis
@@ -843,11 +843,11 @@
 
       </section>
 
-      <section class="portal-section portal-risk" aria-label="Risk admin portal">
+      <section class="portal-section portal-risk" aria-label="Appendix risk scenario">
         <div class="portal-heading">
           <div>
-            <p class="eyebrow">Risk Admin Portal</p>
-            <h2>Liquidation console</h2>
+            <p class="eyebrow">Appendix Risk Scenario</p>
+            <h2>Collateral price drop and liquidation</h2>
           </div>
           <span class="status-chip" id="riskLiquidatableState">Waiting</span>
         </div>
@@ -947,7 +947,7 @@
           <article class="product-card risk-panel risk-panel--action">
             <div class="panel-head">
               <div>
-                <p class="eyebrow">Oracle Shock</p>
+                <p class="eyebrow">Optional Oracle Shock</p>
                 <h3>Price drop simulation</h3>
                 <div class="trust-boundary" aria-label="Oracle trust boundary">
                   <span class="trust-badge trust-badge--chain" title="The demo oracle update is an on-chain transaction.">On-chain verified</span>
@@ -981,14 +981,14 @@
             </label>
             <p class="validation-message" id="shockValidation" aria-live="polite"></p>
             <button class="button-danger transaction-submit" data-action="simulatePriceShock" data-amount-input="shockPrice" type="button">
-              Simulate Collateral Price Drop
+              Optional: Simulate Collateral Price Drop
             </button>
           </article>
 
           <article class="product-card risk-panel risk-panel--action">
             <div class="panel-head">
               <div>
-                <p class="eyebrow">Liquidation Preview</p>
+                <p class="eyebrow">Optional Liquidation Preview</p>
                 <h3>What the liquidator can do</h3>
                 <div class="trust-boundary" aria-label="Liquidation trust boundary">
                   <span class="trust-badge trust-badge--chain" title="Liquidation is executed by the lending pool contract.">On-chain verified</span>
@@ -996,7 +996,7 @@
                 </div>
               </div>
             </div>
-            <p class="validation-message">Liquidation Preview uses the current on-chain oracle price. Run Simulate Collateral Price Drop first to update executable liquidation values.</p>
+            <p class="validation-message">Optional appendix: run Simulate Collateral Price Drop first to demonstrate executable liquidation values after an intentionally unhealthy position.</p>
             <dl class="metric-grid metric-grid--three">
               <div>
                 <dt>Requested repay</dt>
@@ -1065,7 +1065,7 @@
                 data-amount-input="liquidationRepayAmount"
                 type="button"
               >
-                Execute Liquidation
+                Optional: Execute Liquidation
               </button>
             </div>
           </article>
@@ -1387,7 +1387,7 @@
 
           <article class="product-card scenario-card">
             <div class="scenario-card-head">
-              <h3>Price Shock and Liquidation</h3>
+              <h3>Optional Risk Scenario: Price Shock and Liquidation</h3>
               <span class="status-chip" id="scenarioLiquidationStatus">Waiting</span>
             </div>
             <div class="trust-boundary">
@@ -1399,15 +1399,15 @@
               <div><span>Action</span><strong id="scenarioLiquidationAction">Shock price / liquidate</strong></div>
               <div><span>After</span><strong id="scenarioLiquidationAfter">No liquidation executed yet</strong></div>
             </div>
-            <div class="scenario-amount-summary" id="scenarioLiquidationAmountSummary">Amount source: Risk Admin shock price and liquidation repay amount.</div>
+            <div class="scenario-amount-summary" id="scenarioLiquidationAmountSummary">Amount source: Risk Appendix shock price and liquidation repay amount.</div>
             <dl>
               <div><dt>Protocol meaning</dt><dd>A governed demo oracle update changes the executable risk state.</dd></div>
               <div><dt>Risk control</dt><dd>Only an authorized liquidator can repay and seize collateral in this prototype.</dd></div>
               <div><dt>What this proves</dt><dd>The risk layer reacts to adverse price movement and records pool losses.</dd></div>
             </dl>
             <div class="scenario-actions">
-              <button class="button-danger" data-action="simulatePriceShock" type="button">Simulate Price Drop</button>
-              <button class="button-danger" data-action="executeLiquidation" type="button">Execute Liquidation</button>
+              <button class="button-danger" data-action="simulatePriceShock" type="button">Optional: Simulate Price Drop</button>
+              <button class="button-danger" data-action="executeLiquidation" type="button">Optional: Execute Liquidation</button>
               <button class="button-primary-soft" data-action="settleSeizedVoucher" type="button">Settle Voucher</button>
             </div>
           </article>

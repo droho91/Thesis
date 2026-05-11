@@ -208,7 +208,7 @@ const ACTION_GUIDE = {
     runningTitle: "Borrow Cash",
     currentAction: "Submitting a borrow transaction bounded by policy, liquidity, and oracle valuation.",
     expectedVisibleChange: "Current debt and Bank B bCASH balance increase; health factor decreases but remains visible.",
-    nextAfterSuccess: "Repay debt, withdraw safe collateral, or monitor health in Risk Admin.",
+    nextAfterSuccess: "Repay debt, withdraw safe collateral, or optionally monitor health in Risk Appendix.",
     affectedPortal: "borrower",
     affectedMetrics: ["currentDebtHero", "bankBBalance", "poolDebt", "healthFactorHero", "scenarioHealthyStatus"],
     failureRecovery: "Use an amount within available borrowing power and market liquidity.",
@@ -235,7 +235,7 @@ const ACTION_GUIDE = {
     runningTitle: "Withdraw Collateral",
     currentAction: "Withdrawing voucher collateral only if the remaining position stays healthy.",
     expectedVisibleChange: "Deposited collateral decreases and free voucher balance increases.",
-    nextAfterSuccess: "Burn voucher collateral to start the Bank A unlock path, or continue managing the loan.",
+    nextAfterSuccess: "Open Technical Evidence to review the verified bridge and lending trail.",
     affectedPortal: "borrower",
     affectedMetrics: ["poolCollateral", "voucherBalance", "withdrawableInline", "scenarioRepayStatus"],
     failureRecovery: "Repay more debt or reduce the withdrawal amount until projected health is safe.",
@@ -277,17 +277,17 @@ const ACTION_GUIDE = {
     failureRecovery: "Fetch or import the Bank B header first if the reverse proof height is not trusted yet.",
   },
   simulatePriceShock: {
-    runningTitle: "Simulate Collateral Price Drop",
-    currentAction: "Submitting a governed demo oracle update for the voucher collateral price.",
-    expectedVisibleChange: "Oracle price, health factor, and liquidation eligibility update in Risk Admin.",
-    nextAfterSuccess: "Execute Liquidation if the account is now below the liquidation threshold.",
+    runningTitle: "Optional: Simulate Collateral Price Drop",
+    currentAction: "Submitting an appendix governed demo oracle update for the voucher collateral price.",
+    expectedVisibleChange: "Oracle price, health factor, and liquidation eligibility update in Risk Appendix.",
+    nextAfterSuccess: "Optionally execute liquidation if the account is now below the liquidation threshold.",
     affectedPortal: "risk",
     affectedMetrics: ["riskOracleCollateralPrice", "riskCurrentPriceInline", "riskHealthFactor", "riskHealthAfterShock", "riskLiquidatableState"],
     failureRecovery: "Choose a positive price, usually below the current collateral price, then retry.",
   },
   executeLiquidation: {
-    runningTitle: "Execute Liquidation",
-    currentAction: "The authorized liquidator confirms repay allowance if needed, repays debt, seizes voucher collateral, and records reserves or bad debt.",
+    runningTitle: "Optional: Execute Liquidation",
+    currentAction: "In the appendix risk scenario, the authorized liquidator confirms repay allowance if needed, repays debt, seizes voucher collateral, and records reserves or bad debt.",
     expectedVisibleChange: "Debt, collateral, reserves, bad debt, seized voucher, and settlement status update.",
     nextAfterSuccess: "Settle the seized voucher through the reverse proof path.",
     affectedPortal: "risk",
@@ -343,7 +343,7 @@ const ACTION_GUIDE = {
     runningTitle: "Run Full Scripted Appendix",
     currentAction: "Running the scripted route, proof, borrow, oracle shock, liquidation, timeout, and settlement path.",
     expectedVisibleChange: "Scenario cards, risk metrics, proof lifecycle, and settlement evidence update as the script advances.",
-    nextAfterSuccess: "Review Risk Admin and Technical / Thesis evidence for defense discussion.",
+    nextAfterSuccess: "Review Risk Appendix and Technical / Thesis evidence for defense discussion.",
     affectedPortal: "scenarios",
     affectedMetrics: ["scenarioLiquidationStatus", "riskSettlementStatus", "proofStatusChip", "portalChangeBanner"],
     failureRecovery: "Use Fresh Reset deliberately before rerunning the scenario if it stopped mid-lifecycle.",
@@ -1435,7 +1435,7 @@ function workflowStepsForStatus(status) {
             : lifecycle.settlementVoucher
               ? "Settle"
               : lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher
-                ? "Burn ready"
+                ? "Evidence ready"
                 : debtClosedAfterBorrow && lifecycle.activeCollateral
                   ? "Withdraw first"
                   : "Waiting",
@@ -1522,12 +1522,12 @@ function workflowRecommendation(status) {
   if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher) {
     return {
       step: "return",
-      title: "Return collateral to Bank A",
-      status: "Burn ready",
-      summary: "Voucher collateral is free in the Bank B wallet.",
-      cta: { type: "action", action: "burn", label: "Burn voucher and start Bank A unlock" },
-      description: "Burn the free voucher and commit the reverse packet for source-bank unlock.",
-      hint: `${formatAmount(state.voucher, "vA")} free voucher available to return.`,
+      title: "Open technical evidence",
+      status: "Borrower flow complete",
+      summary: "The normal borrower journey is complete: collateral was deposited, debt was repaid, and collateral was withdrawn.",
+      cta: { type: "portal", portal: "technical", label: "Open Technical Evidence" },
+      description: "Review packet proof, trusted height, state root, replay protection, verified receive path, and deferred acknowledgement settlement.",
+      hint: "Burn and reverse unlock remain available as appendix closeout actions.",
       risk: "safe",
     };
   }
@@ -1551,12 +1551,12 @@ function workflowRecommendation(status) {
     return returning
       ? {
           step: "return",
-          title: "Return collateral to Bank A",
-          status: "Burn ready",
-          summary: "Debt is closed and voucher collateral is free.",
-          cta: { type: "action", action: "burn", label: "Burn voucher and start Bank A unlock" },
-          description: "Burn the voucher before running the reverse proof unlock.",
-          hint: `${formatAmount(state.voucher, "vA")} free voucher available to return.`,
+          title: "Open technical evidence",
+          status: "Borrower flow complete",
+          summary: "Debt is closed and voucher collateral is back in the Bank B wallet.",
+          cta: { type: "portal", portal: "technical", label: "Open Technical Evidence" },
+          description: "Use the proof inspector to show the verified collateral transfer and lending lifecycle evidence.",
+          hint: "Returning collateral to Bank A is an appendix closeout action.",
           risk: "safe",
         }
       : {
@@ -1572,22 +1572,25 @@ function workflowRecommendation(status) {
   }
 
   if (lifecycle.activeDebt) {
-    const canLiquidate = liquidationReady(status);
+    const shortfall = Math.max(0, state.debt - state.bankB);
+    const needsCash = shortfall > POSITION_EPSILON;
     return {
       step: "manage",
-      title: canLiquidate ? "Execute liquidation" : "Simulate collateral price drop",
-      status: canLiquidate ? "Liquidatable" : "Debt open",
-      summary: canLiquidate
-        ? "The account is below the liquidation threshold."
-        : "Debt is open. The live demo now moves to the governed oracle price-drop scenario.",
-      cta: canLiquidate
-        ? { type: "action", action: "executeLiquidation", label: "Execute Liquidation" }
-        : { type: "action", action: "simulatePriceShock", label: "Simulate Collateral Price Drop" },
-      description: canLiquidate
-        ? "Run liquidation through the lending pool, which still checks health factor and liquidator authorization on-chain."
-        : "Apply the demo price shock before liquidation so the health-factor rule becomes visible.",
-      hint: canLiquidate ? `${health.label} health factor.` : `${formatAmount(state.debt, "bCASH")} debt outstanding.`,
-      risk: canLiquidate || elevatedRisk ? "risk" : "safe",
+      title: needsCash ? "Add demo cash for repayment" : elevatedRisk ? "Repay debt to restore health" : "Repay active debt",
+      status: needsCash ? "Needs cash" : elevatedRisk ? health.status : "Debt open",
+      summary: needsCash
+        ? "The account needs more demo bCASH before it can close the loan cleanly."
+        : "The normal borrower journey now repays the loan before collateral withdrawal.",
+      cta: needsCash
+        ? { type: "action", action: "topUpRepayCash", label: "Add demo bCASH for repayment" }
+        : { type: "action", action: "repay", label: "Repay Loan" },
+      description: needsCash
+        ? "Mint demo bCASH to model the borrower reacquiring repayment cash, then repay from the borrower portal."
+        : "Repay through the lending pool. Health-factor checks remain enforced by the contract.",
+      hint: needsCash
+        ? `${formatAmount(shortfall, "bCASH")} more is needed to repay the current debt.`
+        : `${formatAmount(state.debt, "bCASH")} debt outstanding.`,
+      risk: elevatedRisk ? "risk" : "safe",
     };
   }
 
@@ -1597,8 +1600,8 @@ function workflowRecommendation(status) {
       title: "Withdraw collateral to close",
       status: "Debt closed",
       summary: "Debt is closed and collateral is still active in the lending pool.",
-      cta: { type: "action", action: "withdrawCollateral", label: "Withdraw collateral to return" },
-      description: "Withdraw active collateral first; after it is free in your Bank B wallet, burn it and run the reverse proof.",
+      cta: { type: "action", action: "withdrawCollateral", label: "Withdraw Collateral" },
+      description: "Withdraw active collateral back to the Bank B wallet, then open the proof inspector for the verified bridge and lending trail.",
       hint: `${formatAmount(state.withdrawable, "vA")} withdrawable.`,
       risk: "safe",
     };
@@ -2610,7 +2613,7 @@ function refreshTransactionUi(status, { forceDefaults = false } = {}) {
   setScenarioAmountSummary(
     "scenarioLiquidationAmountSummary",
     [
-      `Shock uses ${formatAmount(shockPrice, "bCASH/vA")} and liquidation repay uses ${formatAmount(liquidationAmount, "bCASH")} from Risk Admin controls.`,
+      `Shock uses ${formatAmount(shockPrice, "bCASH/vA")} and liquidation repay uses ${formatAmount(liquidationAmount, "bCASH")} from Risk Appendix controls.`,
       `Expected: health ${shockedHealth.label}; liquidatable ${liquidatableAfterSelectedShock || risk.shockPreview?.liquidatable ? "yes" : "no"}.`,
       !shockValidation.ok ? `Shock blocked: ${shockValidation.message}` : "",
       shockValidation.ok && !liquidationValidation.ok ? `Liquidation after shock may need an oracle update first: ${liquidationValidation.message}` : "",
@@ -2814,8 +2817,8 @@ function actionTitle(action) {
     repay: "Repay Loan",
     topUpRepayCash: "Added demo bCASH",
     withdrawCollateral: "Withdrew collateral",
-    simulatePriceShock: "Simulate Collateral Price Drop",
-    executeLiquidation: "Execute Liquidation",
+    simulatePriceShock: "Optional: Simulate Collateral Price Drop",
+    executeLiquidation: "Optional: Execute Liquidation",
     settleSeizedVoucher: "Started seized-voucher settlement",
     burn: "Started collateral return",
     finalizeReverseHeader: "Checked return confirmation",

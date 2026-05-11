@@ -127,8 +127,8 @@ function operationLabel(action) {
     repay: "Repay Loan",
     topUpRepayCash: "Get demo bCASH",
     withdrawCollateral: "Withdraw collateral",
-    simulatePriceShock: "Simulate Collateral Price Drop",
-    executeLiquidation: "Execute Liquidation",
+    simulatePriceShock: "Optional: Simulate Collateral Price Drop",
+    executeLiquidation: "Optional: Execute Liquidation",
     settleSeizedVoucher: "Settle seized voucher",
     burn: "Burn voucher",
     finalizeReverseHeader: "Read Bank B Besu header",
@@ -760,6 +760,11 @@ function repayFundingShortfallFromStatus(status) {
   return Math.max(0, target - statusNumber(balances.bankB));
 }
 
+function repayRequiredShortfallFromStatus(status) {
+  const balances = status?.balances || {};
+  return Math.max(0, statusNumber(balances.poolDebt) - statusNumber(balances.bankB));
+}
+
 function visibleStateReached(action, status, before = null) {
   if (!status) return false;
   const balances = status.balances || {};
@@ -961,7 +966,7 @@ function nextValidActionFromStatus(status) {
   }
 
   if (lifecycle.borrowerCollateralWithdrawn && lifecycle.freeVoucher) {
-    return { action: "burn", label: "Burn voucher and start Bank A unlock" };
+    return { action: "refresh", label: "Open Technical Evidence" };
   }
 
   if (forwardPending) {
@@ -971,18 +976,18 @@ function nextValidActionFromStatus(status) {
 
   if (lifecycle.freeVoucher && !lifecycle.activeDebt && !lifecycle.activeCollateral) {
     return lifecycle.debtWasOpened
-      ? { action: "burn", label: "Burn voucher and start Bank A unlock" }
+      ? { action: "refresh", label: "Open Technical Evidence" }
       : { action: "depositCollateral", label: "Deposit Collateral" };
   }
 
   if (lifecycle.activeDebt) {
-    return liquidationReadyFromStatus(status)
-      ? { action: "executeLiquidation", label: "Execute Liquidation" }
-      : { action: "simulatePriceShock", label: "Simulate Collateral Price Drop" };
+    return repayRequiredShortfallFromStatus(status) > 0.000001
+      ? { action: "topUpRepayCash", label: "Get demo bCASH" }
+      : { action: "repay", label: "Repay Loan" };
   }
 
   if (lifecycle.activeCollateral && lifecycle.debtWasOpened) {
-    return { action: "withdrawCollateral", label: "Withdraw collateral to return" };
+    return { action: "withdrawCollateral", label: "Withdraw Collateral" };
   }
 
   if (lifecycle.activeCollateral && statusNumber(market.availableToBorrow) > 0) {
