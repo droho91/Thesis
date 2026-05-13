@@ -498,6 +498,23 @@ function ctaIntent(cta) {
   return "Workflow action";
 }
 
+function ctaIsPassive(cta) {
+  return ["portal", "refresh", "return"].includes(cta?.type);
+}
+
+function ctaRunLabel(cta) {
+  if (!cta) return "Continue";
+  const label = ctaLabel(cta);
+  return cta.type === "action" || cta.type === "deploySeed" || cta.type === "resetSeeded" ? `Run ${label}` : label;
+}
+
+function applyPrimaryCtaTone(cta, { risk = false, reviewingPastStep = false } = {}) {
+  if (!primaryWorkflowCta) return;
+  const danger = risk && !reviewingPastStep && !ctaIsPassive(cta);
+  primaryWorkflowCta.classList.toggle("button-danger", danger);
+  primaryWorkflowCta.classList.toggle("button-primary", !danger);
+}
+
 function bindPrimaryWorkflowCta(cta) {
   if (!primaryWorkflowCta) return;
   delete primaryWorkflowCta.dataset.ctaType;
@@ -572,7 +589,14 @@ function workflowCtaEligibility(cta, status = currentStatus, { recommended = fal
     return { ok: false, message: controllerBusyMessage(activeOperation, cta.action) };
   }
   if (cta?.type === "action") {
-    const amountOverride = recommended && AMOUNT_ACTIONS[cta.action] ? defaultAmountForAction(cta.action, status) : null;
+    const config = AMOUNT_ACTIONS[cta.action];
+    const input = config ? document.getElementById(config.inputId) : null;
+    const useRecommendedAmount =
+      recommended &&
+      config &&
+      input?.dataset.dirty !== "true" &&
+      numeric(input?.value) <= POSITION_EPSILON;
+    const amountOverride = useRecommendedAmount ? defaultAmountForAction(cta.action, status) : null;
     return actionEligibility(cta.action, status, { amountOverride });
   }
   return { ok: true, message: "" };
@@ -1071,18 +1095,22 @@ function renderPrimaryGuide(actionState) {
     if (actionState.phase === "success" && nextCta?.type === "action") {
       primeRecommendedAmount(nextCta.action, currentStatus);
     }
+    const workflowRisk = workflowModel(currentStatus).risk === "risk";
     bindPrimaryWorkflowCta(actionState.phase === "success" ? nextCta : null);
     const nextValidation = nextCta ? workflowCtaEligibility(nextCta, currentStatus, { recommended: true }) : { ok: true, message: "" };
     primaryWorkflowCta.disabled = actionState.phase === "running" || (actionState.phase === "success" && !nextValidation.ok);
     primaryWorkflowCta.title = actionState.phase === "success" && !nextValidation.ok ? nextValidation.message : "";
     primaryWorkflowCta.dataset.state = actionState.phase === "success" && !nextValidation.ok ? "blocked" : actionState.phase;
+    applyPrimaryCtaTone(actionState.phase === "success" ? nextCta : { type: "action", action: actionState.action }, {
+      risk: workflowRisk || actionState.phase === "failed" || actionState.phase === "warning",
+    });
     primaryWorkflowCta.textContent =
       actionState.phase === "running"
         ? guide.runningTitle
         : actionState.phase === "failed" || actionState.phase === "warning"
           ? "Review recovery step"
           : nextCta?.label
-            ? `Run ${nextCta.label}`
+            ? ctaRunLabel(nextCta)
             : "Continue";
   }
 }
@@ -1681,14 +1709,15 @@ function forwardPacketPending(status) {
 
 function hasReversePacket(status) {
   const reverse = status?.trace?.reverse || {};
-  const settlement = status?.risk?.settlement || {};
-  return Boolean(reverse.packetId || reverse.commitHeight || reverse.sourceTxHash || settlement.packetId || settlement.burnTxHash);
+  return Boolean(reverse.packetId || reverse.commitHeight || reverse.sourceTxHash);
 }
 
 function reversePacketPending(status) {
   const settlement = status?.risk?.settlement || {};
+  const reverse = status?.trace?.reverse || {};
+  const settlementMatchesReverse = Boolean(settlement.packetId && settlement.packetId === reverse.packetId);
   if (!hasReversePacket(status)) return false;
-  return !reverseConsumed(status) && !settlement.unlocked;
+  return !reverseConsumed(status) && !(settlementMatchesReverse && settlement.unlocked);
 }
 
 function closeoutWithdrawEligibility(status, baseEligibility) {
@@ -1997,8 +2026,7 @@ function syncWorkflowUi(status = currentStatus) {
     primaryWorkflowCta.disabled = document.body.classList.contains("is-busy") || !primaryValidation.ok;
     primaryWorkflowCta.title = primaryValidation.ok ? "" : primaryValidation.message;
     primaryWorkflowCta.dataset.state = primaryValidation.ok ? "ready" : "blocked";
-    primaryWorkflowCta.classList.toggle("button-danger", model.risk === "risk" && !reviewingPastStep);
-    primaryWorkflowCta.classList.toggle("button-primary", model.risk !== "risk" || reviewingPastStep);
+    applyPrimaryCtaTone(currentWorkflowAction, { risk: model.risk === "risk", reviewingPastStep });
   }
 
   for (const button of workflowStepButtons) {
@@ -2114,6 +2142,11 @@ function textIncludes(value, ...needles) {
   return needles.some((needle) => text.includes(needle));
 }
 
+function hasProofHash(value) {
+  const text = String(value || "").toLowerCase();
+  return /^0x[0-9a-f]{64}$/.test(text) && !/^0x0{64}$/.test(text);
+}
+
 function proofDoneSteps(status) {
   const proof = status?.proofInspector || {};
   const trace = status?.trace || {};
@@ -2129,12 +2162,12 @@ function proofDoneSteps(status) {
   if (
     heightAtLeast(forward.finalizedHeight, forward.commitHeight) ||
     heightAtLeast(reverse.finalizedHeight, reverse.commitHeight) ||
-    proof.headerHash ||
-    proof.stateRoot
+    hasProofHash(proof.headerHash) ||
+    hasProofHash(proof.stateRoot)
   ) {
     steps.add("header-fetched");
   }
-  if (numeric(progress.trustedAOnB) > 0 || numeric(progress.trustedBOnA) > 0 || proof.trustedHeight) {
+  if (numeric(progress.trustedAOnB) > 0 || numeric(progress.trustedBOnA) > 0 || numeric(proof.trustedHeight) > 0) {
     steps.add("light-client-updated");
   }
   if (proof.storageSlot || proof.proofKey || proof.timeoutStorageKey || forward.proofMode || reverse.proofMode) {
@@ -2166,7 +2199,13 @@ function proofDoneSteps(status) {
   ) {
     steps.add("timeout-refund");
   }
-  if (security.frozen || security.recovering || trace.misbehaviour?.frozen || trace.misbehaviour?.recovered || proof.recoveryStatus) {
+  if (
+    security.frozen ||
+    security.recovering ||
+    trace.misbehaviour?.frozen ||
+    trace.misbehaviour?.recovered ||
+    textIncludes(proof.recoveryStatus, "frozen", "recover")
+  ) {
     steps.add("client-safety");
   }
   return steps;

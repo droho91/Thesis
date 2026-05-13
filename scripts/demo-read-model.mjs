@@ -250,6 +250,9 @@ export function normalizeTraceForUi(trace) {
   const liquidated = Boolean(risk.liquidationTxHash || risk.liquidationRepaid);
   const liquidationCollateral = liquidated ? risk.collateralAfterLiquidation : undefined;
   const liquidationDebt = liquidated ? risk.debtAfterLiquidation : undefined;
+  const forwardProofMode =
+    trace.forward?.proofMode ||
+    (trace.forward?.packetLeafSlot || trace.forward?.packetPathSlot || trace.forward?.receiveTxHash ? "storage" : undefined);
   return {
     ...trace,
     forward: {
@@ -259,7 +262,7 @@ export function normalizeTraceForUi(trace) {
       stateRoot: trace.forward?.trustedStateRoot,
       executionStateRoot: trace.forward?.trustedStateRoot,
       consensusHash: trace.forward?.trustedHeaderHash,
-      proofMode: "storage",
+      proofMode: forwardProofMode,
     },
     lending: {
       collateralDeposited: Boolean(risk.collateralDeposited),

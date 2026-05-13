@@ -37,6 +37,7 @@ const reverseBridgeActions = await readFile(resolve(process.cwd(), "scripts", "d
 const timeoutActions = await readFile(resolve(process.cwd(), "scripts", "demo", "actions", "timeout-actions.mjs"), "utf8");
 const borrowerScenario = await readFile(resolve(process.cwd(), "scripts", "demo", "scenarios", "borrower-closeout.mjs"), "utf8");
 const demoApp = await readFile(resolve(process.cwd(), "demo", "app.js"), "utf8");
+const demoStatusView = await readFile(resolve(process.cwd(), "demo", "demo-status-view.js"), "utf8");
 
 const repayBlock = functionBlock(lendingActions, "repayStep");
 assert.match(repayBlock, /debtBeforeRepay/, "repay should record debtBeforeRepay");
@@ -86,6 +87,9 @@ assert.match(
   /if \(forwardPending\)/,
   "bridge-in-progress should be driven only by a pending forward packet"
 );
+assert.match(demoApp, /function hasProofHash\(value\)/, "proof lifecycle should ignore empty or zero hash placeholders");
+assert.match(demoApp, /numeric\(proof\.trustedHeight\) > 0/, "proof lifecycle should not treat trustedHeight 0 as a completed light-client update");
+assert.match(demoApp, /textIncludes\(proof\.recoveryStatus, "frozen", "recover"\)/, "proof lifecycle should not treat the normal Active client status as a safety event");
 assert.match(
   demoApp,
   /const returning = lifecycle\.borrowerCollateralWithdrawn \|\| lifecycle\.debtWasOpened;/,
@@ -93,7 +97,14 @@ assert.match(
 );
 assert.match(demoApp, /function forwardReceiptConsumed\(status\)/, "UI should use current receipt state for forward packet completion");
 assert.match(demoApp, /return !forwardReceiptConsumed\(status\)/, "forward pending state should not trust old visible voucher balances");
-assert.match(demoApp, /return !reverseConsumed\(status\) && !settlement\.unlocked/, "reverse pending state should not trust stale trace receive tx hashes");
+assert.match(demoApp, /settlementMatchesReverse[\s\S]*return !reverseConsumed\(status\) && !\(settlementMatchesReverse && settlement\.unlocked\)/, "reverse pending state should ignore stale settlement state from unrelated packets");
+assert.match(demoApp, /useRecommendedAmount[\s\S]*input\?\.dataset\.dirty !== "true"/, "primary recommendations should validate manual amount edits instead of hiding them behind default amounts");
+assert.match(demoStatusView, /focus: "Return collateral"/, "position panel should not tell users to activate collateral after a debt closeout withdrawal");
+assert.doesNotMatch(
+  demoStatusView,
+  /const borrowed = Boolean\(lending\.borrowed\) \|\| numeric\(balances\.poolDebt\) > 0 \|\| numeric\(balances\.bankB\) > 0/,
+  "status view should not treat leftover bCASH balance as live credit"
+);
 assert.match(
   demoApp,
   /heightAtLeast\(forward\.finalizedHeight, forward\.commitHeight\)/,
@@ -199,7 +210,10 @@ assert.match(demoService, /phase: phaseMatchesAction \? phase : null/, "controll
 assert.match(demoService, /function statusWithIdleController\(status\)/, "completed action responses should not return their own controller operation as still active");
 assert.match(demoService, /status: responseStatus,[\s\S]*nextAction: nextActionPayload\(responseStatus\)/, "action responses should compute next actions from the idle final status");
 assert.match(demoService, /function finalActionStatusReady\(action, status\)[\s\S]*nextValidActionFromStatus\(status\)\.action !== "depositCollateral"/, "deposit responses should wait until the final recommendation advances beyond deposit");
-assert.match(demoApp, /Run \$\{nextCta\.label\}/, "success CTA copy should make clear that the button runs the next action");
+assert.match(demoApp, /function ctaRunLabel\(cta\)/, "success CTA copy should centralize action-vs-navigation wording");
+assert.match(demoApp, /cta\.type === "action"[\s\S]*\? `Run \$\{label\}`[\s\S]*: label/, "success CTA copy should say Run only for mutation actions");
+assert.match(demoApp, /function ctaIsPassive\(cta\)/, "primary CTA tone should know which CTAs are read-only navigation");
+assert.match(demoApp, /const danger = risk && !reviewingPastStep && !ctaIsPassive\(cta\)/, "read-only primary CTAs should not inherit danger color from risk review states");
 assert.match(demoApp, /it does not repeat the completed one/, "success guidance should distinguish next-action execution from the completed action");
 assert.match(demoApp, /function defaultAmountForAction\(action, status = currentStatus\)/, "primary recommendations should know safe default amounts for amount-based actions");
 assert.match(demoApp, /input\.dataset\.dirty === "true" \|\| numeric\(input\.value\) > POSITION_EPSILON/, "recommended amount priming should preserve manually edited amount fields");
@@ -396,6 +410,28 @@ const liquidatedTrace = normalizeTraceForUi({
   },
 });
 assert.equal(liquidatedTrace.lending.liquidated, true, "liquidation tx hash should mark lending as liquidated");
+
+const emptyProofTrace = normalizeTraceForUi({});
+assert.equal(emptyProofTrace.forward.proofMode, undefined, "empty traces must not show a completed forward storage proof");
+
+const committedForwardOnlyTrace = normalizeTraceForUi({
+  forward: {
+    packetId: "0xforward",
+    commitHeight: "10",
+  },
+});
+assert.equal(
+  committedForwardOnlyTrace.forward.proofMode,
+  undefined,
+  "committed packets must not show storage proof before proof execution"
+);
+
+const provenForwardTrace = normalizeTraceForUi({
+  forward: {
+    packetLeafSlot: "0xslot",
+  },
+});
+assert.equal(provenForwardTrace.forward.proofMode, "storage", "forward proof evidence should mark storage proof mode");
 
 const reverseSettlementTrace = normalizeTraceForUi({
   reverse: {

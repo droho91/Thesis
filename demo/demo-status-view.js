@@ -88,6 +88,13 @@ function positionRiskGuidance(status, health) {
       traceRisk.debtBeforeLiquidation ||
       debt > 0
   );
+  const collateralWithdrawn = Boolean(
+    lending.collateralWithdrawn ||
+      traceRisk.collateralWithdrawn ||
+      traceRisk.withdrawTxHash ||
+      traceRisk.completed ||
+      (debtWasOpened && activeCollateral <= 0 && debt <= 0)
+  );
 
   if (security.frozen || security.recovering) {
     return {
@@ -126,6 +133,13 @@ function positionRiskGuidance(status, health) {
       action: debtWasOpened
         ? "Borrow again, deposit more voucher, withdraw safe collateral, bridge more, or close the position."
         : "Borrow, deposit more voucher, withdraw safe collateral, bridge more, or close the position.",
+    };
+  }
+  if (voucher > 0 && debtWasOpened && debt <= 0 && collateralWithdrawn) {
+    return {
+      focus: "Return collateral",
+      copy: "Debt is closed and voucher collateral is back in the Bank B wallet.",
+      action: "Review technical evidence, or burn the voucher if you want to unlock the origin collateral on Bank A.",
     };
   }
   if (voucher > 0) {
@@ -249,7 +263,10 @@ function buildVisualModel(status) {
     numeric(balances.voucher) > 0 ||
     numeric(balances.poolCollateral) > 0;
   const collateralized = Boolean(lending.collateralDeposited) || numeric(balances.poolCollateral) > 0;
-  const borrowed = Boolean(lending.borrowed) || numeric(balances.poolDebt) > 0 || numeric(balances.bankB) > 0;
+  const debtOpen = numeric(balances.poolDebt) > 0;
+  const borrowed =
+    debtOpen ||
+    Boolean(lending.borrowed && !lending.repaid && !lending.collateralWithdrawn && !lending.completed);
   const reverseStarted = present(reverse.commitHeight) || present(reverse.packetId) || Boolean(security.reverseConsumed);
   const safety = Boolean(security.frozen || security.recovering || trace.misbehaviour?.frozen);
 
@@ -279,7 +296,9 @@ function buildVisualModel(status) {
     escrowText: escrowed ? `${balances.escrow ?? "0.0"} aBANK` : "waiting",
     trustText: trusted ? `header ${progress.trustedAOnB ?? "-"}` : headerFinalized ? "ready" : "waiting",
     creditText: borrowed
-      ? `${balances.poolDebt ?? "0.0"} debt`
+      ? debtOpen
+        ? `${balances.poolDebt ?? "0.0"} debt`
+        : "credit active"
       : collateralized
         ? "collateral active"
         : proven
