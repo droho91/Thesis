@@ -157,6 +157,9 @@ assert.match(demoService, /RESUME_SESSION_MAX_HEADERS/, "Resume Session should b
 assert.match(demoService, /Resume Session partially refreshed proof anchors/, "Resume Session should report bounded partial proof-anchor refreshes");
 assert.match(demoService, /recoverOpenRouteCompletion/, "Establish Bank Route should recover the UI trace if the on-chain route opened before a final read error");
 assert.match(demoService, /startLightClientHeartbeat\(\)/, "demo service should start the optional light-client heartbeat");
+assert.match(demoService, /LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS = BigInt\(process\.env\.DEMO_LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS \|\| "24"\)/, "heartbeat should import enough headers per tick to outrun the local 2s block period");
+assert.match(demoService, /allowLargeGap: true/, "heartbeat should keep catching up in bounded batches even after a large presentation-time gap");
+assert.match(demoService, /setTimeout\(\(\) => \{[\s\S]*lightClientHeartbeatTick\(\)/, "heartbeat should run an initial tick soon after the demo service starts");
 assert.match(
   demoService,
   /function actionCanRunDuringHeartbeat\(action\)/,
@@ -199,9 +202,10 @@ assert.match(demoService, /function finalActionStatusReady\(action, status\)[\s\
 assert.match(demoApp, /Run \$\{nextCta\.label\}/, "success CTA copy should make clear that the button runs the next action");
 assert.match(demoApp, /it does not repeat the completed one/, "success guidance should distinguish next-action execution from the completed action");
 assert.match(demoApp, /function defaultAmountForAction\(action, status = currentStatus\)/, "primary recommendations should know safe default amounts for amount-based actions");
-assert.match(demoApp, /nextCta\?\.type === "action"[\s\S]*primeRecommendedAmount\(nextCta\.action, currentStatus, \{ force: true \}\)/, "success recommendations should prime amount fields before enabling the next CTA");
-assert.match(demoApp, /button === primaryWorkflowCta[\s\S]*primeRecommendedAmount\(action, currentStatus, \{ force: true \}\)/, "primary recommendation clicks should use the current recommended amount before validation");
-assert.match(demoApp, /refreshStatus\(\)[\s\S]*const actionToRun = cta\.action[\s\S]*primeRecommendedAmount\(actionToRun, currentStatus, \{ force: true \}\)[\s\S]*await runAction\(actionToRun, \{ button, workflowRequestLog \}\)/, "primary recommendation clicks should refresh state and run only the requested CTA action with current defaults");
+assert.match(demoApp, /input\.dataset\.dirty === "true" \|\| numeric\(input\.value\) > POSITION_EPSILON/, "recommended amount priming should preserve manually edited amount fields");
+assert.match(demoApp, /nextCta\?\.type === "action"[\s\S]*primeRecommendedAmount\(nextCta\.action, currentStatus\)/, "success recommendations should prime amount fields before enabling the next CTA without forcing over manual edits");
+assert.match(demoApp, /button === primaryWorkflowCta[\s\S]*primeRecommendedAmount\(action, currentStatus\)/, "primary recommendation clicks should use the current recommended amount only when the user has not edited the field");
+assert.match(demoApp, /refreshStatus\(\)[\s\S]*const actionToRun = cta\.action[\s\S]*primeRecommendedAmount\(actionToRun, currentStatus\)[\s\S]*await runAction\(actionToRun, \{ button, workflowRequestLog \}\)/, "primary recommendation clicks should refresh state and run only the requested CTA action while preserving user-entered amounts");
 assert.doesNotMatch(demoApp, /if \(!requestedEligibility\.ok && currentWorkflowAction\?\.type === "action"\)/, "primary recommendation clicks must not silently fall back to a different current action");
 assert.match(demoApp, /No alternate action was submitted automatically/, "ineligible refreshed CTAs should explain that no alternate action was submitted");
 assert.match(demoApp, /Requested CTA action/, "controller debug output should record the requested CTA action");
@@ -404,6 +408,24 @@ const reverseSettlementTrace = normalizeTraceForUi({
 });
 assert.equal(reverseSettlementTrace.reverse.packetId, "0xsettlement", "reverse settlement packet should not be overwritten by denied timeout packet");
 assert.equal(reverseSettlementTrace.reverse.proofMode, "storage", "reverse settlement proof mode should be preserved");
+
+const timeoutOnlyTrace = normalizeTraceForUi({
+  denied: {
+    packetId: "0xdenied",
+  },
+  timeout: {
+    trustedHeight: "123",
+    receiptStorageKey: "0xtimeoutslot",
+  },
+  security: {
+    timeoutAbsence: {
+      receiptSlot: "0xtimeoutslot",
+    },
+  },
+});
+assert.equal(timeoutOnlyTrace.reverse.packetId, undefined, "timeout denied packets must not appear as reverse unlock packets");
+assert.equal(timeoutOnlyTrace.reverse.proofMode, undefined, "timeout absence proofs must not mark the reverse proof path as pending");
+assert.equal(timeoutOnlyTrace.security.timeoutAbsence.receiptSlot, "0xtimeoutslot", "timeout evidence should remain available through the timeout/security model");
 
 const receiptOnlyTrace = normalizeTraceForUi({
   forward: {

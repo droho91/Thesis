@@ -1069,7 +1069,7 @@ function renderPrimaryGuide(actionState) {
   );
   if (primaryWorkflowCta) {
     if (actionState.phase === "success" && nextCta?.type === "action") {
-      primeRecommendedAmount(nextCta.action, currentStatus, { force: true });
+      primeRecommendedAmount(nextCta.action, currentStatus);
     }
     bindPrimaryWorkflowCta(actionState.phase === "success" ? nextCta : null);
     const nextValidation = nextCta ? workflowCtaEligibility(nextCta, currentStatus, { recommended: true }) : { ok: true, message: "" };
@@ -2391,10 +2391,10 @@ function primeRecommendedAmount(action, status = currentStatus, { force = false 
   const config = AMOUNT_ACTIONS[action];
   if (!config) return;
   const input = document.getElementById(config.inputId);
-  if (!input || (!force && numeric(input.value) > POSITION_EPSILON)) return;
+  if (!input || (!force && (input.dataset.dirty === "true" || numeric(input.value) > POSITION_EPSILON))) return;
   const fallback = defaultAmountForAction(action, status);
   if (fallback > POSITION_EPSILON) {
-    setInputValue(config.inputId, fallback, { force: true });
+    setInputValue(config.inputId, fallback, { force });
   }
 }
 
@@ -3376,7 +3376,7 @@ function amountPayloadForAction(action, button = null) {
   const config = AMOUNT_ACTIONS[action];
   if (!config) return {};
   if (button === primaryWorkflowCta) {
-    primeRecommendedAmount(action, currentStatus, { force: true });
+    primeRecommendedAmount(action, currentStatus);
   }
   const validation = validateAmountAction(action);
   if (!validation.ok) {
@@ -3584,7 +3584,7 @@ async function executeWorkflowCta(cta, button = primaryWorkflowCta) {
       );
       return;
     }
-    primeRecommendedAmount(actionToRun, currentStatus, { force: true });
+    primeRecommendedAmount(actionToRun, currentStatus);
     const requestedEligibility = actionEligibility(actionToRun, currentStatus);
     const requestedLabel = cta.label || actionTitle(actionToRun);
     if (!requestedEligibility.ok) {

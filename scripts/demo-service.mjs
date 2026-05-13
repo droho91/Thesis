@@ -33,7 +33,7 @@ const HEALTH_GRACE_RETRY_MS = Number(process.env.DEMO_HEALTH_GRACE_RETRY_MS || 2
 const CODE_READ_RETRIES = Math.max(1, Number(process.env.DEMO_CODE_READ_RETRIES || 6));
 const CODE_READ_RETRY_DELAY_MS = Number(process.env.DEMO_CODE_READ_RETRY_DELAY_MS || 500);
 const LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS = Number(process.env.DEMO_LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS || 25000);
-const LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS = BigInt(process.env.DEMO_LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS || "12");
+const LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS = BigInt(process.env.DEMO_LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS || "24");
 const HEARTBEAT_IDLE_TIMEOUT_MS = Number(process.env.DEMO_HEARTBEAT_IDLE_TIMEOUT_MS || 300000);
 const RESUME_SESSION_MAX_HEADER_GAP = BigInt(process.env.DEMO_RESUME_MAX_HEADER_GAP || DEMO_MAX_TIMEOUT_HEADER_GAP.toString());
 const RESUME_SESSION_MAX_HEADERS = BigInt(process.env.DEMO_RESUME_MAX_HEADERS || "12");
@@ -661,6 +661,7 @@ async function refreshOneProofAnchor({
   latestHeight,
   maxGap,
   maxHeaders = null,
+  allowLargeGap = false,
 }) {
   const trustedHeight = BigInt(await lightClient.latestTrustedHeight(sourceChainId));
   const latest = BigInt(latestHeight);
@@ -669,7 +670,7 @@ async function refreshOneProofAnchor({
   }
 
   const gap = latest - trustedHeight;
-  if (trustedHeight !== 0n && gap > maxGap) {
+  if (!allowLargeGap && trustedHeight !== 0n && gap > maxGap) {
     throw proofReadinessGapError(label, trustedHeight, latest, maxGap);
   }
 
@@ -687,11 +688,16 @@ async function refreshOneProofAnchor({
     trustedHeight: BigInt(trusted.headerUpdate.height),
     targetHeight,
     latestHeight: latest,
-    reason: targetHeight < latest ? "bounded heartbeat update" : "refreshed to latest",
+    reason:
+      allowLargeGap && targetHeight < latest
+        ? "bounded background catch-up"
+        : targetHeight < latest
+          ? "bounded heartbeat update"
+          : "refreshed to latest",
   };
 }
 
-async function refreshProofAnchors({ config, ctx, latestA, latestB, maxGap, maxHeaders = null }) {
+async function refreshProofAnchors({ config, ctx, latestA, latestB, maxGap, maxHeaders = null, allowLargeGap = false }) {
   const sourceChainId = chainId(config, "A");
   const destinationChainId = chainId(config, "B");
   const route = await currentRouteStatus(config, ctx);
@@ -713,6 +719,7 @@ async function refreshProofAnchors({ config, ctx, latestA, latestB, maxGap, maxH
       latestHeight: latestA,
       maxGap,
       maxHeaders,
+      allowLargeGap,
     })
   );
   updates.push(
@@ -724,6 +731,7 @@ async function refreshProofAnchors({ config, ctx, latestA, latestB, maxGap, maxH
       latestHeight: latestB,
       maxGap,
       maxHeaders,
+      allowLargeGap,
     })
   );
   return { route, updates };
@@ -1562,6 +1570,7 @@ async function lightClientHeartbeatTick() {
       latestB: rpc.latestB,
       maxGap: DEMO_MAX_TIMEOUT_HEADER_GAP,
       maxHeaders: LIGHT_CLIENT_HEARTBEAT_MAX_HEADERS,
+      allowLargeGap: true,
     });
     const changed = (readiness.updates || []).filter((update) => update.changed);
     if (changed.length > 0) {
@@ -1580,6 +1589,10 @@ async function lightClientHeartbeatTick() {
 
 function startLightClientHeartbeat() {
   if (LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS <= 0 || process.env.DEMO_LIGHT_CLIENT_HEARTBEAT === "false") return;
+  const firstTick = setTimeout(() => {
+    void lightClientHeartbeatTick();
+  }, 1000);
+  firstTick.unref?.();
   const timer = setInterval(lightClientHeartbeatTick, LIGHT_CLIENT_HEARTBEAT_INTERVAL_MS);
   timer.unref?.();
 }
