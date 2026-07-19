@@ -87,7 +87,7 @@ Committed -> Checkpointed -> Received -> Acknowledged -> Completed
 | 11 adversarial scenario va fuzz debt conservation | `npm run security:test` |
 | Live two-chain workflow va fault experiment | `npm run institutional:evidence` |
 
-Unit tests chung minh contract invariant trong pham vi test. Security runner tao report gan voi source hash. Formal evidence runner yeu cau 100 message, provenance khop source, deployed bytecode hash va p95 sau source finality duoi 15 giay. Evidence nay van khong thay the external audit, formal verification hay production pilot.
+Unit tests chung minh contract invariant trong pham vi test. Security runner tao report gan voi source hash. Formal evidence runner yeu cau 100 message, provenance khop source, deployed bytecode hash va proof-and-acknowledgement p95 duoi 45 giay cho full safety path tren local Docker QBFT. Evidence nay van khong thay the external audit, formal verification hay production pilot.
 
 ## 8. Ly do runtime moi on dinh hon
 
