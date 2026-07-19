@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="1180" viewBox="0 0 900 1180" role="img" aria-labelledby="title desc">
   <title id="title">Figure 4.2: Smart Contract Dependency Diagram</title>
-  <desc id="desc">A portrait smart contract dependency diagram grouping lending, policy, packet, proof, and client contracts in the multi-blockchain lending prototype.</desc>
+  <desc id="desc">A portrait smart contract dependency diagram grouping policy, lending, application, gateway, checkpoint, and EVM proof contracts.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
@@ -53,41 +53,41 @@
   <text class="contract-title" x="640" y="454" text-anchor="middle">PolicyControlledEscrowVault</text>
   <text class="contract-note" x="640" y="474" text-anchor="middle">canonical collateral custody</text>
 
-  <!-- Transfer / Packet Contracts -->
+  <!-- Application / Control Contracts -->
   <rect class="group" x="70" y="557" width="760" height="235" rx="8"/>
-  <text class="group-title" x="450" y="587" text-anchor="middle">Transfer / Packet Contracts</text>
+  <text class="group-title" x="450" y="587" text-anchor="middle">Application / Control Contracts</text>
 
   <rect class="contract" x="285" y="622" width="330" height="58" rx="6"/>
-  <text class="contract-title" x="450" y="646" text-anchor="middle">PolicyControlledTransferApp</text>
-  <text class="contract-note" x="450" y="664" text-anchor="middle">packet send / receive flow</text>
+  <text class="contract-title" x="450" y="646" text-anchor="middle">InstitutionalCollateralApp</text>
+  <text class="contract-note" x="450" y="664" text-anchor="middle">lock, mint, burn, and release flow</text>
 
   <rect class="contract" x="105" y="712" width="310" height="58" rx="6"/>
-  <text class="contract-title" x="260" y="736" text-anchor="middle">IBCPacketHandler</text>
-  <text class="contract-note" x="260" y="754" text-anchor="middle">receive, ack, timeout execution</text>
+  <text class="contract-title" x="260" y="736" text-anchor="middle">InstitutionalIdentityRegistry</text>
+  <text class="contract-note" x="260" y="754" text-anchor="middle">eligibility and credential status</text>
 
   <rect class="contract" x="485" y="712" width="310" height="58" rx="6"/>
-  <text class="contract-title" x="640" y="736" text-anchor="middle">IBCPacketStore</text>
-  <text class="contract-note" x="640" y="754" text-anchor="middle">commitments and receipts</text>
+  <text class="contract-title" x="640" y="736" text-anchor="middle">InstitutionalGovernanceTimelock</text>
+  <text class="contract-note" x="640" y="754" text-anchor="middle">delayed administrative control</text>
 
-  <!-- Proof / Client Contracts -->
+  <!-- Gateway / Proof Contracts -->
   <rect class="group-alt" x="70" y="822" width="760" height="305" rx="8"/>
-  <text class="group-title" x="450" y="852" text-anchor="middle">Proof / Client Contracts</text>
+  <text class="group-title" x="450" y="852" text-anchor="middle">Gateway / Checkpoint / Proof Contracts</text>
 
   <rect class="contract" x="285" y="887" width="330" height="58" rx="6"/>
-  <text class="contract-title" x="450" y="911" text-anchor="middle">IBCProofVerifier</text>
-  <text class="contract-note" x="450" y="929" text-anchor="middle">packet proof verifier</text>
+  <text class="contract-title" x="450" y="911" text-anchor="middle">InstitutionalCrossChainGateway</text>
+  <text class="contract-note" x="450" y="929" text-anchor="middle">commitment and message lifecycle</text>
 
   <rect class="contract" x="285" y="972" width="330" height="58" rx="6"/>
-  <text class="contract-title" x="450" y="996" text-anchor="middle">IBCEVMProofBoundary</text>
-  <text class="contract-note" x="450" y="1014" text-anchor="middle">EVM proof boundary</text>
+  <text class="contract-title" x="450" y="996" text-anchor="middle">InstitutionalCheckpointClient</text>
+  <text class="contract-note" x="450" y="1014" text-anchor="middle">3-of-4 trusted state roots</text>
 
   <rect class="contract" x="105" y="1052" width="310" height="58" rx="6"/>
-  <text class="contract-title" x="260" y="1076" text-anchor="middle">BesuEVMProofVerifier</text>
-  <text class="contract-note" x="260" y="1094" text-anchor="middle">standalone proof-check wrapper</text>
+  <text class="contract-title" x="260" y="1076" text-anchor="middle">InstitutionalEVMProofBoundary</text>
+  <text class="contract-note" x="260" y="1094" text-anchor="middle">account and storage verification</text>
 
   <rect class="contract" x="485" y="1052" width="310" height="58" rx="6"/>
-  <text class="contract-title" x="640" y="1076" text-anchor="middle">BesuLightClient</text>
-  <text class="contract-note" x="640" y="1094" text-anchor="middle">trusted state roots</text>
+  <text class="contract-title" x="640" y="1076" text-anchor="middle">MerklePatriciaProofLib</text>
+  <text class="contract-note" x="640" y="1094" text-anchor="middle">MPT and RLP proof primitives</text>
 
   <!-- Logical dependencies -->
   <path class="edge" d="M398 317 V242 H273 V196"/>
@@ -105,19 +105,20 @@
   <path class="assoc" d="M480 622 V535 H640 V492"/>
   <text class="edge-label" x="595" y="532">lock / release</text>
 
-  <path class="edge" d="M450 680 V695 H260 V712"/>
-  <text class="edge-label" x="305" y="693">send / receive</text>
+  <path class="edge" d="M405 680 V695 H260 V712"/>
+  <text class="edge-label" x="300" y="693">identity checks</text>
 
-  <line class="edge" x1="415" y1="741" x2="485" y2="741"/>
-  <text class="edge-label" x="450" y="732" text-anchor="middle">store</text>
+  <path class="assoc" d="M640 712 V695 H495 V680"/>
+  <text class="edge-label" x="570" y="693">administers</text>
 
-  <path class="edge" d="M260 770 V808 H450 V887"/>
-  <text class="edge-label" x="286" y="808">proof validation</text>
+  <line class="edge" x1="450" y1="680" x2="450" y2="887"/>
+  <text class="edge-label" x="465" y="812">sends / receives</text>
 
   <line class="edge" x1="450" y1="945" x2="450" y2="972"/>
-  <text class="edge-label" x="466" y="964">relies on</text>
+  <text class="edge-label" x="466" y="964">trusted root</text>
 
-  <path class="assoc" d="M260 1052 V1040 H95 V1001 H285"/>
-  <text class="edge-label" x="110" y="1027">standalone verification</text>
-  <path class="edge" d="M450 1030 V1040 H640 V1052"/>
+  <path class="edge" d="M420 945 V1038 H260 V1052"/>
+  <text class="edge-label" x="290" y="1034">proof validation</text>
+  <line class="edge" x1="415" y1="1081" x2="485" y2="1081"/>
+  <text class="edge-label" x="450" y="1072" text-anchor="middle">uses</text>
 </svg>

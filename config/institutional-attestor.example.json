@@ -1,0 +1,22 @@
+{
+  "version": "institutional-attestor-v1",
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 8701
+  },
+  "journalPath": ".runtime/attestor-1.json",
+  "privateKeyEnv": "ATTESTOR_PRIVATE_KEY",
+  "apiTokenEnv": "ATTESTOR_API_TOKEN",
+  "sources": [
+    {
+      "chainId": "41001",
+      "rpc": "http://127.0.0.1:8545",
+      "finalityDepth": 2
+    },
+    {
+      "chainId": "41002",
+      "rpc": "http://127.0.0.1:9545",
+      "finalityDepth": 2
+    }
+  ]
+}

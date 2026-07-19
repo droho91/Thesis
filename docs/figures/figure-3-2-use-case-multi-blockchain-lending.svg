@@ -57,7 +57,7 @@
   <!-- Associations: Oracle Operator -->
   <line class="assoc" x1="125" y1="850" x2="196" y2="850"/>
 
-  <!-- Associations: Relayer / Demo Orchestrator -->
+  <!-- Associations: Relayer -->
   <line class="assoc" x1="125" y1="1000" x2="196" y2="940"/>
   <line class="assoc" x1="125" y1="1000" x2="196" y2="990"/>
   <line class="assoc" x1="125" y1="1000" x2="196" y2="1040"/>
@@ -134,12 +134,12 @@
   <ellipse class="usecase" cx="325" cy="850" rx="129" ry="21"/>
   <text class="usecase-text" x="325" y="854" text-anchor="middle">Update asset prices</text>
 
-  <!-- Relayer / Demo Orchestrator use cases -->
+  <!-- Relayer use cases -->
   <ellipse class="usecase" cx="325" cy="940" rx="129" ry="21"/>
-  <text class="usecase-text" x="325" y="944" text-anchor="middle">Relay packet and proof material</text>
+  <text class="usecase-text" x="325" y="944" text-anchor="middle">Relay checkpoint and EVM proof</text>
 
   <ellipse class="usecase" cx="325" cy="990" rx="129" ry="21"/>
-  <text class="usecase-text" x="325" y="994" text-anchor="middle">Submit reverse proof</text>
+  <text class="usecase-text" x="325" y="994" text-anchor="middle">Relay acknowledgement proof</text>
 
   <ellipse class="usecase" cx="325" cy="1040" rx="129" ry="21"/>
   <text class="usecase-text" x="325" y="1044" text-anchor="middle">Execute timeout / refund flow</text>
@@ -180,8 +180,8 @@
     <line class="actor-line" x1="54" y1="990" x2="110" y2="990"/>
     <line class="actor-line" x1="82" y1="1016" x2="60" y2="1050"/>
     <line class="actor-line" x1="82" y1="1016" x2="104" y2="1050"/>
-    <text class="actor-label" x="82" y="1074" text-anchor="middle">Relayer / Demo</text>
-    <text class="actor-label" x="82" y="1091" text-anchor="middle">Orchestrator</text>
+    <text class="actor-label" x="82" y="1074" text-anchor="middle">Durable</text>
+    <text class="actor-label" x="82" y="1091" text-anchor="middle">Relayer</text>
   </g>
 
   <!-- Right-side actors -->

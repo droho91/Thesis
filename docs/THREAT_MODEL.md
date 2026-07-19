@@ -1,68 +1,83 @@
 # Threat Model
 
-## System positioning
+## System Positioning
 
-This project is a permissioned cross-chain lending prototype. It demonstrates proof-checked cross-chain collateral representation, policy-controlled borrowing, and risk-based liquidation under a controlled Besu/QBFT validator environment.
+This project is a reference prototype for institutional cross-chain collateral and lending on two permissioned Besu/QBFT ledgers. It uses quorum-signed checkpoints and EVM account/storage proofs to authorize asynchronous cross-chain execution.
 
-It is not a production public bridge, not a decentralized oracle network, not audited, and not mainnet-ready.
+It is not a trustless public bridge, not a full IBC implementation, not audited, and not production-ready.
 
-## Trust assumptions
+## Protected Assets and Properties
 
-| Component | Trust Assumption | Risk | Mitigation / Prototype Scope |
+- Canonical aBANK held in Bank A escrow.
+- Voucher vA supply and the one-to-one unsettled collateral liability.
+- bCASH liquidity, borrower debt, reserves, and lending solvency state.
+- Message commitments, receipts, acknowledgements, refunds, and terminal states.
+- Attestor, validator, relayer, governance, identity, oracle, and operator keys.
+- Safety properties: proof validity, route integrity, replay resistance, conservation, policy enforcement, and governance delay.
+- Liveness properties: block production, checkpoint availability, relay progress, acknowledgement, and timeout recovery.
+
+## Trust Assumptions
+
+| Component | Trust assumption | Principal risk | Implemented control / remaining boundary |
 | --- | --- | --- | --- |
-| Relayer / Executor | Relayers submit packets, headers, and proofs but should not decide whether state transitions are valid. | Censorship, delay, or failed submission. | Packet receipt, acknowledgement, and timeout checks are enforced by contracts where the flow is implemented; availability and liveness are prototype assumptions. |
-| Oracle | Prices are manually governed in the demo. | Incorrect, stale, or malicious price updates can affect borrow capacity and liquidation. | `ManualAssetOracle` records timestamps and blocks stale prices; decentralized oracle design is out of scope. |
-| Admin / Governance | Admins configure policy, oracle, risk parameters, roles, and pauses. | Misconfiguration or privileged abuse. | Permissioned-bank setting assumes governed operators; docs and UI label these as controlled prototype assumptions. |
-| Validator set | Besu/QBFT validators operate the local permissioned chains. | Validator collusion or chain halt can break assumptions. | Prototype targets a controlled validator set and demonstrates light-client boundary behavior, not public-chain validator economics. |
-| Light client initialization | Initial trusted validator/header state is configured by the deployment/demo environment. | Bad initialization can make later proof checks meaningless. | Initialization is an explicit trusted setup for the thesis prototype. |
-| Proof verifier | The verifier checks EVM storage proof data against trusted state roots. | Bugs in proof parsing or boundary assumptions can accept invalid state. | Solidity tests and Besu verification scripts cover expected proof paths; no formal verification or audit is claimed. |
-| Policy engine | `BankPolicyEngine` enforces allowlists, caps, and exposure accounting. | Wrong caps or allowlists can block users or overexpose the market. | Policy checks are on-chain, but policy choices are governance assumptions. |
-| UI | The UI visualizes contract state and can trigger demo scripts. | UI can mislabel script-assisted state or stale local data. | README, `DEMO_FLOW.md`, and labels distinguish verified on-chain, script-assisted, visualization-only, and prototype assumptions. |
-| Smart contracts | Contracts enforce packet, policy, lending, oracle freshness, and liquidation rules. | Contract bugs, missing edge cases, or economic simplifications. | Tests cover core paths; contracts are thesis-grade and not audited. |
-| User wallet | Demo users sign transactions through local generated accounts. | Key compromise or wrong account actions. | Local deterministic accounts are for demo only. |
-| Stable token | The debt token is a controlled Bank B token in the prototype. | It is not an externally collateralized or market-tested stablecoin. | Simplified stable asset model is intentionally scoped to the prototype. |
+| Besu validators | Each bank operates a governed 4-validator QBFT network. | Collusion, network partition, or loss of quorum. | The profile tolerates one unavailable validator; Byzantine injection and cross-bank infrastructure independence require further validation. |
+| Attestors | Fewer than 3 of 4 attestors are malicious or compromised. | A malicious quorum can attest an arbitrary root. | EIP-712 domain binding, signer ordering, epoch/quorum checks, trusting period, conflict freeze, and durable equivocation guards. Production keys require separate HSM-backed operators. |
+| Checkpoint governance | Timelock governance rotates attestors and recovers frozen clients only after institutional review. | Malicious or mistaken signer/route replacement. | Sensitive roles are transferred to timelocks; production proposers/executors must be multisig-controlled. |
+| Relayer | Relayers may fail, duplicate, delay, or reorder work. | Censorship and delayed settlement. | Relayers cannot create a quorum or bypass proof checks. Durable jobs, reconciliation, retries, leases, and on-chain idempotency support recovery. |
+| EVM proof verifier | MPT/RLP verification and storage-slot derivation are correct. | A parser or boundary bug may accept invalid state. | Account, slot, value, root, absence, and malformed-proof tests exist; no audit or formal proof is claimed. |
+| Gateway routes | Governance configures the intended remote gateway and applications. | Misrouting, stale migration trust, or privileged abuse. | Chain/gateway/application binding, explicit old-endpoint revocation, pause, replay receipts, and mutually exclusive terminal states. |
+| Identity and policy | Bank KYC/compliance systems issue correct on-chain eligibility and limits. | Fraudulent credential, stale status, or unsafe cap. | Expiry/status checks, terminal revocation, role separation, allowlists, per-account and asset caps, exposure accounting, and guardian suspension. Off-chain KYC correctness remains trusted. |
+| Oracle | Authorized operators publish accurate and timely prices. | Manipulated or stale valuation can create bad debt. | Timestamped prices, staleness checks, risk caps, liquidation, reserve accounting, and pause. The local manual oracle is not a production oracle network. |
+| Lending contracts | Financial parameters reflect the bank's risk policy. | Insolvency from parameter error or implementation bug. | Collateral factor, liquidation threshold, close factor, interest, liquidity, reserve, and bad-debt controls are tested; economic modeling is simplified. |
+| UI/runtime service | The presentation service submits user actions and reads chain state. | Stale display or unavailable interface. | It holds no proof-validation authority; contracts remain the source of truth. Local generated accounts are demonstration credentials only. |
 
-## Security scope
+## Adversary Capabilities Considered
 
-### Enforced on-chain
+- Submit malformed, stale, wrong-domain, duplicate-signer, or insufficient-quorum checkpoints.
+- Relay a valid proof with the wrong account, storage slot, value, route, application, nonce, payload, or timeout.
+- Repeat delivery, acknowledgement, or timeout transactions before and after a relayer restart.
+- Stop one validator, one attestor, or the relayer process.
+- Attempt completion after refund, refund after completion, or execution after receipt insertion.
+- Use expired, suspended, revoked, disallowed, over-cap, or undercollateralized customer state.
+- Trigger stale-price, illiquid, liquidation, and bad-debt paths.
+- Reuse an action request identifier after an ambiguous UI timeout or process restart.
+- Transfer a collateral voucher directly between customer wallets to bypass the approved lending route.
 
-- Policy allowlists, caps, and exposure accounting.
-- Packet receipt replay protection.
-- Storage-proof checked packet receive/acknowledgement/timeout paths where the full script executes them.
-- Oracle price presence and freshness.
-- Borrow capacity from `collateralFactorBps`.
-- Health factor and liquidation eligibility from `liquidationThresholdBps`.
-- Liquidation close factor, liquidation bonus, collateral seizure, and bad-debt recognition.
+## Enforced On-Chain
 
-### Script-assisted
+- Checkpoint signer membership, threshold, epoch, domain, age, clock drift, monotonic height, and conflict freeze.
+- EVM account/storage membership and absence proofs under an accepted state root.
+- Exact message commitment, trusted gateway, application route, receipt, acknowledgement, timeout, and replay checks.
+- Escrow/voucher conservation and application compensation callbacks.
+- Unique client references at the origin application, message receipts at the destination, and mutually exclusive terminal states.
+- Identity eligibility, policy allowlists, caps, exposure accounting, and emergency pause.
+- Operator-restricted voucher transfers and terminal credential revocation.
+- Oracle freshness, borrowing capacity, liquidity, interest, liquidation, reserve, and bad-debt accounting.
+- Timelocked administrative ownership after bootstrap.
 
-- Local Besu/QBFT network generation and lifecycle orchestration.
-- Header/proof collection from local RPC endpoints.
-- Execute Timeout Refund builds and relays the receipt absence proof; the contract verifies the proof and records timeout/refund state on-chain.
-- Guided demo sequencing and report generation.
-- Some scenario setup and status snapshots used for thesis demonstration.
+## Off-Chain but Security-Relevant
 
-### Visualization only
+- Attestors independently read finalized source blocks and persist an equivocation guard before signing.
+- Relayers collect signatures, construct EIP-1186 proofs, persist jobs, retry, and reconcile with on-chain state.
+- Validators, attestors, relayers, RPC access, private networking, monitoring, backup, and key custody require bank operational controls.
+- The local UI starts these services for presentation convenience; this does not move validation out of the contracts.
 
-- Scenario cards before the required packet/debt/proof state exists.
-- Local status summaries that explain state but do not replace contract verification.
+## Availability and Failure Semantics
 
-### Out of scope
+- One of four validators may stop while the remaining three retain QBFT block production.
+- Two stopped validators remove quorum and must halt progress safely.
+- Fewer than three available attestors prevent new checkpoints and settlement but do not authorize invalid execution.
+- Relayer outage delays settlement; restart resumes durable jobs and reconciles transactions that may have mined before the crash.
+- Acknowledgement proves completion. After timeout, a destination receipt-absence proof is required before compensation.
+- Gateway pause blocks new sends and destination receives, while proof-checked acknowledgement and timeout transitions remain available so already verified work can reach a terminal state.
+- If escrow, voucher, or identity policy prevents a compensation callback, the whole timeout transaction reverts atomically. The message stays `Pending`, no asset is lost, and the same proof can be retried after the hold is resolved.
 
-- Production public-bridge security.
-- Decentralized oracle networks.
-- Permissionless validator economics.
-- Formal verification.
-- Production-grade monitoring, key management, rate limiting, and incident response.
-- Multi-asset lending, cross-margining, and complex interest-rate markets.
+## Known Limitations
 
-## Known limitations
-
-- Manual/governed oracle.
-- Permissioned validator set.
-- Explicit light-client trusted setup.
-- No formal verification.
-- No audit.
-- Single collateral asset and single debt asset.
-- Simplified liquidity and interest model.
-- Local demo accounts and Besu runtime assumptions.
+- Consortium-trusted 3-of-4 attestor model rather than source-validator trust minimization.
+- Local deterministic keys, loopback RPC, short governance delay, and manual oracle are defense-profile choices only. Generated validator keys are isolated per container but are not HSM-backed credentials.
+- No external smart-contract audit, formal verification, privacy review, or regulatory certification.
+- No production HSM/mTLS deployment, shared relay database, multisig governance, or disaster-recovery exercise.
+- Single collateral and debt market with simplified interest and liquidation economics.
+- Crash-fault validator evidence exists; a complete Byzantine validator/attestor adversarial campaign does not.
+- Performance observations from one local machine are not production throughput or latency claims.

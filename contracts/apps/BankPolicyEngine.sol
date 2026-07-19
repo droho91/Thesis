@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IBankPolicyEngine} from "./IBankPolicyEngine.sol";
+import {IInstitutionalIdentityRegistry} from "../identity/IInstitutionalIdentityRegistry.sol";
 
 /// @title BankPolicyEngine
 /// @notice Stateful institutional policy layer for the interchain lane.
@@ -13,6 +14,7 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
 
     bytes32 public constant POLICY_ALLOWED = bytes32("ALLOWED");
     bytes32 public constant POLICY_ACCOUNT_NOT_ALLOWED = bytes32("ACCOUNT_NOT_ALLOWED");
+    bytes32 public constant POLICY_IDENTITY_NOT_ELIGIBLE = bytes32("IDENTITY_NOT_ELIGIBLE");
     bytes32 public constant POLICY_SOURCE_CHAIN_BLOCKED = bytes32("SOURCE_CHAIN_BLOCKED");
     bytes32 public constant POLICY_MINT_ASSET_BLOCKED = bytes32("MINT_ASSET_BLOCKED");
     bytes32 public constant POLICY_UNLOCK_ASSET_BLOCKED = bytes32("UNLOCK_ASSET_BLOCKED");
@@ -38,8 +40,10 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
     mapping(address => uint256) public debtAssetOutstanding;
     mapping(address => uint256) public accountBorrowCap;
     mapping(address => mapping(address => uint256)) public accountDebtOutstanding;
+    IInstitutionalIdentityRegistry public identityRegistry;
 
     event AccountAllowedSet(address indexed account, bool allowed);
+    event IdentityRegistrySet(address indexed identityRegistry);
     event SourceChainAllowedSet(uint256 indexed sourceChainId, bool allowed);
     event MintAssetAllowedSet(address indexed asset, bool allowed);
     event UnlockAssetAllowedSet(address indexed asset, bool allowed);
@@ -70,6 +74,13 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
         require(account != address(0), "ACCOUNT_ZERO");
         accountAllowed[account] = allowed;
         emit AccountAllowedSet(account, allowed);
+    }
+
+    function setIdentityRegistry(address identityRegistry_) external onlyRole(POLICY_ADMIN_ROLE) {
+        require(identityRegistry_ != address(0), "IDENTITY_REGISTRY_ZERO");
+        require(identityRegistry_.code.length > 0, "IDENTITY_REGISTRY_NOT_CONTRACT");
+        identityRegistry = IInstitutionalIdentityRegistry(identityRegistry_);
+        emit IdentityRegistrySet(identityRegistry_);
     }
 
     function setSourceChainAllowed(uint256 sourceChainId, bool allowed) external onlyRole(POLICY_ADMIN_ROLE) {
@@ -247,7 +258,8 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
         view
         returns (bool allowed, bytes32 policyCode)
     {
-        if (!accountAllowed[beneficiary]) return (false, POLICY_ACCOUNT_NOT_ALLOWED);
+        bytes32 accountCode = _accountPolicyCode(beneficiary);
+        if (accountCode != POLICY_ALLOWED) return (false, accountCode);
         if (!sourceChainAllowed[sourceChainId]) return (false, POLICY_SOURCE_CHAIN_BLOCKED);
         if (!mintAssetAllowed[canonicalAsset]) return (false, POLICY_MINT_ASSET_BLOCKED);
         uint256 cap = voucherExposureCap[canonicalAsset];
@@ -262,7 +274,8 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
         view
         returns (bool allowed, bytes32 policyCode)
     {
-        if (!accountAllowed[beneficiary]) return (false, POLICY_ACCOUNT_NOT_ALLOWED);
+        bytes32 accountCode = _accountPolicyCode(beneficiary);
+        if (accountCode != POLICY_ALLOWED) return (false, accountCode);
         if (!sourceChainAllowed[sourceChainId]) return (false, POLICY_SOURCE_CHAIN_BLOCKED);
         if (!unlockAssetAllowed[canonicalAsset]) return (false, POLICY_UNLOCK_ASSET_BLOCKED);
         return (true, POLICY_ALLOWED);
@@ -273,7 +286,8 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
         view
         returns (bool allowed, bytes32 policyCode)
     {
-        if (!accountAllowed[account]) return (false, POLICY_ACCOUNT_NOT_ALLOWED);
+        bytes32 accountCode = _accountPolicyCode(account);
+        if (accountCode != POLICY_ALLOWED) return (false, accountCode);
         if (!collateralAssetAllowed[collateralAsset]) return (false, POLICY_COLLATERAL_ASSET_BLOCKED);
         uint256 cap = collateralCap[collateralAsset];
         if (cap != 0 && collateralOutstanding[collateralAsset] + amount > cap) {
@@ -287,7 +301,8 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
         view
         returns (bool allowed, bytes32 policyCode)
     {
-        if (!accountAllowed[account]) return (false, POLICY_ACCOUNT_NOT_ALLOWED);
+        bytes32 accountCode = _accountPolicyCode(account);
+        if (accountCode != POLICY_ALLOWED) return (false, accountCode);
         if (!debtAssetAllowed[debtAsset]) return (false, POLICY_DEBT_ASSET_BLOCKED);
 
         uint256 assetCap = debtAssetBorrowCap[debtAsset];
@@ -305,5 +320,13 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
 
     function _policyCodeString(bytes32 code) internal pure returns (string memory) {
         return string(abi.encodePacked(code));
+    }
+
+    function _accountPolicyCode(address account) internal view returns (bytes32) {
+        if (!accountAllowed[account]) return POLICY_ACCOUNT_NOT_ALLOWED;
+        if (address(identityRegistry) != address(0) && !identityRegistry.isEligible(account)) {
+            return POLICY_IDENTITY_NOT_ELIGIBLE;
+        }
+        return POLICY_ALLOWED;
     }
 }

@@ -20,9 +20,9 @@
 /coverage
 
 # Runtime-generated demo state
-/demo/latest-run.js
-/demo/latest-run.json
-/.interchain-lending.local.json
+/.runtime
+/config/institutional-attestor.json
+/config/institutional-relay.json
 
 # Generated Besu runtime state
 /networks/besu/*

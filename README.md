@@ -1,180 +1,58 @@
-# Cross-Chain Lending Demo
+# Institutional Cross-Chain Lending
 
-This repository contains a Besu-first cross-chain lending prototype for two permissioned EVM bank chains. The active model keeps the thesis architecture intact: a Besu light client verifies remote chain state, storage proofs prove packet commitments, an IBC-like lane relays packets, institutional policy gates application actions, and canonical collateral locked on Bank A is represented by a voucher on Bank B.
-
-The lending layer is now a real single-market pool rather than a principal-only demo. Bank B suppliers deposit the debt asset and receive liquidity shares. Borrowers deposit voucher collateral represented from Bank A, borrow against policy and risk limits, accrue debt through a borrow index, and can be liquidated on accrued debt after price or interest movement.
-
-## Thesis Defense Positioning
-
-This project is a permissioned cross-chain lending prototype that demonstrates proof-checked cross-chain collateral representation, policy-controlled borrowing, and risk-based liquidation under a controlled Besu/QBFT environment. It is intended for academic demonstration and is not production-ready or audited.
-
-The project does not claim to be a permissionless public bridge, a decentralized oracle system, or a production lending market. Its technical contribution is the combination of cross-chain collateral representation, proof-checked packet execution, policy-controlled lending, oracle-based valuation, health-factor-based liquidation, a Besu/QBFT light-client boundary, and UI portals for borrower, risk admin, and proof inspection.
-
-## Architecture
-
-- `contracts/clients/*`: Besu/QBFT light-client verification.
-- `contracts/core/IBCEVMProofBoundary.sol` and `IBCProofVerifier.sol`: EVM storage proof boundary.
-- `contracts/core/IBCConnectionKeeper.sol`, `IBCChannelKeeper.sol`, `IBCPacketHandler.sol`, `IBCPacketStore.sol`: proof-checked connection/channel state and packet relay.
-- `contracts/apps/PolicyControlledTransferApp.sol`: policy-aware bridge application.
-- `contracts/apps/PolicyControlledEscrowVault.sol`: pooled canonical asset escrow on the source chain.
-- `contracts/apps/PolicyControlledVoucherToken.sol`: single-canonical-asset voucher on the destination chain.
-- `contracts/apps/BankPolicyEngine.sol`: institutional allowlists, caps, and exposure accounting.
-- `contracts/apps/PolicyControlledLendingPool.sol`: supplier shares, borrower debt shares, lazy interest accrual, reserves, liquidation, and bad-debt recognition.
-- `scripts/*`: Besu deployment, seeding, proof relay, and thesis demo flows.
-
-## Security Model
-
-Packet commitments are source-app authorized. `IBCPacketStore.commitPacket` only accepts calls from a registered packet writer, and the caller must equal `packet.source.port`, which prevents arbitrary callers from consuming packet sequence numbers or forging commitments.
-
-The transfer app enforces a one-route, one-canonical-asset invariant. Packets whose `transferData.asset` does not match the configured route canonical asset are rejected, voucher mint/burn checks the bound canonical asset, and escrow only releases its own canonical token.
-
-The escrow vault uses pooled accounting: `totalEscrowed` represents canonical liabilities held by the vault, and unlock/refund packet IDs are processed once. It no longer tries to decrement unrelated recipient balances.
-
-Operational contracts include emergency pause controls for packet send/receive, escrow lock/unlock, voucher transfer/mint/burn, and lending market state transitions.
-
-## Feature Status
-
-| Feature | Status | Explanation |
-| --- | --- | --- |
-| Packet execution proof | Verified on-chain | The packet handler checks storage proof data against the configured light-client/proof-verifier boundary. |
-| Packet receipt replay protection | Verified on-chain | Packet receipts prevent the same packet proof from executing twice. |
-| Timeout absence path | Script-assisted, on-chain verified | The UI action and full demo submit a receipt absence proof; Bank A verifies the proof and records timeout/refund state on-chain. |
-| Manual oracle update | Prototype assumption | Prices are set by governed demo operators and checked for freshness, not sourced from a decentralized oracle. |
-| Policy allowlist and caps | Verified on-chain | `BankPolicyEngine` enforces account, asset, route, and exposure controls. |
-| Borrow capacity | Verified on-chain | The lending pool uses collateral value and `collateralFactorBps`. |
-| Liquidation health factor | Verified on-chain | The lending pool uses oracle value, debt state, and `liquidationThresholdBps`. |
-| Liquidation preview | Verified on-chain | `previewLiquidation` reads borrower debt/collateral and returns capped repay, seize, remaining state, bad debt, and executable status. |
-| Risk/Admin UI | UI visualization | The UI reads contract state and demo traces; it does not replace on-chain validation. |
-
-## Lending Mechanics
-
-The lending pool is a single market with one collateral token and one debt token:
-
-- Suppliers call `depositLiquidity` and receive liquidity shares.
-- Suppliers call `withdrawLiquidity` or `redeemLiquidity` subject to available cash.
-- Borrowers deposit voucher collateral and borrow debt-token liquidity.
-- Borrower debt is tracked as shares against `borrowIndexE18`.
-- Interest accrues lazily on state-changing actions or explicit `accrueInterest()`.
-- Borrow APR follows a utilization model with base rate, kink, slope 1, and slope 2.
-- A reserve factor diverts part of accrued interest to protocol reserves.
-- Borrow capacity uses `collateralFactorBps`; health factor and liquidation eligibility use the separate `liquidationThresholdBps`.
-- Health factor, borrow limits, and liquidation use accrued debt.
-- If liquidation exhausts collateral and debt remains, the pool writes off the remaining debt, uses reserves first, and records supplier loss in `totalBadDebt`.
-
-Policy caps still apply to principal borrowing. Interest is economic debt in the pool, while the policy engine tracks institutional principal exposure and explicit write-offs.
-
-## Oracle Assumptions
-
-`ManualAssetOracle` is a governed demo oracle with timestamped prices. It reverts when a price is missing or stale. The lending pool no longer falls back to 1:1 pricing; valuation requires an explicit oracle.
-
-This is appropriate for the thesis prototype because price publication is governed by the permissioned bank environment. It is not a production decentralized oracle network.
-
-## Install
+## Lan dau sau khi chuyen tu demo cu
 
 ```bash
 npm install
+npm run demo:fresh
 ```
 
-If Hardhat cache/temp writes fail in WSL, run commands with explicit temp paths:
+Lenh nay thay topology 1-validator cu bang profile 4-validator va mo UI tai `http://127.0.0.1:5173/`.
+
+## Chay UI tu runtime hien tai
 
 ```bash
-TMPDIR=/tmp XDG_CACHE_HOME=/tmp/.cache npm run compile
-TMPDIR=/tmp XDG_CACHE_HOME=/tmp/.cache npm test
-```
-
-## Run Solidity Tests
-
-```bash
-npm run compile
-npm test
-```
-
-`npm test` and `npm run test:solidity` both run the Solidity test suite.
-
-## Customer-Facing Verified Demo
-
-The live presentation uses one main flow: a banking-style customer journey backed by real protocol checks. Route setup and token allowances are warmed before the audience flow because they are infrastructure preparation. The receive step is still mandatory: Bank B mints voucher collateral only after it verifies the Bank A packet storage proof. The reverse acknowledgement is settlement finalization and is deferred from the customer-facing path.
-
-Recommended thesis-defense command sequence:
-
-```bash
-npm install
 npm run demo:prepare
 npm run demo:ui
 ```
 
-`npm run demo:prepare` is the fail-fast setup path: generate Besu files, start both chains, deploy contracts, seed policy/risk state, and warm route/allowances. Use this command instead of pasting the individual setup commands into PowerShell; if Bank A or Bank B is not producing blocks, the command stops before deploy/seed can run against stale contract addresses.
+Mo `http://127.0.0.1:5173/`.
 
-Open:
+`demo:prepare` khoi dong hai chain Besu QBFT, deploy institutional stack, seed tai khoan/thanh khoan va chuyen quyen quan tri sang timelock. UI tu dong khoi dong 4 attestor cung relayer co journal; nguoi dung chi thao tac transfer, lending va settlement.
 
-```text
-http://127.0.0.1:5173/
-```
-
-During the live demo, use `Prepare Demo Session` if the UI asks for it, then run:
-
-1. Prepare Demo Session
-2. Establish Bank Route if needed
-3. Transfer Collateral to Bank B
-4. Fetch Source Header / Import Header if the UI recommends those proof sub-steps
-5. Receive Verified Collateral
-6. Deposit Collateral
-7. Borrow Cash
-8. Repay Loan
-9. Withdraw Collateral
-10. Show technical evidence in the Technical / Thesis panel
-
-The main demo follows a normal borrower journey: transfer collateral, deposit, borrow, repay, and withdraw. The liquidation path is kept as an appendix risk scenario because it intentionally makes the borrower position unhealthy through an oracle price shock.
-
-`Fresh Reset (slow setup only)` redeploys and reseeds a clean baseline. Use it before the demo window or for recovery, not as the main live command. `npm run demo:fresh` is the same slow clean-environment path; do not use it during the live demo because it redeploys and reseeds the whole environment.
-
-For the thesis-defense walkthrough, including the Borrower Portal, appendix risk scenario, Proof Inspector, appendix actions, and known limitations, see [DEMO_FLOW.md](./DEMO_FLOW.md). For trust assumptions and limitations, see [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md).
-
-## Appendix Terminal Scenario
-
-The browser UI is the primary thesis-defense demo. The terminal scenario is kept as an appendix/regression walkthrough and is not the recommended live presentation path.
-
-With Besu running:
+## Chay mot lenh
 
 ```bash
-npm run besu:demo
+npm run demo:start
 ```
 
-`npm run besu:demo` compiles, deploys, seeds, and then runs the terminal walkthrough against the currently running Besu chains. If you already have a fresh seeded deployment and only want to replay the terminal flow, use `npm run demo`.
-
-The seed script now deposits Bank B supplier liquidity through the lending pool instead of minting debt tokens directly into the pool.
-
-After `npm run besu:generate` or a fresh Besu network reset, run `npm run deploy` and `npm run seed` before `npm run demo`. The `npm run test:besu` verification lanes deploy temporary contracts for reports; they do not seed the browser/terminal demo stack.
-
-## Run Besu Verification Tests
-
-With Besu running:
+## Tao runtime sach
 
 ```bash
-npm run test:besu
+npm run demo:fresh
 ```
 
-Individual verification lanes are also available:
+Lenh nay xoa Besu volume hien tai, tao lai runtime, deploy va mo UI.
+
+## Kiem thu
 
 ```bash
-npm run verify:light-client
-npm run verify:storage-proof
-npm run verify:packet-relay
-npm run verify:policy-packet
-npm run verify:timeout-height
-npm run verify:timeout-timestamp
+npm test
+npm run institutional:integration
 ```
 
-## Stop Besu
+## Tao evidence tach biet
+
+```bash
+npm run institutional:evidence
+```
+
+Evidence chinh thuc yeu cau working tree da duoc review va commit sach. Runner dung topology rieng gom 2 chain, moi chain 4 validator; kiem tra validator outage/recovery, timelock governance, cross-chain transfer, lending, attestor quorum va relayer restart. Bao cao duoc ghi tai `.runtime/evidence/` va khong thay doi runtime UI tren port `8545/9545`.
+
+## Tat runtime
 
 ```bash
 npm run besu:down
 ```
 
-## Generated Local Files
-
-The demo can generate local runtime files such as `.interchain-lending.local.json`, `demo/latest-run.json`, `demo/latest-run.js`, and verification reports. They are runtime outputs, not source files.
-
-## Remaining Prototype Limits
-
-The market is intentionally single-asset and single-route. Oracle updates are governed and manual. Liquidation is role-gated for the institutional setting. The contracts are thesis-grade prototypes and have not been audited for production deployment.
+Xem them `PROJECT_MAP.md` va `docs/RUNTIME_OPERATIONS.md`.

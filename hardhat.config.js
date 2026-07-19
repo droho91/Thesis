@@ -1,6 +1,12 @@
 import { defineConfig } from "hardhat/config";
 
 export default defineConfig({
+  paths: {
+    sources: "./contracts",
+    tests: "./test",
+    cache: "./cache",
+    artifacts: "./artifacts",
+  },
   solidity: {
     profiles: {
       default: {
@@ -24,6 +30,19 @@ export default defineConfig({
             runs: 200,
           },
         },
+      },
+    },
+  },
+  test: {
+    solidity: {
+      fuzz: {
+        runs: 128,
+        failurePersistDir: ".runtime/fuzz-failures",
+      },
+      invariant: {
+        runs: 64,
+        depth: 64,
+        failurePersistDir: ".runtime/invariant-failures",
       },
     },
   },

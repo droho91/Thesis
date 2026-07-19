@@ -1,0 +1,48 @@
+{
+  "version": "institutional-relay-v1",
+  "journalPath": ".runtime/relay-journal.json",
+  "pollIntervalMs": 1000,
+  "leaseMs": 30000,
+  "batchSize": 10,
+  "defaults": {
+    "scanRange": 250,
+    "transactionTimeoutMs": 120000,
+    "attestorTimeoutMs": 10000,
+    "gasLimit": "8000000"
+  },
+  "retry": {
+    "baseMs": 1000,
+    "maxMs": 60000,
+    "jitterRatio": 0.15
+  },
+  "lanes": [
+    {
+      "id": "bank-a-to-bank-b",
+      "startBlock": 1,
+      "source": {
+        "chainId": "41001",
+        "rpc": "http://127.0.0.1:8545",
+        "gateway": "0x0000000000000000000000000000000000000001",
+        "checkpointClient": "0x0000000000000000000000000000000000000002",
+        "deploymentBlock": 1,
+        "finalityDepth": 2,
+        "privateKeyEnv": "BANK_A_RELAYER_PRIVATE_KEY"
+      },
+      "destination": {
+        "chainId": "41002",
+        "rpc": "http://127.0.0.1:9545",
+        "gateway": "0x0000000000000000000000000000000000000003",
+        "checkpointClient": "0x0000000000000000000000000000000000000004",
+        "deploymentBlock": 1,
+        "finalityDepth": 2,
+        "privateKeyEnv": "BANK_B_RELAYER_PRIVATE_KEY"
+      },
+      "attestors": [
+        { "url": "http://127.0.0.1:8701", "tokenEnv": "ATTESTOR_1_TOKEN" },
+        { "url": "http://127.0.0.1:8702", "tokenEnv": "ATTESTOR_2_TOKEN" },
+        { "url": "http://127.0.0.1:8703", "tokenEnv": "ATTESTOR_3_TOKEN" },
+        { "url": "http://127.0.0.1:8704", "tokenEnv": "ATTESTOR_4_TOKEN" }
+      ]
+    }
+  ]
+}

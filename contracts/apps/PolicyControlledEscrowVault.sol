@@ -14,6 +14,8 @@ contract PolicyControlledEscrowVault is AccessControl, Pausable, ReentrancyGuard
     using SafeERC20 for IERC20;
 
     bytes32 public constant APP_ROLE = keccak256("APP_ROLE");
+    bytes32 public constant APP_ADMIN_ROLE = keccak256("APP_ADMIN_ROLE");
+    bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
 
     IERC20 public immutable asset;
     IBankPolicyEngine public immutable policyEngine;
@@ -35,19 +37,21 @@ contract PolicyControlledEscrowVault is AccessControl, Pausable, ReentrancyGuard
         asset = IERC20(asset_);
         policyEngine = IBankPolicyEngine(policyEngine_);
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(APP_ADMIN_ROLE, admin);
+        _grantRole(GUARDIAN_ROLE, admin);
     }
 
-    function grantApp(address app) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function grantApp(address app) external onlyRole(APP_ADMIN_ROLE) {
         require(app != address(0), "APP_ZERO");
         _grantRole(APP_ROLE, app);
     }
 
-    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function pause() external onlyRole(GUARDIAN_ROLE) {
         _pause();
         emit EmergencyPaused(msg.sender);
     }
 
-    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function unpause() external onlyRole(APP_ADMIN_ROLE) {
         _unpause();
         emit EmergencyUnpaused(msg.sender);
     }

@@ -10,6 +10,9 @@ import {IBankPolicyEngine} from "./IBankPolicyEngine.sol";
 /// @notice Voucher token that only mints when the bank policy engine approves the remote claim.
 contract PolicyControlledVoucherToken is ERC20, AccessControl, Pausable {
     bytes32 public constant APP_ROLE = keccak256("APP_ROLE");
+    bytes32 public constant APP_ADMIN_ROLE = keccak256("APP_ADMIN_ROLE");
+    bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
+    bytes32 public constant TRANSFER_OPERATOR_ROLE = keccak256("TRANSFER_OPERATOR_ROLE");
 
     IBankPolicyEngine public immutable policyEngine;
     address public canonicalAsset;
@@ -20,6 +23,7 @@ contract PolicyControlledVoucherToken is ERC20, AccessControl, Pausable {
     event VoucherMinted(address indexed to, address indexed canonicalAsset, uint256 amount, uint256 indexed sourceChainId, bytes32 packetId);
     event VoucherBurned(address indexed from, uint256 amount);
     event CanonicalAssetBound(address indexed canonicalAsset);
+    event TransferOperatorGranted(address indexed operator);
     event EmergencyPaused(address indexed account);
     event EmergencyUnpaused(address indexed account);
 
@@ -28,26 +32,34 @@ contract PolicyControlledVoucherToken is ERC20, AccessControl, Pausable {
         require(policyEngine_ != address(0), "POLICY_ENGINE_ZERO");
         policyEngine = IBankPolicyEngine(policyEngine_);
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(APP_ADMIN_ROLE, admin);
+        _grantRole(GUARDIAN_ROLE, admin);
     }
 
-    function grantApp(address app) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function grantApp(address app) external onlyRole(APP_ADMIN_ROLE) {
         require(app != address(0), "APP_ZERO");
         _grantRole(APP_ROLE, app);
     }
 
-    function bindCanonicalAsset(address canonicalAsset_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function grantTransferOperator(address operator) external onlyRole(APP_ADMIN_ROLE) {
+        require(operator != address(0), "OPERATOR_ZERO");
+        _grantRole(TRANSFER_OPERATOR_ROLE, operator);
+        emit TransferOperatorGranted(operator);
+    }
+
+    function bindCanonicalAsset(address canonicalAsset_) external onlyRole(APP_ADMIN_ROLE) {
         require(canonicalAsset_ != address(0), "ASSET_ZERO");
         require(canonicalAsset == address(0) || canonicalAsset == canonicalAsset_, "CANONICAL_ASSET_ALREADY_BOUND");
         canonicalAsset = canonicalAsset_;
         emit CanonicalAssetBound(canonicalAsset_);
     }
 
-    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function pause() external onlyRole(GUARDIAN_ROLE) {
         _pause();
         emit EmergencyPaused(msg.sender);
     }
 
-    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function unpause() external onlyRole(APP_ADMIN_ROLE) {
         _unpause();
         emit EmergencyUnpaused(msg.sender);
     }
@@ -91,6 +103,9 @@ contract PolicyControlledVoucherToken is ERC20, AccessControl, Pausable {
     }
 
     function _update(address from, address to, uint256 value) internal override whenNotPaused {
+        if (from != address(0) && to != address(0)) {
+            require(hasRole(TRANSFER_OPERATOR_ROLE, _msgSender()), "VOUCHER_TRANSFER_RESTRICTED");
+        }
         super._update(from, to, value);
     }
 }

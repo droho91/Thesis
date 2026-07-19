@@ -7,12 +7,14 @@ It scaffolds two separate local permissioned EVM bank chains:
 - `chainA`: Bank A QBFT network on host RPC `http://127.0.0.1:8545`
 - `chainB`: Bank B QBFT network on host RPC `http://127.0.0.1:9545`
 
-Each chain has four validators with generated local keys, a QBFT genesis, and hardened default RPC config.
+Each chain uses 4 validators with generated local keys and tolerates 1 unavailable validator(s).
 
-Default mode avoids deterministic keys, pins the Besu Docker image, disables ADMIN/DEBUG RPC, and restricts CORS/host allowlists for local UI access.
+Default mode avoids deterministic keys, pins the Besu Docker image by digest, isolates each validator key mount, disables ADMIN/DEBUG RPC, and binds host RPC ports to loopback.
 
 Generated node configs set `bonsai-historical-block-limit=100000` and `bonsai-trie-logs-pruning-window-size=120000` so the local demo can serve storage proofs after idle periods. This is a local demo retention setting, not production guidance.
 
-Use `docker compose -f networks/besu/docker-compose.yml up -d` to start the local networks after generating them.
+Validator JVM profile: `-Xms128m -Xmx512m -XX:ActiveProcessorCount=2`.
 
-Important: this is local thesis scaffolding, but it is now the canonical runtime surface for the Solidity demo flow. The remaining gap is production-grade on-chain Besu header verification, not generator integration.
+Consensus timing: `blockperiodseconds=2`, `requesttimeoutseconds=10`. The wider local request timeout prevents premature round changes while Docker Desktop starts validator JVMs.
+
+The versioned `scaffold.json` binds the topology expected by health and fault-recovery checks. Each validator container receives only its own key; generated keys remain local evidence credentials, not production custody.

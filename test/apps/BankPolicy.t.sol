@@ -67,6 +67,7 @@ contract BankPolicyTest is Test {
         );
 
         voucher.grantApp(address(this));
+        voucher.grantTransferOperator(address(lendingPool));
         voucher.bindCanonicalAsset(address(canonicalAsset));
         escrow.grantApp(address(this));
 
@@ -94,6 +95,20 @@ contract BankPolicyTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(PolicyControlledVoucherToken.PolicyDenied.selector, policy.POLICY_VOUCHER_CAP_EXCEEDED()));
         voucher.mintWithPolicy(alice, address(canonicalAsset), SOURCE_CHAIN_A, 50 ether, PACKET_TWO);
+    }
+
+    function testVoucherCannotBeTransferredOutsideApprovedInstitutionalOperator() public {
+        voucher.mintWithPolicy(alice, address(canonicalAsset), SOURCE_CHAIN_A, 10 ether, PACKET_ONE);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("VOUCHER_TRANSFER_RESTRICTED"));
+        voucher.transfer(address(0xB0B), 1 ether);
+
+        vm.startPrank(alice);
+        voucher.approve(address(lendingPool), 10 ether);
+        lendingPool.depositCollateral(10 ether);
+        vm.stopPrank();
+        assertEq(voucher.balanceOf(address(lendingPool)), 10 ether);
     }
 
     function testUnlockCanonicalWithPolicyReducesTrackedExposure() public {

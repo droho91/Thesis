@@ -16,12 +16,14 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
     using SafeERC20 for IERC20;
 
     bytes32 public constant RISK_ADMIN_ROLE = keccak256("RISK_ADMIN_ROLE");
+    bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
     bytes32 public constant LIQUIDATOR_ROLE = keccak256("LIQUIDATOR_ROLE");
     bytes32 public constant RESERVE_MANAGER_ROLE = keccak256("RESERVE_MANAGER_ROLE");
 
     uint256 public constant BPS = 10_000;
     uint256 public constant WAD = 1e18;
     uint256 public constant SECONDS_PER_YEAR = 365 days;
+    uint256 public constant MAX_ACCRUAL_ELAPSED = 365 days;
     uint256 public constant MAX_COLLATERAL_FACTOR_BPS = BPS;
     uint256 public constant MAX_LIQUIDATION_BONUS_BPS = 5_000;
     uint256 public constant MAX_RESERVE_FACTOR_BPS = 5_000;
@@ -137,11 +139,12 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(RISK_ADMIN_ROLE, admin);
+        _grantRole(GUARDIAN_ROLE, admin);
         _grantRole(LIQUIDATOR_ROLE, admin);
         _grantRole(RESERVE_MANAGER_ROLE, admin);
     }
 
-    function pause() external onlyRole(RISK_ADMIN_ROLE) {
+    function pause() external onlyRole(GUARDIAN_ROLE) {
         _pause();
         emit EmergencyPaused(msg.sender);
     }
@@ -310,6 +313,11 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         return _repayFor(msg.sender, borrower, amount);
     }
 
+    /// @notice Repays the caller's complete accrued balance without relying on a stale UI quote.
+    function repayAll() external whenNotPaused nonReentrant returns (uint256 payment) {
+        return _repayFor(msg.sender, msg.sender, type(uint256).max);
+    }
+
     function liquidate(address borrower, uint256 repayAmount) external onlyRole(LIQUIDATOR_ROLE) whenNotPaused nonReentrant {
         require(borrower != address(0), "BORROWER_ZERO");
         require(borrower != msg.sender, "SELF_LIQUIDATION");
@@ -333,6 +341,8 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         if (preview.seizedCollateral > 0) {
             collateralToken.safeTransfer(msg.sender, preview.seizedCollateral);
             policyEngine.noteCollateralReleased(borrower, address(collateralToken), preview.seizedCollateral);
+            // Voucher exposure is not decremented here because the voucher is transferred, not burned.
+            // Exposure remains outstanding until the liquidator settles it through the transfer app.
         }
 
         uint256 badDebtWrittenOff;
@@ -421,8 +431,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
     }
 
     function availableLiquidity() public view returns (uint256) {
-        uint256 cash = totalCash();
-        return cash > totalReserves ? cash - totalReserves : 0;
+        return _availableCash();
     }
 
     function totalAssets() public view returns (uint256) {
@@ -462,27 +471,33 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
 
     function accruedBorrowIndexE18() public view returns (uint256) {
         if (totalBorrows == 0) return borrowIndexE18;
-        uint256 elapsed = block.timestamp - lastAccrualTimestamp;
+        uint256 elapsed = _cappedElapsed();
         if (elapsed == 0) return borrowIndexE18;
-        uint256 rateBps = _currentBorrowRateBps(totalBorrows, totalCash());
+        uint256 rateBps = _currentBorrowRateBps(totalBorrows, _availableCash());
         return borrowIndexE18 + (borrowIndexE18 * rateBps * elapsed / (BPS * SECONDS_PER_YEAR));
     }
 
     function pendingInterest() public view returns (uint256 interest, uint256 reserves) {
         if (totalBorrows == 0) return (0, 0);
-        uint256 elapsed = block.timestamp - lastAccrualTimestamp;
+        uint256 elapsed = _cappedElapsed();
         if (elapsed == 0) return (0, 0);
-        uint256 rateBps = _currentBorrowRateBps(totalBorrows, totalCash());
+        uint256 rateBps = _currentBorrowRateBps(totalBorrows, _availableCash());
         interest = totalBorrows * rateBps * elapsed / (BPS * SECONDS_PER_YEAR);
         reserves = interest * reserveFactorBps / BPS;
     }
 
     function utilizationRateBps() public view returns (uint256) {
-        return _utilizationRateBps(accruedTotalBorrows(), totalCash());
+        return _utilizationRateBps(totalBorrows, _availableCash());
+    }
+
+    /// @notice Utilization rate including pending accrued interest, suitable for external monitoring.
+    function accruedUtilizationRateBps() external view returns (uint256) {
+        (uint256 interest, uint256 reserves) = pendingInterest();
+        return _utilizationRateBps(totalBorrows + interest, _availableCash(totalReserves + reserves));
     }
 
     function currentBorrowRateBps() public view returns (uint256) {
-        return _currentBorrowRateBps(accruedTotalBorrows(), totalCash());
+        return _currentBorrowRateBps(totalBorrows, _availableCash());
     }
 
     function _redeemLiquidity(address owner, address receiver, uint256 shareAmount) internal returns (uint256 assets) {
@@ -568,6 +583,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
     function _accrueInterest() internal returns (uint256 interestAccrued, uint256 reservesAccrued) {
         uint256 elapsed = block.timestamp - lastAccrualTimestamp;
         if (elapsed == 0) return (0, 0);
+        if (elapsed > MAX_ACCRUAL_ELAPSED) elapsed = MAX_ACCRUAL_ELAPSED;
         lastAccrualTimestamp = block.timestamp;
 
         if (totalBorrows == 0) {
@@ -576,7 +592,7 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         }
 
         // Borrowers hold debt shares, so interest updates the global borrow index instead of each account.
-        uint256 rateBps = _currentBorrowRateBps(totalBorrows, totalCash());
+        uint256 rateBps = _currentBorrowRateBps(totalBorrows, _availableCash());
         interestAccrued = totalBorrows * rateBps * elapsed / (BPS * SECONDS_PER_YEAR);
         reservesAccrued = interestAccrued * reserveFactorBps / BPS;
         totalBorrows += interestAccrued;
@@ -703,15 +719,29 @@ contract PolicyControlledLendingPool is AccessControl, Pausable, ReentrancyGuard
         return cashAndBorrows > totalReserves ? cashAndBorrows - totalReserves : 0;
     }
 
-    function _utilizationRateBps(uint256 borrows, uint256 cash) internal pure returns (uint256) {
-        uint256 supplied = cash + borrows;
+    function _availableCash() internal view returns (uint256) {
+        return _availableCash(totalReserves);
+    }
+
+    function _availableCash(uint256 reserves) internal view returns (uint256) {
+        uint256 cash = totalCash();
+        return cash > reserves ? cash - reserves : 0;
+    }
+
+    function _cappedElapsed() internal view returns (uint256 elapsed) {
+        elapsed = block.timestamp - lastAccrualTimestamp;
+        if (elapsed > MAX_ACCRUAL_ELAPSED) elapsed = MAX_ACCRUAL_ELAPSED;
+    }
+
+    function _utilizationRateBps(uint256 borrows, uint256 availableCash_) internal pure returns (uint256) {
+        uint256 supplied = availableCash_ + borrows;
         if (supplied == 0 || borrows == 0) return 0;
         uint256 utilization = borrows * BPS / supplied;
         return utilization > BPS ? BPS : utilization;
     }
 
-    function _currentBorrowRateBps(uint256 borrows, uint256 cash) internal view returns (uint256) {
-        uint256 utilization = _utilizationRateBps(borrows, cash);
+    function _currentBorrowRateBps(uint256 borrows, uint256 availableCash_) internal view returns (uint256) {
+        uint256 utilization = _utilizationRateBps(borrows, availableCash_);
         if (utilization <= kinkUtilizationBps) {
             return baseRateBps + slope1Bps * utilization / kinkUtilizationBps;
         }

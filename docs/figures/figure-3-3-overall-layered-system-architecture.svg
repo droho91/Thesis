@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="1180" viewBox="0 0 900 1180" role="img" aria-labelledby="title desc">
   <title id="title">Figure 3.3: Overall Layered System Architecture</title>
-  <desc id="desc">A portrait, layered architecture diagram for the multi-blockchain lending prototype, showing demonstration, financial application, cross-chain proof and packet, and Besu QBFT network layers.</desc>
+  <desc id="desc">A portrait layered architecture diagram showing operations, financial applications, institutional checkpoints and EVM proofs, and Besu QBFT networks.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
@@ -27,14 +27,14 @@
 
   <!-- Layer 1 -->
   <rect class="layer" x="70" y="78" width="760" height="150" rx="8"/>
-  <text class="layer-title" x="450" y="108" text-anchor="middle">1. Demonstration / Orchestration Layer</text>
+  <text class="layer-title" x="450" y="108" text-anchor="middle">1. Operations and Relay Layer</text>
 
   <rect class="box" x="165" y="138" width="240" height="58" rx="6"/>
-  <text class="box-title" x="285" y="162" text-anchor="middle">Browser Demonstration</text>
+  <text class="box-title" x="285" y="162" text-anchor="middle">Institutional Operations</text>
   <text class="box-title" x="285" y="180" text-anchor="middle">Dashboard</text>
 
   <rect class="box" x="495" y="138" width="240" height="58" rx="6"/>
-  <text class="box-title" x="615" y="162" text-anchor="middle">Demo Scripts /</text>
+  <text class="box-title" x="615" y="162" text-anchor="middle">Attestors + Durable</text>
   <text class="box-title" x="615" y="180" text-anchor="middle">Relayer</text>
 
   <!-- Layer 2 -->
@@ -46,8 +46,8 @@
   <text class="box-text" x="205" y="364" text-anchor="middle">locks canonical collateral</text>
 
   <rect class="box" x="105" y="407" width="200" height="54" rx="6"/>
-  <text class="box-title" x="205" y="430" text-anchor="middle">Source Transfer App</text>
-  <text class="box-text" x="205" y="448" text-anchor="middle">creates packet commitment</text>
+  <text class="box-title" x="205" y="430" text-anchor="middle">Collateral Application</text>
+  <text class="box-text" x="205" y="448" text-anchor="middle">creates gateway commitment</text>
 
   <rect class="box" x="350" y="323" width="200" height="54" rx="6"/>
   <text class="box-title" x="450" y="346" text-anchor="middle">Voucher Collateral</text>
@@ -71,31 +71,31 @@
 
   <!-- Layer 3 -->
   <rect class="layer" x="70" y="568" width="760" height="315" rx="8"/>
-  <text class="layer-title" x="450" y="598" text-anchor="middle">3. Cross-Chain Proof and Packet Layer</text>
+  <text class="layer-title" x="450" y="598" text-anchor="middle">3. Institutional Checkpoint and Proof Layer</text>
 
   <rect class="box" x="120" y="633" width="285" height="66" rx="6"/>
-  <text class="box-title" x="263" y="657" text-anchor="middle">Commitment / Receipt /</text>
-  <text class="box-title" x="263" y="675" text-anchor="middle">Ack / Timeout</text>
+  <text class="box-title" x="263" y="657" text-anchor="middle">Message / Receipt /</text>
+  <text class="box-title" x="263" y="675" text-anchor="middle">Acknowledgement / Timeout</text>
 
   <rect class="box" x="120" y="724" width="285" height="54" rx="6"/>
-  <text class="box-title" x="263" y="748" text-anchor="middle">Packet Handler</text>
-  <text class="box-text" x="263" y="766" text-anchor="middle">packet execution logic</text>
+  <text class="box-title" x="263" y="748" text-anchor="middle">Cross-Chain Gateway</text>
+  <text class="box-text" x="263" y="766" text-anchor="middle">route, lifecycle, and replay checks</text>
 
   <rect class="box" x="120" y="803" width="285" height="54" rx="6"/>
-  <text class="box-title" x="263" y="827" text-anchor="middle">Packet Store</text>
-  <text class="box-text" x="263" y="845" text-anchor="middle">commitments and receipts</text>
+  <text class="box-title" x="263" y="827" text-anchor="middle">Fixed Gateway Storage Slots</text>
+  <text class="box-text" x="263" y="845" text-anchor="middle">proof-addressable state</text>
 
   <rect class="box" x="495" y="633" width="285" height="54" rx="6"/>
-  <text class="box-title" x="638" y="657" text-anchor="middle">Proof Boundary</text>
-  <text class="box-text" x="638" y="675" text-anchor="middle">trusted verification interface</text>
+  <text class="box-title" x="638" y="657" text-anchor="middle">Checkpoint Client</text>
+  <text class="box-text" x="638" y="675" text-anchor="middle">3-of-4 trusted state roots</text>
 
   <rect class="box" x="495" y="724" width="285" height="54" rx="6"/>
-  <text class="box-title" x="638" y="748" text-anchor="middle">Proof Verification</text>
-  <text class="box-text" x="638" y="766" text-anchor="middle">state proof checks</text>
+  <text class="box-title" x="638" y="748" text-anchor="middle">EVM Proof Boundary</text>
+  <text class="box-text" x="638" y="766" text-anchor="middle">account and storage proof checks</text>
 
   <rect class="box" x="495" y="803" width="285" height="54" rx="6"/>
-  <text class="box-title" x="638" y="827" text-anchor="middle">Besu Light Client</text>
-  <text class="box-text" x="638" y="845" text-anchor="middle">trusted state roots</text>
+  <text class="box-title" x="638" y="827" text-anchor="middle">Attestor Quorum</text>
+  <text class="box-text" x="638" y="845" text-anchor="middle">finalized checkpoint signatures</text>
 
   <!-- Layer 4 -->
   <rect class="layer-alt" x="70" y="913" width="760" height="205" rx="8"/>
@@ -115,7 +115,7 @@
   <!-- Inter-layer relationships -->
   <line class="arrow" x1="285" y1="196" x2="285" y2="323"/>
   <line class="arrow" x1="615" y1="196" x2="615" y2="323"/>
-  <text class="note" x="450" y="246" text-anchor="middle">interacts with application contracts and scripts</text>
+  <text class="note" x="450" y="246" text-anchor="middle">submits user actions and transports independently verified evidence</text>
 
   <line class="arrow" x1="450" y1="538" x2="450" y2="568"/>
   <text class="note" x="450" y="558" text-anchor="middle">relies on cross-chain state transfer and verification</text>

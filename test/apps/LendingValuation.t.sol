@@ -8,6 +8,33 @@ import {ManualAssetOracle} from "../../contracts/apps/ManualAssetOracle.sol";
 import {PolicyControlledVoucherToken} from "../../contracts/apps/PolicyControlledVoucherToken.sol";
 import {PolicyControlledLendingPool} from "../../contracts/apps/PolicyControlledLendingPool.sol";
 
+contract PolicyControlledLendingPoolHarness is PolicyControlledLendingPool {
+    constructor(
+        address admin,
+        address collateralToken_,
+        address debtToken_,
+        address policyEngine_,
+        uint256 collateralFactorBps_,
+        uint256 liquidationThresholdBps_
+    )
+        PolicyControlledLendingPool(
+            admin,
+            collateralToken_,
+            debtToken_,
+            policyEngine_,
+            collateralFactorBps_,
+            liquidationThresholdBps_
+        )
+    {}
+
+    function setDebtPosition(address borrower, uint256 shares, uint256 borrows, uint256 policyPrincipal) external {
+        debtShares[borrower] = shares;
+        totalDebtShares = shares;
+        totalBorrows = borrows;
+        policyDebtPrincipal[borrower] = policyPrincipal;
+    }
+}
+
 contract LendingValuationTest is Test {
     uint256 internal constant SOURCE_CHAIN_A = 41001;
     uint256 internal constant COLLATERAL_FACTOR_BPS = 7_000;
@@ -45,6 +72,7 @@ contract LendingValuationTest is Test {
         );
 
         voucher.grantApp(address(this));
+        voucher.grantTransferOperator(address(lendingPool));
         voucher.bindCanonicalAsset(address(canonicalAsset));
         policy.grantRole(policy.POLICY_APP_ROLE(), address(voucher));
         policy.grantRole(policy.POLICY_APP_ROLE(), address(lendingPool));
@@ -281,6 +309,77 @@ contract LendingValuationTest is Test {
         assertEq(lendingPool.currentBorrowRateBps(), 3_500);
     }
 
+    function testUtilizationRateExcludesReservesFromDenominator() public {
+        lendingPool.setInterestRateModel(1_000, 8_000, 0, 0);
+        policy.setAccountBorrowCap(alice, 1_000 ether);
+        oracle.setPrice(address(voucher), 2 ether);
+
+        vm.startPrank(alice);
+        voucher.approve(address(lendingPool), 1_000 ether);
+        lendingPool.depositCollateral(1_000 ether);
+        lendingPool.borrow(800 ether);
+        vm.stopPrank();
+
+        assertEq(lendingPool.utilizationRateBps(), 8_000);
+
+        vm.warp(block.timestamp + 365 days);
+        lendingPool.accrueInterest();
+
+        uint256 reserves = lendingPool.totalReserves();
+        assertGt(reserves, 0, "reserves should accrue");
+
+        uint256 totalBorrows = lendingPool.totalBorrows();
+        uint256 availableCash = lendingPool.availableLiquidity();
+        uint256 expectedUtilization = totalBorrows * 10_000 / (availableCash + totalBorrows);
+        uint256 utilizationIfReservesWereIncluded = totalBorrows * 10_000 / (lendingPool.totalCash() + totalBorrows);
+
+        assertEq(lendingPool.utilizationRateBps(), expectedUtilization);
+        assertEq(lendingPool.accruedUtilizationRateBps(), expectedUtilization);
+        assertGt(lendingPool.utilizationRateBps(), utilizationIfReservesWereIncluded);
+    }
+
+    function testInterestAccrualIsConsistentAcrossTimeSteps() public {
+        lendingPool.setInterestRateModel(1_000, 8_000, 0, 0);
+        policy.setAccountBorrowCap(alice, 1_000 ether);
+        oracle.setPrice(address(voucher), 2 ether);
+
+        vm.startPrank(alice);
+        voucher.approve(address(lendingPool), 1_000 ether);
+        lendingPool.depositCollateral(1_000 ether);
+        lendingPool.borrow(500 ether);
+        vm.stopPrank();
+
+        uint256 debtBefore = lendingPool.debtOf(alice);
+        uint256 indexBefore = lendingPool.borrowIndexE18();
+
+        for (uint256 i = 0; i < 10; i++) {
+            vm.warp(block.timestamp + 36 days);
+            lendingPool.accrueInterest();
+        }
+
+        uint256 debtAfterSmallSteps = lendingPool.debtOf(alice);
+        assertGt(debtAfterSmallSteps, debtBefore, "debt must grow with interest");
+        assertGt(lendingPool.borrowIndexE18(), indexBefore, "borrow index must grow");
+        assertGt(lendingPool.totalReserves(), 0, "reserves must accrue");
+        assertApproxEqAbs(lendingPool.totalBorrows(), debtAfterSmallSteps, 1_000);
+    }
+
+    function testInterestAccrualCapsElapsedAtOneYear() public {
+        lendingPool.setInterestRateModel(10_000, 8_000, 0, 0);
+
+        vm.startPrank(alice);
+        voucher.approve(address(lendingPool), 200 ether);
+        lendingPool.depositCollateral(200 ether);
+        lendingPool.borrow(100 ether);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 730 days);
+        lendingPool.accrueInterest();
+
+        assertEq(lendingPool.debtBalance(alice), 200 ether);
+        assertEq(lendingPool.totalReserves(), 10 ether);
+    }
+
     function testPolicyCapsRejectOverCapBorrowAndCollateral() public {
         policy.setCollateralCap(address(voucher), 50 ether);
 
@@ -351,6 +450,68 @@ contract LendingValuationTest is Test {
         assertEq(lendingPool.debtBalance(alice), 0);
         assertEq(balanceBefore - debtAsset.balanceOf(alice), 40 ether);
         assertEq(policy.accountDebtOutstanding(alice, address(debtAsset)), 0);
+    }
+
+    function testRepayAllCollectsExactRemainingBalanceAndUnlocksCollateral() public {
+        vm.startPrank(alice);
+        voucher.approve(address(lendingPool), 100 ether);
+        lendingPool.depositCollateral(100 ether);
+        lendingPool.borrow(40 ether);
+        vm.stopPrank();
+
+        debtAsset.mint(alice, 40 ether);
+        vm.startPrank(alice);
+        debtAsset.approve(address(lendingPool), 40 ether);
+        lendingPool.repay(39.995 ether);
+
+        assertEq(lendingPool.debtBalance(alice), 0.005 ether);
+        uint256 poolCashBefore = lendingPool.totalCash();
+        uint256 badDebtBefore = lendingPool.totalBadDebt();
+        assertEq(lendingPool.repayAll(), 0.005 ether);
+        assertEq(lendingPool.debtBalance(alice), 0);
+        assertEq(policy.accountDebtOutstanding(alice, address(debtAsset)), 0);
+        assertEq(lendingPool.totalCash() - poolCashBefore, 0.005 ether);
+        assertEq(lendingPool.totalBadDebt(), badDebtBefore);
+
+        lendingPool.withdrawCollateral(100 ether);
+        assertEq(lendingPool.collateralBalance(alice), 0);
+        vm.stopPrank();
+    }
+
+    function testRepayAllCannotWriteOffDebtWithoutPayment() public {
+        vm.startPrank(alice);
+        voucher.approve(address(lendingPool), 100 ether);
+        lendingPool.depositCollateral(100 ether);
+        lendingPool.borrow(1 ether);
+        debtAsset.transfer(bob, 1 ether);
+        debtAsset.approve(address(lendingPool), type(uint256).max);
+
+        vm.expectRevert();
+        lendingPool.repayAll();
+        assertEq(lendingPool.debtBalance(alice), 1 ether);
+        assertEq(lendingPool.totalBadDebt(), 0);
+        vm.stopPrank();
+    }
+
+    function testFuzzRepayAllCollectsEveryClearedDebtUnit(uint96 rawBorrowAmount) public {
+        uint256 borrowAmount = bound(uint256(rawBorrowAmount), 1, 100 ether);
+        vm.startPrank(alice);
+        voucher.approve(address(lendingPool), 200 ether);
+        lendingPool.depositCollateral(200 ether);
+        lendingPool.borrow(borrowAmount);
+        debtAsset.approve(address(lendingPool), type(uint256).max);
+
+        uint256 debtBefore = lendingPool.debtBalance(alice);
+        uint256 cashBefore = lendingPool.totalCash();
+        uint256 badDebtBefore = lendingPool.totalBadDebt();
+        uint256 payment = lendingPool.repayAll();
+
+        assertEq(payment, debtBefore);
+        assertEq(lendingPool.totalCash() - cashBefore, payment);
+        assertEq(lendingPool.debtBalance(alice), 0);
+        assertEq(lendingPool.totalBadDebt(), badDebtBefore);
+        assertEq(policy.accountDebtOutstanding(alice, address(debtAsset)), 0);
+        vm.stopPrank();
     }
 
     function testSupplierRedeemBlockedWhenLiquidityIsBorrowedOut() public {
@@ -533,6 +694,28 @@ contract LendingValuationTest is Test {
         assertEq(voucher.balanceOf(liquidator), 100 ether);
     }
 
+    function testAbsorbBadDebtWhenCollateralIsZero() public {
+        PolicyControlledLendingPoolHarness harness = new PolicyControlledLendingPoolHarness(
+            address(this),
+            address(voucher),
+            address(debtAsset),
+            address(policy),
+            COLLATERAL_FACTOR_BPS,
+            LIQUIDATION_THRESHOLD_BPS
+        );
+        harness.grantRole(harness.LIQUIDATOR_ROLE(), liquidator);
+        harness.setDebtPosition(alice, 70 ether, 70 ether, 0);
+
+        uint256 badDebtBefore = harness.totalBadDebt();
+        vm.prank(liquidator);
+        uint256 absorbed = harness.absorbBadDebt(alice);
+
+        assertEq(absorbed, 70 ether);
+        assertEq(harness.debtOf(alice), 0);
+        assertEq(harness.totalBorrows(), 0);
+        assertEq(harness.totalBadDebt(), badDebtBefore + 70 ether);
+    }
+
     function testLiquidationUsesReservesBeforeRecordingSupplierLoss() public {
         lendingPool.grantRole(lendingPool.LIQUIDATOR_ROLE(), liquidator);
         lendingPool.setInterestRateModel(10_000, 8_000, 0, 0);
@@ -611,6 +794,23 @@ contract LendingValuationTest is Test {
         vm.expectRevert();
         lendingPool.depositLiquidity(10 ether);
         vm.stopPrank();
+    }
+
+    function testGuardianCanPauseButCannotChangeRiskOrUnpause() public {
+        address guardian = address(0xCAFE);
+        lendingPool.grantRole(lendingPool.GUARDIAN_ROLE(), guardian);
+
+        vm.prank(guardian);
+        lendingPool.pause();
+
+        vm.prank(guardian);
+        vm.expectRevert();
+        lendingPool.setCollateralFactor(6_000);
+        vm.prank(guardian);
+        vm.expectRevert();
+        lendingPool.unpause();
+
+        lendingPool.unpause();
     }
 
     function _seedLiquidity(uint256 amount) internal {
