@@ -7,6 +7,7 @@ import {BankToken} from "../../contracts/apps/BankToken.sol";
 import {IInstitutionalCrossChainGateway} from "../../contracts/apps/IInstitutionalCrossChainGateway.sol";
 import {InstitutionalCollateralApp} from "../../contracts/apps/InstitutionalCollateralApp.sol";
 import {InstitutionalCollateralMessageLib} from "../../contracts/apps/InstitutionalCollateralMessageLib.sol";
+import {InstitutionalRestitutionVault} from "../../contracts/apps/InstitutionalRestitutionVault.sol";
 import {PolicyControlledEscrowVault} from "../../contracts/apps/PolicyControlledEscrowVault.sol";
 import {PolicyControlledVoucherToken} from "../../contracts/apps/PolicyControlledVoucherToken.sol";
 import {IInstitutionalMessageLifecycle, IInstitutionalMessageReceiver} from
@@ -71,6 +72,23 @@ contract MockInstitutionalAppGateway is IInstitutionalCrossChainGateway {
     }
 }
 
+contract InstitutionalCollateralAppVelocityHarness is InstitutionalCollateralApp {
+    constructor(
+        uint256 localChainId_,
+        address gateway_,
+        address identityRegistry_,
+        address escrowVault_,
+        address voucherToken_,
+        address admin
+    ) InstitutionalCollateralApp(
+        localChainId_, gateway_, identityRegistry_, escrowVault_, voucherToken_, admin
+    ) {}
+
+    function consumeOutbound(address account, address canonicalAsset, uint256 amount) external {
+        _consumeOutbound(account, canonicalAsset, amount);
+    }
+}
+
 contract InstitutionalCollateralAppTest is Test {
     uint256 internal constant CHAIN_A = 41001;
     uint256 internal constant CHAIN_B = 41002;
@@ -89,9 +107,12 @@ contract InstitutionalCollateralAppTest is Test {
     MockInstitutionalAppGateway internal gatewayB;
     InstitutionalCollateralApp internal appA;
     InstitutionalCollateralApp internal appB;
+    InstitutionalRestitutionVault internal restitutionVaultA;
+    InstitutionalRestitutionVault internal restitutionVaultB;
 
     function setUp() public {
         vm.warp(1_800_000_000);
+        vm.chainId(CHAIN_A);
         canonicalToken = new BankToken("Bank A Deposit", "aBANK");
         policyA = new BankPolicyEngine(address(this));
         policyB = new BankPolicyEngine(address(this));
@@ -108,6 +129,7 @@ contract InstitutionalCollateralAppTest is Test {
 
         gatewayA = new MockInstitutionalAppGateway(CHAIN_A);
         gatewayB = new MockInstitutionalAppGateway(CHAIN_B);
+        vm.chainId(CHAIN_A);
         appA = new InstitutionalCollateralApp(
             CHAIN_A,
             address(gatewayA),
@@ -116,6 +138,7 @@ contract InstitutionalCollateralAppTest is Test {
             address(0),
             address(this)
         );
+        vm.chainId(CHAIN_B);
         appB = new InstitutionalCollateralApp(
             CHAIN_B,
             address(gatewayB),
@@ -124,14 +147,53 @@ contract InstitutionalCollateralAppTest is Test {
             address(voucher),
             address(this)
         );
+        restitutionVaultA =
+            new InstitutionalRestitutionVault(address(this), address(identityA), address(policyA));
+        restitutionVaultB =
+            new InstitutionalRestitutionVault(address(this), address(identityB), address(policyB));
+        _issueCredential(identityA, address(restitutionVaultA), "bank-a-restitution-vault", bytes32("VN"));
+        _issueCredential(identityB, address(restitutionVaultB), "bank-b-restitution-vault", bytes32("SG"));
+        policyA.setAccountAllowed(address(restitutionVaultA), true);
+        policyB.setAccountAllowed(address(restitutionVaultB), true);
+        restitutionVaultA.grantApp(address(appA));
+        restitutionVaultB.grantApp(address(appB));
+        appA.setRestitutionVault(address(restitutionVaultA));
+        appB.setRestitutionVault(address(restitutionVaultB));
         appA.configureRemoteRoute(CHAIN_B, address(appB), address(canonicalToken), ROUTE_LIMIT, true);
         appB.configureRemoteRoute(CHAIN_A, address(appA), address(canonicalToken), ROUTE_LIMIT, true);
         escrow.grantApp(address(appA));
         voucher.grantApp(address(appB));
+        voucher.grantTransferOperator(address(restitutionVaultB));
 
         canonicalToken.mint(CUSTOMER_A, 1_000 ether);
         vm.prank(CUSTOMER_A);
         canonicalToken.approve(address(escrow), type(uint256).max);
+    }
+
+    function testConstructorRejectsConfiguredChainDifferentFromExecutionChain() public {
+        vm.chainId(CHAIN_A);
+        vm.expectRevert(bytes("LOCAL_CHAIN_ID_MISMATCH"));
+        new InstitutionalCollateralApp(
+            CHAIN_B,
+            address(gatewayA),
+            address(identityA),
+            address(escrow),
+            address(0),
+            address(this)
+        );
+    }
+
+    function testConstructorRejectsNonContractDependencies() public {
+        vm.chainId(CHAIN_A);
+        vm.expectRevert(bytes("GATEWAY_NOT_CONTRACT"));
+        new InstitutionalCollateralApp(
+            CHAIN_A,
+            address(0x1234),
+            address(identityA),
+            address(escrow),
+            address(0),
+            address(this)
+        );
     }
 
     function testLockMintAndAcknowledgementCompletesTransfer() public {
@@ -219,6 +281,43 @@ contract InstitutionalCollateralAppTest is Test {
         assertEq(canonicalToken.balanceOf(CUSTOMER_A), 1_000 ether);
     }
 
+    function testTerminalRevocationRoutesLockTimeoutIntoGovernedRestitution() public {
+        bytes32 messageId = _sendLock(100 ether, CUSTOMER_B);
+        identityA.setCredentialStatus(CUSTOMER_A, InstitutionalIdentityRegistry.CredentialStatus.Revoked);
+
+        gatewayA.timeOut(address(appA), messageId);
+
+        assertEq(uint256(appA.transferStatus(messageId)), uint256(InstitutionalCollateralApp.TransferStatus.Refunded));
+        assertEq(canonicalToken.balanceOf(CUSTOMER_A), 900 ether);
+        assertEq(canonicalToken.balanceOf(address(restitutionVaultA)), 100 ether);
+        assertEq(escrow.totalEscrowed(), 0);
+        (
+            address originalAccount,
+            address asset,
+            address canonicalAsset,
+            uint256 amount,
+            uint256 sourceChainId,
+            InstitutionalRestitutionVault.AssetKind assetKind,
+            InstitutionalRestitutionVault.ClaimStatus status
+        ) = restitutionVaultA.claims(messageId);
+        assertEq(originalAccount, CUSTOMER_A);
+        assertEq(asset, address(canonicalToken));
+        assertEq(canonicalAsset, address(canonicalToken));
+        assertEq(amount, 100 ether);
+        assertEq(sourceChainId, CHAIN_B);
+        assertEq(uint256(assetKind), uint256(InstitutionalRestitutionVault.AssetKind.Canonical));
+        assertEq(uint256(status), uint256(InstitutionalRestitutionVault.ClaimStatus.Held));
+
+        vm.expectRevert(bytes("RECIPIENT_IDENTITY_NOT_ELIGIBLE"));
+        restitutionVaultA.release(messageId, CUSTOMER_A, keccak256("case-revoked-account"));
+        restitutionVaultA.release(messageId, CUSTOMER_B, keccak256("case-approved-recipient"));
+        assertEq(canonicalToken.balanceOf(CUSTOMER_B), 100 ether);
+        assertEq(canonicalToken.balanceOf(address(restitutionVaultA)), 0);
+        assertEq(restitutionVaultA.accountedBalance(address(canonicalToken)), 0);
+        (,,,,,, status) = restitutionVaultA.claims(messageId);
+        assertEq(uint256(status), uint256(InstitutionalRestitutionVault.ClaimStatus.Released));
+    }
+
     function testOperationalGuardianCanPauseButCannotReconfigureCustodyContracts() public {
         address guardian = address(0xCAFE);
         escrow.grantRole(escrow.GUARDIAN_ROLE(), guardian);
@@ -291,6 +390,37 @@ contract InstitutionalCollateralAppTest is Test {
         assertEq(voucher.balanceOf(CUSTOMER_B), 100 ether);
         assertEq(policyB.voucherExposureOutstanding(address(canonicalToken)), 100 ether);
         assertEq(uint256(appB.transferStatus(burnMessageId)), uint256(InstitutionalCollateralApp.TransferStatus.Refunded));
+    }
+
+    function testTerminalRevocationRoutesBurnTimeoutIntoGovernedRestitution() public {
+        bytes32 lockMessageId = _sendLock(100 ether, CUSTOMER_B);
+        gatewayA.acknowledge(address(appA), lockMessageId, _deliverAtoB(lockMessageId));
+
+        vm.prank(CUSTOMER_B);
+        bytes32 burnMessageId = appB.burnAndUnlock(
+            CHAIN_A,
+            CUSTOMER_A,
+            40 ether,
+            uint64(block.timestamp + 1 hours),
+            keccak256("revoked-burn-timeout")
+        );
+        identityB.setCredentialStatus(CUSTOMER_B, InstitutionalIdentityRegistry.CredentialStatus.Revoked);
+
+        gatewayB.timeOut(address(appB), burnMessageId);
+
+        assertEq(uint256(appB.transferStatus(burnMessageId)), uint256(InstitutionalCollateralApp.TransferStatus.Refunded));
+        assertEq(voucher.balanceOf(CUSTOMER_B), 60 ether);
+        assertEq(voucher.balanceOf(address(restitutionVaultB)), 40 ether);
+        assertEq(policyB.voucherExposureOutstanding(address(canonicalToken)), 100 ether);
+        (,,,,, InstitutionalRestitutionVault.AssetKind assetKind, InstitutionalRestitutionVault.ClaimStatus status) =
+            restitutionVaultB.claims(burnMessageId);
+        assertEq(uint256(assetKind), uint256(InstitutionalRestitutionVault.AssetKind.Voucher));
+        assertEq(uint256(status), uint256(InstitutionalRestitutionVault.ClaimStatus.Held));
+
+        restitutionVaultB.release(burnMessageId, CUSTOMER_A, keccak256("case-approved-voucher-recipient"));
+        assertEq(voucher.balanceOf(CUSTOMER_A), 40 ether);
+        assertEq(voucher.balanceOf(address(restitutionVaultB)), 0);
+        assertEq(policyB.voucherExposureOutstanding(address(canonicalToken)), 100 ether);
     }
 
     function testPausedVoucherKeepsBurnRefundPendingUntilSafeRetry() public {
@@ -373,6 +503,10 @@ contract InstitutionalCollateralAppTest is Test {
 
         appA.setDailyOutboundLimit(address(canonicalToken), 150 ether);
         _sendLock(100 ether, CUSTOMER_B);
+        assertEq(
+            appA.outboundByDay(CUSTOMER_A, address(canonicalToken), block.timestamp / 1 days),
+            100 ether
+        );
         vm.prank(CUSTOMER_A);
         vm.expectRevert(bytes("DAILY_OUTBOUND_LIMIT_EXCEEDED"));
         appA.lockAndMint(
@@ -381,6 +515,97 @@ contract InstitutionalCollateralAppTest is Test {
             60 ether,
             uint64(block.timestamp + 1 hours),
             keccak256("over-daily-limit")
+        );
+    }
+
+    function testDailyVelocityConsumptionIsIsolatedPerAccountAndAsset() public {
+        vm.chainId(CHAIN_A);
+        InstitutionalCollateralAppVelocityHarness harness = new InstitutionalCollateralAppVelocityHarness(
+            CHAIN_A,
+            address(gatewayA),
+            address(identityA),
+            address(escrow),
+            address(0),
+            address(this)
+        );
+        address secondCanonicalAsset = address(0xA55E7);
+        uint256 day = block.timestamp / 1 days;
+        harness.setDailyOutboundLimit(address(canonicalToken), 100 ether);
+        harness.setDailyOutboundLimit(secondCanonicalAsset, 100 ether);
+
+        harness.consumeOutbound(CUSTOMER_A, address(canonicalToken), 80 ether);
+        harness.consumeOutbound(CUSTOMER_A, secondCanonicalAsset, 80 ether);
+        harness.consumeOutbound(CUSTOMER_B, address(canonicalToken), 80 ether);
+
+        assertEq(harness.outboundByDay(CUSTOMER_A, address(canonicalToken), day), 80 ether);
+        assertEq(harness.outboundByDay(CUSTOMER_A, secondCanonicalAsset, day), 80 ether);
+        assertEq(harness.outboundByDay(CUSTOMER_B, address(canonicalToken), day), 80 ether);
+
+        vm.expectRevert(bytes("DAILY_OUTBOUND_LIMIT_EXCEEDED"));
+        harness.consumeOutbound(CUSTOMER_A, address(canonicalToken), 21 ether);
+        harness.consumeOutbound(CUSTOMER_A, secondCanonicalAsset, 20 ether);
+        assertEq(harness.outboundByDay(CUSTOMER_A, secondCanonicalAsset, day), 100 ether);
+    }
+
+    function testRouteMigrationKeepsPendingVersionUntilAcknowledgedAndDrainCompletes() public {
+        bytes32 messageId = _sendLock(100 ether, CUSTOMER_B);
+        assertEq(appA.pendingOutboundByRoute(CHAIN_B, address(appB)), 1);
+
+        address replacementAppB = address(0xBEEFB002);
+        appA.configureRemoteRoute(CHAIN_B, replacementAppB, address(canonicalToken), ROUTE_LIMIT, true);
+
+        vm.expectRevert(bytes("ROUTE_VERSION_IMMUTABLE"));
+        appA.configureRemoteRoute(CHAIN_B, address(appB), address(canonicalToken), ROUTE_LIMIT - 1, true);
+
+        appA.scheduleRemoteRouteRevocation(CHAIN_B, address(appB));
+        vm.expectRevert(bytes("ROUTE_DRAIN_IN_PROGRESS"));
+        appA.revokeRemoteRoute(CHAIN_B, address(appB));
+
+        bytes memory acknowledgement = _deliverAtoB(messageId);
+        gatewayA.acknowledge(address(appA), messageId, acknowledgement);
+        assertEq(appA.pendingOutboundByRoute(CHAIN_B, address(appB)), 0);
+
+        vm.warp(block.timestamp + appA.ROUTE_DRAIN_PERIOD());
+        appA.revokeRemoteRoute(CHAIN_B, address(appB));
+        (,,, bool oldRouteTrusted) = appA.remoteRouteVersions(CHAIN_B, address(appB));
+        assertFalse(oldRouteTrusted);
+
+        (address activeRemoteApplication,,,) = appA.remoteRoutes(CHAIN_B);
+        assertEq(activeRemoteApplication, replacementAppB);
+    }
+
+    function testDestinationAcceptsOldSourceDuringMigrationThenRejectsItAfterDrain() public {
+        bytes32 messageId = _sendLock(100 ether, CUSTOMER_B);
+        bytes memory oldPayload = gatewayA.lastPayload();
+        address replacementAppA = address(0xBEEFA001);
+
+        appB.configureRemoteRoute(CHAIN_A, replacementAppA, address(canonicalToken), ROUTE_LIMIT, true);
+        bytes memory acknowledgement = gatewayB.deliver(
+            address(appB), messageId, CHAIN_A, address(appA), oldPayload
+        );
+        assertGt(acknowledgement.length, 0);
+        assertEq(voucher.balanceOf(CUSTOMER_B), 100 ether);
+
+        appB.scheduleRemoteRouteRevocation(CHAIN_A, address(appA));
+        vm.warp(block.timestamp + appB.ROUTE_DRAIN_PERIOD());
+        appB.revokeRemoteRoute(CHAIN_A, address(appA));
+
+        vm.expectRevert(bytes("UNTRUSTED_SOURCE_APPLICATION"));
+        gatewayB.deliver(
+            address(appB), keccak256("post-drain-old-route"), CHAIN_A, address(appA), oldPayload
+        );
+    }
+
+    function testTransferTimeoutCannotExceedRouteDrainHorizon() public {
+        uint64 invalidTimeout = uint64(block.timestamp + appA.MAX_TRANSFER_LIFETIME() + 1);
+        vm.prank(CUSTOMER_A);
+        vm.expectRevert(bytes("TIMEOUT_EXCEEDS_MAX_LIFETIME"));
+        appA.lockAndMint(
+            CHAIN_B,
+            CUSTOMER_B,
+            1 ether,
+            invalidTimeout,
+            keccak256("timeout-beyond-route-drain")
         );
     }
 
@@ -435,6 +660,21 @@ contract InstitutionalCollateralAppTest is Test {
             bytes32("SG"),
             uint64(block.timestamp + 365 days),
             2
+        );
+    }
+
+    function _issueCredential(
+        InstitutionalIdentityRegistry registry,
+        address account,
+        string memory recordReference,
+        bytes32 jurisdiction
+    ) internal {
+        registry.issueCredential(
+            account,
+            keccak256(bytes(recordReference)),
+            jurisdiction,
+            uint64(block.timestamp + 365 days),
+            1
         );
     }
 

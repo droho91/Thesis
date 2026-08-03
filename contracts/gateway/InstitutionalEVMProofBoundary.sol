@@ -14,6 +14,7 @@ abstract contract InstitutionalEVMProofBoundary {
 
     constructor(address checkpointClient_) {
         require(checkpointClient_ != address(0), "CHECKPOINT_CLIENT_ZERO");
+        require(checkpointClient_.code.length > 0, "CHECKPOINT_CLIENT_NOT_CONTRACT");
         checkpointClient = IInstitutionalCheckpointClient(checkpointClient_);
     }
 
@@ -50,6 +51,9 @@ abstract contract InstitutionalEVMProofBoundary {
         if (
             checkpointClient.status(proof.sourceChainId) != InstitutionalCheckpointTypes.ClientStatus.Active
         ) return false;
+        if (proof.checkpointHeight < checkpointClient.checkpointAuthorizationFloor(proof.sourceChainId)) {
+            return false;
+        }
         bytes32 trustedRoot = checkpointClient.trustedStateRoot(proof.sourceChainId, proof.checkpointHeight);
         if (trustedRoot == bytes32(0) || trustedRoot != proof.stateRoot) return false;
         if (proof.account == address(0) || proof.accountProof.length == 0 || proof.storageProof.length == 0) {

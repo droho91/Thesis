@@ -7,6 +7,16 @@
   "journalPath": ".runtime/attestor-1.json",
   "privateKeyEnv": "ATTESTOR_PRIVATE_KEY",
   "apiTokenEnv": "ATTESTOR_API_TOKEN",
+  "allowedDomains": [
+    {
+      "destinationChainId": "41001",
+      "checkpointClient": "0x0000000000000000000000000000000000000002"
+    },
+    {
+      "destinationChainId": "41002",
+      "checkpointClient": "0x0000000000000000000000000000000000000004"
+    }
+  ],
   "sources": [
     {
       "chainId": "41001",

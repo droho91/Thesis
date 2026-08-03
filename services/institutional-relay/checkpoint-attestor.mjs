@@ -19,11 +19,18 @@ export class CheckpointAttestor {
   #wallet;
   #sources;
   #journal;
+  #allowedDomains;
 
-  constructor({ wallet, sources, journal }) {
+  constructor({ wallet, sources, journal, allowedDomains }) {
     this.#wallet = wallet;
     this.#sources = new Map(Object.entries(sources).map(([chainId, source]) => [BigInt(chainId).toString(), source]));
     this.#journal = journal;
+    this.#allowedDomains = new Set(
+      normalizeAllowedCheckpointDomains(allowedDomains).map((domain) => destinationDomainKey({
+        chainId: BigInt(domain.destinationChainId),
+        verifyingContract: domain.checkpointClient,
+      })),
+    );
   }
 
   get signerAddress() {
@@ -31,10 +38,16 @@ export class CheckpointAttestor {
   }
 
   async attest(request) {
-    const checkpoint = normalizeCheckpoint(request.checkpoint);
+    const domain = requestedDestinationDomain(request?.domain);
+    if (!this.#allowedDomains.has(destinationDomainKey(domain))) {
+      throw new AttestorRequestError(
+        `Checkpoint destination domain ${domain.chainId}:${domain.verifyingContract} is not allowed`,
+        403,
+      );
+    }
+    const checkpoint = normalizeCheckpoint(request?.checkpoint);
     const source = this.#sources.get(checkpoint.sourceChainId.toString());
     if (!source) throw new AttestorRequestError(`Source chain ${checkpoint.sourceChainId} is not configured`, 403);
-    const domain = checkpointDomain(request.domain);
     await verifySourceCheckpoint(source, checkpoint);
 
     const signature = await this.#wallet.signTypedData(domain, CHECKPOINT_TYPES, checkpoint);
@@ -57,6 +70,51 @@ export class CheckpointAttestor {
   }
 }
 
+export function normalizeAllowedCheckpointDomains(allowedDomains) {
+  if (!Array.isArray(allowedDomains) || allowedDomains.length === 0) {
+    throw new Error("Attestor configuration requires at least one allowed destination domain");
+  }
+  const normalized = [];
+  const keys = new Set();
+  for (const [index, input] of allowedDomains.entries()) {
+    const domain = normalizeDestinationDomain(input, `Attestor allowed destination domain ${index}`);
+    const key = destinationDomainKey(domain);
+    if (keys.has(key)) {
+      throw new Error(`Attestor allowed destination domain is duplicated: ${domain.chainId}:${domain.verifyingContract}`);
+    }
+    keys.add(key);
+    normalized.push(Object.freeze({
+      destinationChainId: domain.chainId.toString(),
+      checkpointClient: domain.verifyingContract,
+    }));
+  }
+  return Object.freeze(normalized);
+}
+
+function requestedDestinationDomain(input) {
+  try {
+    return normalizeDestinationDomain(input, "Checkpoint destination domain");
+  } catch (cause) {
+    throw new AttestorRequestError(cause.message, 400, { cause });
+  }
+}
+
+function normalizeDestinationDomain(input, label) {
+  try {
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("must be an object");
+    const domain = checkpointDomain(input);
+    if (domain.chainId <= 0n) throw new Error("destinationChainId must be positive");
+    if (domain.verifyingContract === ethers.ZeroAddress) throw new Error("checkpointClient must not be the zero address");
+    return domain;
+  } catch (cause) {
+    throw new Error(`${label} is invalid: ${cause.message}`, { cause });
+  }
+}
+
+function destinationDomainKey(domain) {
+  return `${domain.chainId}:${ethers.getAddress(domain.verifyingContract).toLowerCase()}`;
+}
+
 async function verifySourceCheckpoint(source, checkpoint) {
   const network = await source.provider.getNetwork();
   if (network.chainId !== checkpoint.sourceChainId) {
@@ -69,7 +127,7 @@ async function verifySourceCheckpoint(source, checkpoint) {
   const finalityDepth = BigInt(source.finalityDepth ?? 0);
   if (latestHeight < checkpoint.blockNumber + finalityDepth) {
     throw new AttestorRequestError(
-      `Checkpoint block ${checkpoint.blockNumber} has not reached finality depth ${finalityDepth}`,
+      `Checkpoint block ${checkpoint.blockNumber} has not reached checkpoint confirmation depth ${finalityDepth}`,
       425,
     );
   }

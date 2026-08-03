@@ -28,3 +28,8 @@
 /networks/besu/*
 !/networks/besu/README.md
 /proofs
+
+# Browser verification output (visual baselines remain tracked under test/ui)
+/playwright-report
+/test-results
+/blob-report

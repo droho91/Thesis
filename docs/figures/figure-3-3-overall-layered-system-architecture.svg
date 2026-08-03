@@ -115,7 +115,7 @@
   <!-- Inter-layer relationships -->
   <line class="arrow" x1="285" y1="196" x2="285" y2="323"/>
   <line class="arrow" x1="615" y1="196" x2="615" y2="323"/>
-  <text class="note" x="450" y="246" text-anchor="middle">submits user actions and transports independently verified evidence</text>
+  <text class="note" x="450" y="246" text-anchor="middle">submits user actions and transports attestations and proofs</text>
 
   <line class="arrow" x1="450" y1="538" x2="450" y2="568"/>
   <text class="note" x="450" y="558" text-anchor="middle">relies on cross-chain state transfer and verification</text>

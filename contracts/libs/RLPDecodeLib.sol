@@ -7,6 +7,7 @@ library RLPDecodeLib {
     function readList(bytes memory encoded) internal pure returns (bytes[] memory items) {
         (uint256 payloadOffset, uint256 payloadLength, bool isList) = _payloadBounds(encoded, 0);
         require(isList, "RLP_NOT_LIST");
+        require(payloadOffset + payloadLength == encoded.length, "RLP_TRAILING_BYTES");
 
         uint256 cursor = payloadOffset;
         uint256 end = payloadOffset + payloadLength;
@@ -29,6 +30,7 @@ library RLPDecodeLib {
     function readListItems(bytes memory encoded) internal pure returns (bytes[] memory items) {
         (uint256 payloadOffset, uint256 payloadLength, bool isList) = _payloadBounds(encoded, 0);
         require(isList, "RLP_NOT_LIST");
+        require(payloadOffset + payloadLength == encoded.length, "RLP_TRAILING_BYTES");
 
         uint256 cursor = payloadOffset;
         uint256 end = payloadOffset + payloadLength;
@@ -51,6 +53,7 @@ library RLPDecodeLib {
     function readBytes(bytes memory encoded) internal pure returns (bytes memory out) {
         (uint256 payloadOffset, uint256 payloadLength, bool isList) = _payloadBounds(encoded, 0);
         require(!isList, "RLP_NOT_BYTES");
+        require(payloadOffset + payloadLength == encoded.length, "RLP_TRAILING_BYTES");
         return _slice(encoded, payloadOffset, payloadLength);
     }
 
@@ -66,8 +69,12 @@ library RLPDecodeLib {
     }
 
     function _payload(bytes memory encoded, uint256 start, uint256 length) private pure returns (bytes memory out) {
-        (uint256 payloadOffset, uint256 payloadLength,) = _payloadBounds(encoded, start);
+        (uint256 payloadOffset, uint256 payloadLength, bool isList) = _payloadBounds(encoded, start);
         require(payloadOffset + payloadLength <= start + length, "RLP_PAYLOAD_OOB");
+        // MPT inline children are nested RLP lists. Preserve their complete
+        // encoding so callers can compare the child reference with the next
+        // proof node; byte-string items continue to return their payload.
+        if (isList) return _slice(encoded, start, length);
         out = _slice(encoded, payloadOffset, payloadLength);
     }
 
@@ -86,11 +93,15 @@ library RLPDecodeLib {
             payloadLength = prefix - 0x80;
             payloadOffset = start + 1;
             require(payloadOffset + payloadLength <= encoded.length, "RLP_SHORT_STRING_OOB");
+            if (payloadLength == 1) {
+                require(uint8(encoded[payloadOffset]) >= 0x80, "RLP_NON_CANONICAL_SINGLE_BYTE");
+            }
             return (payloadOffset, payloadLength, false);
         }
         if (prefix <= 0xbf) {
             uint256 stringLengthOfLength = prefix - 0xb7;
             payloadLength = _readLength(encoded, start + 1, stringLengthOfLength);
+            require(payloadLength > 55, "RLP_NON_CANONICAL_LONG_STRING");
             payloadOffset = start + 1 + stringLengthOfLength;
             require(payloadOffset + payloadLength <= encoded.length, "RLP_LONG_STRING_OOB");
             return (payloadOffset, payloadLength, false);
@@ -104,6 +115,7 @@ library RLPDecodeLib {
 
         uint256 listLengthOfLength = prefix - 0xf7;
         payloadLength = _readLength(encoded, start + 1, listLengthOfLength);
+        require(payloadLength > 55, "RLP_NON_CANONICAL_LONG_LIST");
         payloadOffset = start + 1 + listLengthOfLength;
         require(payloadOffset + payloadLength <= encoded.length, "RLP_LONG_LIST_OOB");
         return (payloadOffset, payloadLength, true);
@@ -121,6 +133,7 @@ library RLPDecodeLib {
     {
         require(lengthOfLength > 0 && lengthOfLength <= 32, "RLP_LENGTH_OF_LENGTH_INVALID");
         require(start + lengthOfLength <= encoded.length, "RLP_LENGTH_OOB");
+        require(encoded[start] != bytes1(0), "RLP_NON_CANONICAL_LENGTH");
         for (uint256 i = 0; i < lengthOfLength; i++) {
             result = (result << 8) | uint8(encoded[start + i]);
         }

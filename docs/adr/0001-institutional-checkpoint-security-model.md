@@ -15,11 +15,11 @@ The target is an institutional cross-chain lending reference architecture. It mu
 Use a hybrid institutional checkpoint model:
 
 1. A source gateway commits message hashes in fixed EVM storage slots.
-2. Independent institutional attestors observe a finalized source block and sign its block hash, state root, height, timestamp, source chain, and attestor epoch using EIP-712.
+2. Configured institutional attestors separately observe a finalized source block and sign its block hash, state root, height, timestamp, source chain, and attestor epoch using EIP-712.
 3. Any relayer may submit a checkpoint and signatures to the destination checkpoint client.
-4. The checkpoint client accepts the state root only after a Byzantine supermajority greater than two thirds is met.
+4. The checkpoint client accepts the state root only after the configured attestor supermajority, greater than two thirds, is met under the stated signer-honesty assumptions.
 5. The destination gateway verifies an EVM account/storage proof under that trusted root before executing the message.
-6. Conflicting quorum-signed checkpoints at the same height freeze the client.
+6. A conflicting quorum-signed checkpoint at the same height freezes the client only while that evidence satisfies the maximum submission age and current/previous epoch rules. Historical evidence outside that automatic path requires guardian freeze and governed recovery.
 7. Attestor rotation and incident recovery are explicit governance actions and produce on-chain events.
 
 The defense profile uses four attestors and a threshold of three. The intended institutional allocation is Bank A, Bank B, a consortium operator, and an independent control/audit operator.
@@ -28,7 +28,7 @@ The defense profile uses four attestors and a threshold of three. The intended i
 
 This model preserves proof-based application execution while removing custom QBFT header parsing from the production-critical path. It also separates safety from liveness:
 
-- attestor quorum establishes source finality and the trusted state root;
+- QBFT establishes source consensus finality; the attestor quorum authorizes the destination to accept an observed finalized state root;
 - EVM storage proof establishes that the exact gateway commitment exists under that root;
 - relayers only transport evidence and affect liveness;
 - destination contracts enforce replay, route, timeout, policy, and accounting invariants.

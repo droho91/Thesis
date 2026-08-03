@@ -18,6 +18,7 @@ contract GatewayMockCheckpointClient is IInstitutionalCheckpointClient {
     mapping(uint256 => mapping(uint256 => uint256)) internal timestamps;
     mapping(uint256 => uint256) internal heights;
     mapping(uint256 => InstitutionalCheckpointTypes.ClientStatus) internal statuses;
+    mapping(uint256 => uint256) public override checkpointAuthorizationFloor;
 
     function setCheckpoint(uint256 sourceChainId, uint256 height, bytes32 root, uint256 timestamp) external {
         roots[sourceChainId][height] = root;
@@ -135,7 +136,9 @@ contract InstitutionalCrossChainGatewayTest is Test {
         vm.warp(1_800_000_000);
         clientA = new GatewayMockCheckpointClient();
         clientB = new GatewayMockCheckpointClient();
+        vm.chainId(CHAIN_A);
         gatewayA = new InstitutionalCrossChainGateway(CHAIN_A, address(clientA), address(this));
+        vm.chainId(CHAIN_B);
         gatewayB = new InstitutionalCrossChainGateway(CHAIN_B, address(clientB), address(this));
         appA = new GatewayTestApplication(gatewayA);
         appB = new GatewayTestApplication(gatewayB);
@@ -145,6 +148,18 @@ contract InstitutionalCrossChainGatewayTest is Test {
         gatewayB.setRemoteGateway(CHAIN_A, address(gatewayA));
         gatewayA.setApplicationRoute(address(appA), CHAIN_B, address(appB), true);
         gatewayB.setApplicationRoute(address(appB), CHAIN_A, address(appA), true);
+    }
+
+    function testConstructorRejectsConfiguredChainDifferentFromExecutionChain() public {
+        vm.chainId(CHAIN_A);
+        vm.expectRevert(bytes("LOCAL_CHAIN_ID_MISMATCH"));
+        new InstitutionalCrossChainGateway(CHAIN_B, address(clientA), address(this));
+    }
+
+    function testConstructorRejectsNonContractCheckpointClient() public {
+        vm.chainId(CHAIN_A);
+        vm.expectRevert(bytes("CHECKPOINT_CLIENT_NOT_CONTRACT"));
+        new InstitutionalCrossChainGateway(CHAIN_A, address(0x1234), address(this));
     }
 
     function testSendReceiveAndAcknowledgeEndToEnd() public {

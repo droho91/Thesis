@@ -209,8 +209,8 @@ contract BankPolicyTest is Test {
     }
 
     function testBorrowRespectsAccountAndAssetCaps() public {
-        policy.setAccountBorrowCap(alice, 50 ether);
-        policy.setDebtAssetBorrowCap(address(debtAsset), 100 ether);
+        policy.setAccountOriginationPrincipalCap(alice, 50 ether);
+        policy.setDebtAssetOriginationPrincipalCap(address(debtAsset), 100 ether);
 
         voucher.mintWithPolicy(alice, address(canonicalAsset), SOURCE_CHAIN_A, 100 ether, PACKET_ONE);
         debtAsset.mint(address(this), 100 ether);
@@ -224,22 +224,36 @@ contract BankPolicyTest is Test {
         vm.stopPrank();
 
         assertEq(lendingPool.debtBalance(alice), 40 ether);
-        assertEq(policy.accountDebtOutstanding(alice, address(debtAsset)), 40 ether);
-        assertEq(policy.debtAssetOutstanding(address(debtAsset)), 40 ether);
+        assertEq(policy.accountOriginationPrincipalOutstanding(alice), 40 ether);
+        assertEq(policy.debtAssetOriginationPrincipalOutstanding(address(debtAsset)), 40 ether);
 
         vm.startPrank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(
-                PolicyControlledLendingPool.PolicyDenied.selector, policy.POLICY_ACCOUNT_BORROW_CAP_EXCEEDED()
+                PolicyControlledLendingPool.PolicyDenied.selector, policy.POLICY_ACCOUNT_ORIGINATION_CAP_EXCEEDED()
             )
         );
         lendingPool.borrow(20 ether);
         vm.stopPrank();
     }
 
+    function testAccountOriginationPrincipalCapAggregatesAcrossDebtAssets() public {
+        BankToken secondDebtAsset = new BankToken("Second Debt", "DEBT2");
+        policy.setDebtAssetAllowed(address(secondDebtAsset), true);
+        policy.setAccountOriginationPrincipalCap(alice, 50 ether);
+        policy.grantRole(policy.POLICY_APP_ROLE(), address(this));
+
+        policy.noteOriginationPrincipalBorrowed(alice, address(debtAsset), 40 ether);
+        (bool allowed, bytes32 code) = policy.canBorrow(alice, address(secondDebtAsset), 11 ether);
+
+        assertFalse(allowed);
+        assertEq(code, policy.POLICY_ACCOUNT_ORIGINATION_CAP_EXCEEDED());
+        assertEq(policy.accountOriginationPrincipalOutstanding(alice), 40 ether);
+    }
+
     function testRepayAndWithdrawUpdatePolicyAccounting() public {
-        policy.setAccountBorrowCap(alice, 50 ether);
-        policy.setDebtAssetBorrowCap(address(debtAsset), 100 ether);
+        policy.setAccountOriginationPrincipalCap(alice, 50 ether);
+        policy.setDebtAssetOriginationPrincipalCap(address(debtAsset), 100 ether);
 
         voucher.mintWithPolicy(alice, address(canonicalAsset), SOURCE_CHAIN_A, 100 ether, PACKET_ONE);
         debtAsset.mint(address(this), 100 ether);
@@ -258,8 +272,8 @@ contract BankPolicyTest is Test {
 
         assertEq(lendingPool.debtBalance(alice), 25 ether);
         assertEq(lendingPool.collateralBalance(alice), 80 ether);
-        assertEq(policy.debtAssetOutstanding(address(debtAsset)), 25 ether);
-        assertEq(policy.accountDebtOutstanding(alice, address(debtAsset)), 25 ether);
+        assertEq(policy.debtAssetOriginationPrincipalOutstanding(address(debtAsset)), 25 ether);
+        assertEq(policy.accountOriginationPrincipalOutstanding(alice), 25 ether);
         assertEq(policy.collateralOutstanding(address(voucher)), 80 ether);
     }
 }

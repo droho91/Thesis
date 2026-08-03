@@ -9,6 +9,7 @@ import {IInstitutionalMessageLifecycle, IInstitutionalMessageReceiver} from
 import {IInstitutionalIdentityRegistry} from "../identity/IInstitutionalIdentityRegistry.sol";
 import {IInstitutionalCrossChainGateway} from "./IInstitutionalCrossChainGateway.sol";
 import {InstitutionalCollateralMessageLib} from "./InstitutionalCollateralMessageLib.sol";
+import {InstitutionalRestitutionVault} from "./InstitutionalRestitutionVault.sol";
 import {PolicyControlledEscrowVault} from "./PolicyControlledEscrowVault.sol";
 import {PolicyControlledVoucherToken} from "./PolicyControlledVoucherToken.sol";
 
@@ -23,6 +24,8 @@ contract InstitutionalCollateralApp is
 {
     bytes32 public constant APP_ADMIN_ROLE = keccak256("APP_ADMIN_ROLE");
     bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
+    uint64 public constant MAX_TRANSFER_LIFETIME = 7 days;
+    uint64 public constant ROUTE_DRAIN_PERIOD = MAX_TRANSFER_LIFETIME;
 
     enum TransferStatus {
         None,
@@ -38,6 +41,13 @@ contract InstitutionalCollateralApp is
         bool enabled;
     }
 
+    struct RemoteRouteVersion {
+        address canonicalAsset;
+        uint256 perTransferLimit;
+        uint64 revocationNotBefore;
+        bool trusted;
+    }
+
     struct PendingTransfer {
         InstitutionalCollateralMessageLib.Action action;
         address sender;
@@ -45,6 +55,7 @@ contract InstitutionalCollateralApp is
         address canonicalAsset;
         uint256 amount;
         uint256 destinationChainId;
+        address remoteApplication;
         TransferStatus status;
     }
 
@@ -53,13 +64,16 @@ contract InstitutionalCollateralApp is
     IInstitutionalIdentityRegistry public immutable identityRegistry;
     PolicyControlledEscrowVault public immutable escrowVault;
     PolicyControlledVoucherToken public immutable voucherToken;
+    InstitutionalRestitutionVault public restitutionVault;
 
     mapping(uint256 => RemoteRoute) public remoteRoutes;
+    mapping(uint256 => mapping(address => RemoteRouteVersion)) public remoteRouteVersions;
+    mapping(uint256 => mapping(address => uint256)) public pendingOutboundByRoute;
     mapping(bytes32 => PendingTransfer) public pendingTransfers;
     mapping(address => mapping(bytes32 => bytes32)) public messageByClientReference;
     mapping(address => mapping(bytes32 => bool)) public clientReferenceUsed;
     mapping(address => uint256) public dailyOutboundLimit;
-    mapping(address => mapping(uint256 => uint256)) public outboundByDay;
+    mapping(address => mapping(address => mapping(uint256 => uint256))) public outboundByDay;
 
     event RemoteRouteConfigured(
         uint256 indexed remoteChainId,
@@ -68,7 +82,13 @@ contract InstitutionalCollateralApp is
         uint256 perTransferLimit,
         bool enabled
     );
+    event RemoteRouteRevocationScheduled(
+        uint256 indexed remoteChainId, address indexed remoteApplication, uint64 revocationNotBefore
+    );
+    event RemoteRouteRevocationCancelled(uint256 indexed remoteChainId, address indexed remoteApplication);
+    event RemoteRouteRevoked(uint256 indexed remoteChainId, address indexed remoteApplication);
     event DailyOutboundLimitSet(address indexed canonicalAsset, uint256 limit);
+    event RestitutionVaultConfigured(address indexed previousVault, address indexed newVault);
     event CollateralMessageSent(
         bytes32 indexed messageId,
         InstitutionalCollateralMessageLib.Action indexed action,
@@ -91,9 +111,17 @@ contract InstitutionalCollateralApp is
         address indexed account,
         uint256 amount
     );
+    event CollateralRestitutionRestricted(
+        bytes32 indexed messageId,
+        InstitutionalCollateralMessageLib.Action indexed action,
+        address indexed originalAccount,
+        address restitutionVault,
+        uint256 amount
+    );
 
     error IdentityNotEligible(address account);
     error ClientReferenceAlreadyUsed(address account, bytes32 clientReference);
+    error RestitutionVaultNotConfigured();
 
     constructor(
         uint256 localChainId_,
@@ -104,10 +132,15 @@ contract InstitutionalCollateralApp is
         address admin
     ) {
         require(localChainId_ != 0, "CHAIN_ID_ZERO");
+        require(localChainId_ == block.chainid, "LOCAL_CHAIN_ID_MISMATCH");
         require(gateway_ != address(0), "GATEWAY_ZERO");
         require(identityRegistry_ != address(0), "IDENTITY_REGISTRY_ZERO");
         require(escrowVault_ != address(0) || voucherToken_ != address(0), "APPLICATION_MODE_EMPTY");
         require(admin != address(0), "ADMIN_ZERO");
+        require(gateway_.code.length > 0, "GATEWAY_NOT_CONTRACT");
+        require(identityRegistry_.code.length > 0, "IDENTITY_REGISTRY_NOT_CONTRACT");
+        require(escrowVault_ == address(0) || escrowVault_.code.length > 0, "ESCROW_NOT_CONTRACT");
+        require(voucherToken_ == address(0) || voucherToken_.code.length > 0, "VOUCHER_NOT_CONTRACT");
         localChainId = localChainId_;
         gateway = IInstitutionalCrossChainGateway(gateway_);
         identityRegistry = IInstitutionalIdentityRegistry(identityRegistry_);
@@ -128,6 +161,20 @@ contract InstitutionalCollateralApp is
         require(remoteChainId != 0 && remoteChainId != localChainId, "BAD_REMOTE_CHAIN");
         require(remoteApplication != address(0), "REMOTE_APPLICATION_ZERO");
         require(canonicalAsset != address(0), "CANONICAL_ASSET_ZERO");
+        require(enabled, "ROUTE_REVOCATION_REQUIRES_DRAIN");
+
+        RemoteRouteVersion storage version = remoteRouteVersions[remoteChainId][remoteApplication];
+        if (version.trusted) {
+            require(
+                version.canonicalAsset == canonicalAsset && version.perTransferLimit == perTransferLimit,
+                "ROUTE_VERSION_IMMUTABLE"
+            );
+        } else {
+            version.canonicalAsset = canonicalAsset;
+            version.perTransferLimit = perTransferLimit;
+            version.trusted = true;
+        }
+        version.revocationNotBefore = 0;
         remoteRoutes[remoteChainId] = RemoteRoute({
             remoteApplication: remoteApplication,
             canonicalAsset: canonicalAsset,
@@ -137,10 +184,65 @@ contract InstitutionalCollateralApp is
         emit RemoteRouteConfigured(remoteChainId, remoteApplication, canonicalAsset, perTransferLimit, enabled);
     }
 
+    /// @notice Starts a full maximum-message-lifetime drain window for a non-current route version.
+    function scheduleRemoteRouteRevocation(uint256 remoteChainId, address remoteApplication)
+        external
+        onlyRole(APP_ADMIN_ROLE)
+    {
+        RemoteRoute memory activeRoute = remoteRoutes[remoteChainId];
+        require(!activeRoute.enabled || activeRoute.remoteApplication != remoteApplication, "ACTIVE_ROUTE_CANNOT_RETIRE");
+        RemoteRouteVersion storage version = remoteRouteVersions[remoteChainId][remoteApplication];
+        require(version.trusted, "ROUTE_VERSION_NOT_TRUSTED");
+        uint64 revocationNotBefore = uint64(block.timestamp) + ROUTE_DRAIN_PERIOD;
+        version.revocationNotBefore = revocationNotBefore;
+        emit RemoteRouteRevocationScheduled(remoteChainId, remoteApplication, revocationNotBefore);
+    }
+
+    function cancelRemoteRouteRevocation(uint256 remoteChainId, address remoteApplication)
+        external
+        onlyRole(APP_ADMIN_ROLE)
+    {
+        RemoteRouteVersion storage version = remoteRouteVersions[remoteChainId][remoteApplication];
+        require(version.trusted && version.revocationNotBefore != 0, "ROUTE_REVOCATION_NOT_SCHEDULED");
+        version.revocationNotBefore = 0;
+        emit RemoteRouteRevocationCancelled(remoteChainId, remoteApplication);
+    }
+
+    /// @notice Revocation is possible only after every locally tracked message settles and every
+    ///         remote message created before scheduling has exceeded the enforced maximum lifetime.
+    function revokeRemoteRoute(uint256 remoteChainId, address remoteApplication)
+        external
+        onlyRole(APP_ADMIN_ROLE)
+    {
+        RemoteRoute memory activeRoute = remoteRoutes[remoteChainId];
+        require(!activeRoute.enabled || activeRoute.remoteApplication != remoteApplication, "ACTIVE_ROUTE_CANNOT_RETIRE");
+        RemoteRouteVersion storage version = remoteRouteVersions[remoteChainId][remoteApplication];
+        require(version.trusted && version.revocationNotBefore != 0, "ROUTE_REVOCATION_NOT_SCHEDULED");
+        require(block.timestamp >= version.revocationNotBefore, "ROUTE_DRAIN_IN_PROGRESS");
+        require(pendingOutboundByRoute[remoteChainId][remoteApplication] == 0, "ROUTE_MESSAGES_PENDING");
+        version.trusted = false;
+        version.revocationNotBefore = 0;
+        emit RemoteRouteRevoked(remoteChainId, remoteApplication);
+    }
+
     function setDailyOutboundLimit(address canonicalAsset, uint256 limit) external onlyRole(APP_ADMIN_ROLE) {
         require(canonicalAsset != address(0), "CANONICAL_ASSET_ZERO");
         dailyOutboundLimit[canonicalAsset] = limit;
         emit DailyOutboundLimitSet(canonicalAsset, limit);
+    }
+
+    function setRestitutionVault(address restitutionVault_) external onlyRole(APP_ADMIN_ROLE) {
+        require(restitutionVault_ != address(0) && restitutionVault_.code.length > 0, "BAD_RESTITUTION_VAULT");
+        InstitutionalRestitutionVault candidate = InstitutionalRestitutionVault(restitutionVault_);
+        require(address(candidate.identityRegistry()) == address(identityRegistry), "RESTITUTION_IDENTITY_MISMATCH");
+        address expectedPolicyEngine = address(escrowVault) != address(0)
+            ? address(escrowVault.policyEngine())
+            : address(voucherToken.policyEngine());
+        require(address(candidate.policyEngine()) == expectedPolicyEngine, "RESTITUTION_POLICY_MISMATCH");
+        require(candidate.hasRole(candidate.APP_ROLE(), address(this)), "RESTITUTION_APP_ROLE_MISSING");
+        address previousVault = address(restitutionVault);
+        restitutionVault = candidate;
+        emit RestitutionVaultConfigured(previousVault, restitutionVault_);
     }
 
     function pause() external onlyRole(GUARDIAN_ROLE) {
@@ -211,8 +313,14 @@ contract InstitutionalCollateralApp is
         bytes calldata payload
     ) external whenNotPaused returns (bytes memory acknowledgement) {
         require(msg.sender == address(gateway), "ONLY_GATEWAY");
-        RemoteRoute memory route = remoteRoutes[sourceChainId];
-        require(route.enabled && route.remoteApplication == sourceApplication, "UNTRUSTED_SOURCE_APPLICATION");
+        RemoteRouteVersion memory version = remoteRouteVersions[sourceChainId][sourceApplication];
+        require(version.trusted, "UNTRUSTED_SOURCE_APPLICATION");
+        RemoteRoute memory route = RemoteRoute({
+            remoteApplication: sourceApplication,
+            canonicalAsset: version.canonicalAsset,
+            perTransferLimit: version.perTransferLimit,
+            enabled: true
+        });
         InstitutionalCollateralMessageLib.TransferData memory transfer = InstitutionalCollateralMessageLib.decode(payload);
         require(transfer.canonicalAsset == route.canonicalAsset, "TRANSFER_ASSET_ROUTE_MISMATCH");
         _requireWithinLimit(route, transfer.amount);
@@ -258,6 +366,7 @@ contract InstitutionalCollateralApp is
             "NON_CANONICAL_ACKNOWLEDGEMENT"
         );
         pending.status = TransferStatus.Completed;
+        _settlePendingRoute(pending);
         emit CollateralMessageCompleted(messageId, keccak256(acknowledgement));
     }
 
@@ -265,24 +374,62 @@ contract InstitutionalCollateralApp is
         require(msg.sender == address(gateway), "ONLY_GATEWAY");
         PendingTransfer storage pending = pendingTransfers[messageId];
         require(pending.status == TransferStatus.Pending, "TRANSFER_NOT_PENDING");
+        bool restricted = identityRegistry.isRevoked(pending.sender);
+        address refundRecipient = pending.sender;
+        if (restricted) {
+            if (address(restitutionVault) == address(0)) revert RestitutionVaultNotConfigured();
+            refundRecipient = address(restitutionVault);
+        }
         pending.status = TransferStatus.Refunded;
 
         if (pending.action == InstitutionalCollateralMessageLib.Action.LockMint) {
             escrowVault.unlockToWithPolicyNoExposureReduction(
-                pending.sender,
+                refundRecipient,
                 pending.destinationChainId,
                 pending.amount,
                 messageId
             );
+            if (restricted) {
+                restitutionVault.recordRestitution(
+                    messageId,
+                    pending.sender,
+                    address(escrowVault.asset()),
+                    pending.canonicalAsset,
+                    pending.amount,
+                    pending.destinationChainId,
+                    InstitutionalRestitutionVault.AssetKind.Canonical
+                );
+            }
         } else {
             voucherToken.mintWithPolicy(
-                pending.sender,
+                refundRecipient,
                 pending.canonicalAsset,
                 pending.destinationChainId,
                 pending.amount,
                 messageId
             );
+            if (restricted) {
+                restitutionVault.recordRestitution(
+                    messageId,
+                    pending.sender,
+                    address(voucherToken),
+                    pending.canonicalAsset,
+                    pending.amount,
+                    pending.destinationChainId,
+                    InstitutionalRestitutionVault.AssetKind.Voucher
+                );
+            }
         }
+        if (restricted) {
+            emit CollateralRestitutionRestricted(
+                messageId,
+                pending.action,
+                pending.sender,
+                address(restitutionVault),
+                pending.amount
+            );
+        }
+        _settlePendingRoute(pending);
         emit CollateralMessageRefunded(messageId, pending.action, pending.sender, pending.amount);
     }
 
@@ -298,6 +445,7 @@ contract InstitutionalCollateralApp is
     ) internal returns (bytes32 messageId) {
         require(recipient != address(0), "RECIPIENT_ZERO");
         require(timeoutTimestamp > block.timestamp, "TIMEOUT_NOT_FORWARD");
+        require(timeoutTimestamp <= block.timestamp + MAX_TRANSFER_LIFETIME, "TIMEOUT_EXCEEDS_MAX_LIFETIME");
         require(clientReference != bytes32(0), "CLIENT_REFERENCE_ZERO");
         if (clientReferenceUsed[sender][clientReference]) {
             revert ClientReferenceAlreadyUsed(sender, clientReference);
@@ -324,8 +472,10 @@ contract InstitutionalCollateralApp is
             canonicalAsset: route.canonicalAsset,
             amount: amount,
             destinationChainId: destinationChainId,
+            remoteApplication: route.remoteApplication,
             status: TransferStatus.Pending
         });
+        pendingOutboundByRoute[destinationChainId][route.remoteApplication]++;
         emit CollateralMessageSent(messageId, action, sender, recipient, amount, destinationChainId, clientReference);
     }
 
@@ -348,9 +498,15 @@ contract InstitutionalCollateralApp is
         uint256 limit = dailyOutboundLimit[canonicalAsset];
         if (limit == 0) return;
         uint256 day = block.timestamp / 1 days;
-        uint256 consumed = outboundByDay[account][day] + amount;
+        uint256 consumed = outboundByDay[account][canonicalAsset][day] + amount;
         require(consumed <= limit, "DAILY_OUTBOUND_LIMIT_EXCEEDED");
-        outboundByDay[account][day] = consumed;
+        outboundByDay[account][canonicalAsset][day] = consumed;
+    }
+
+    function _settlePendingRoute(PendingTransfer storage pending) internal {
+        uint256 current = pendingOutboundByRoute[pending.destinationChainId][pending.remoteApplication];
+        require(current > 0, "ROUTE_PENDING_UNDERFLOW");
+        pendingOutboundByRoute[pending.destinationChainId][pending.remoteApplication] = current - 1;
     }
 
     function _requireEligible(address account) internal view {

@@ -1,4 +1,5 @@
 import { InstitutionalDemoRuntime } from "../../services/institutional-demo-runtime.mjs";
+import { formalEvidencePayload } from "./evidence.mjs";
 
 const runtime = new InstitutionalDemoRuntime();
 
@@ -9,10 +10,17 @@ export async function prepareRuntime() {
 export async function healthPayload() {
   const status = await runtime.status();
   return {
-    ok: status.ready,
+    ok: status.runtimeReadable,
     service: "institutional-cross-chain-ui",
     version: status.stackVersion,
     ready: status.ready,
+    runtimeReadable: status.runtimeReadable,
+    chainsProgressing: status.chainsProgressing,
+    attestorQuorumReady: status.attestorQuorumReady,
+    relayerHealthy: status.relayerHealthy,
+    governanceEnforced: status.governanceEnforced,
+    identitiesEligible: status.identitiesEligible,
+    laneReady: status.laneReady,
     message: status.message || null,
     topology: status.topology || null,
     governance: status.governance || null,
@@ -31,6 +39,10 @@ export async function tracePayload() {
     relay: status.relay,
     controller: status.controller,
   };
+}
+
+export async function evidencePayload() {
+  return formalEvidencePayload();
 }
 
 export async function runActionPayload(request) {

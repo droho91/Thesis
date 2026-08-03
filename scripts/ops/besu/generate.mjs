@@ -1,8 +1,13 @@
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { ethers } from "ethers";
+import {
+  DEFAULT_BESU_NETWORK_ROOT,
+  resolveSafeBesuNetworkRoot,
+} from "./safe-network-root.mjs";
 
-const ROOT = resolve(process.cwd(), process.env.BESU_NETWORK_ROOT || "networks/besu");
+const ROOT_INPUT = process.env.BESU_NETWORK_ROOT || DEFAULT_BESU_NETWORK_ROOT;
+let ROOT;
 const IF_MISSING = process.argv.includes("--if-missing");
 const SCAFFOLD_VERSION = "besu-qbft-scaffold-v4";
 const VANITY = `0x${"00".repeat(32)}`;
@@ -318,6 +323,7 @@ async function renderNetwork(network, validators, operators) {
 }
 
 async function main() {
+  ROOT = await resolveSafeBesuNetworkRoot(ROOT_INPUT);
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(BESU_CONTAINER_PREFIX)) {
     throw new Error("BESU_CONTAINER_PREFIX contains unsupported characters");
   }

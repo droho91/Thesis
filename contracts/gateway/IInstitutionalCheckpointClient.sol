@@ -10,6 +10,10 @@ interface IInstitutionalCheckpointClient {
 
     function latestTrustedHeight(uint256 sourceChainId) external view returns (uint256);
 
+    /// @notice Lowest checkpoint height that may authorize proofs for a source.
+    /// @dev Historical checkpoints below this floor remain queryable for audit but are not proof-authorizing.
+    function checkpointAuthorizationFloor(uint256 sourceChainId) external view returns (uint256);
+
     function trustedStateRoot(uint256 sourceChainId, uint256 blockNumber) external view returns (bytes32);
 
     function trustedTimestamp(uint256 sourceChainId, uint256 blockNumber) external view returns (uint256);

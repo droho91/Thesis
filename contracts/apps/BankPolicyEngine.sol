@@ -22,8 +22,9 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
     bytes32 public constant POLICY_DEBT_ASSET_BLOCKED = bytes32("DEBT_ASSET_BLOCKED");
     bytes32 public constant POLICY_VOUCHER_CAP_EXCEEDED = bytes32("VOUCHER_CAP_EXCEEDED");
     bytes32 public constant POLICY_COLLATERAL_CAP_EXCEEDED = bytes32("COLLATERAL_CAP_EXCEEDED");
-    bytes32 public constant POLICY_DEBT_CAP_EXCEEDED = bytes32("DEBT_CAP_EXCEEDED");
-    bytes32 public constant POLICY_ACCOUNT_BORROW_CAP_EXCEEDED = bytes32("ACCOUNT_BORROW_CAP_EXCEEDED");
+    bytes32 public constant POLICY_DEBT_ORIGINATION_CAP_EXCEEDED = bytes32("DEBT_ORIGINATION_CAP_EXCEEDED");
+    bytes32 public constant POLICY_ACCOUNT_ORIGINATION_CAP_EXCEEDED = bytes32("ACCOUNT_ORIGINATION_CAP_EXCEEDED");
+    bytes32 public constant POLICY_ACCOUNT_DEFAULTED = bytes32("ACCOUNT_DEFAULTED");
 
     mapping(address => bool) public accountAllowed;
     mapping(uint256 => bool) public sourceChainAllowed;
@@ -36,10 +37,11 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
     mapping(address => uint256) public voucherExposureOutstanding;
     mapping(address => uint256) public collateralCap;
     mapping(address => uint256) public collateralOutstanding;
-    mapping(address => uint256) public debtAssetBorrowCap;
-    mapping(address => uint256) public debtAssetOutstanding;
-    mapping(address => uint256) public accountBorrowCap;
-    mapping(address => mapping(address => uint256)) public accountDebtOutstanding;
+    mapping(address => uint256) public debtAssetOriginationPrincipalCap;
+    mapping(address => uint256) public debtAssetOriginationPrincipalOutstanding;
+    mapping(address => uint256) public accountOriginationPrincipalCap;
+    mapping(address => uint256) public accountOriginationPrincipalOutstanding;
+    mapping(address => bool) public accountDefaulted;
     IInstitutionalIdentityRegistry public identityRegistry;
 
     event AccountAllowedSet(address indexed account, bool allowed);
@@ -51,8 +53,8 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
     event DebtAssetAllowedSet(address indexed asset, bool allowed);
     event VoucherExposureCapSet(address indexed asset, uint256 cap);
     event CollateralCapSet(address indexed asset, uint256 cap);
-    event DebtAssetBorrowCapSet(address indexed asset, uint256 cap);
-    event AccountBorrowCapSet(address indexed account, uint256 cap);
+    event DebtAssetOriginationPrincipalCapSet(address indexed asset, uint256 cap);
+    event AccountOriginationPrincipalCapSet(address indexed account, uint256 cap);
     event VoucherMintNoted(uint256 indexed sourceChainId, address indexed beneficiary, address indexed canonicalAsset, uint256 amount);
     event VoucherBurnNoted(address indexed account, address indexed canonicalAsset, uint256 amount);
     event CanonicalUnlockNoted(
@@ -60,9 +62,15 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
     );
     event CollateralAccepted(address indexed account, address indexed collateralAsset, uint256 amount);
     event CollateralReleased(address indexed account, address indexed collateralAsset, uint256 amount);
-    event DebtBorrowed(address indexed account, address indexed debtAsset, uint256 amount);
-    event DebtRepaid(address indexed account, address indexed debtAsset, uint256 amount);
-    event DebtWrittenOff(address indexed account, address indexed debtAsset, uint256 amount);
+    event OriginationPrincipalBorrowed(address indexed account, address indexed debtAsset, uint256 amount);
+    event OriginationPrincipalRepaid(address indexed account, address indexed debtAsset, uint256 amount);
+    event DebtDefaulted(
+        address indexed account,
+        address indexed debtAsset,
+        uint256 originationPrincipalWrittenOff,
+        uint256 totalDebtWrittenOff
+    );
+    event AccountDefaultResolved(address indexed account, bytes32 indexed resolutionReference);
 
     constructor(address admin) {
         require(admin != address(0), "ADMIN_ZERO");
@@ -125,16 +133,25 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
         emit CollateralCapSet(asset, cap);
     }
 
-    function setDebtAssetBorrowCap(address asset, uint256 cap) external onlyRole(POLICY_ADMIN_ROLE) {
+    function setDebtAssetOriginationPrincipalCap(address asset, uint256 cap) external onlyRole(POLICY_ADMIN_ROLE) {
         require(asset != address(0), "ASSET_ZERO");
-        debtAssetBorrowCap[asset] = cap;
-        emit DebtAssetBorrowCapSet(asset, cap);
+        debtAssetOriginationPrincipalCap[asset] = cap;
+        emit DebtAssetOriginationPrincipalCapSet(asset, cap);
     }
 
-    function setAccountBorrowCap(address account, uint256 cap) external onlyRole(POLICY_ADMIN_ROLE) {
+    function setAccountOriginationPrincipalCap(address account, uint256 cap) external onlyRole(POLICY_ADMIN_ROLE) {
         require(account != address(0), "ACCOUNT_ZERO");
-        accountBorrowCap[account] = cap;
-        emit AccountBorrowCapSet(account, cap);
+        accountOriginationPrincipalCap[account] = cap;
+        emit AccountOriginationPrincipalCapSet(account, cap);
+    }
+
+    /// @notice A written-off account remains unable to originate new principal until governed adjudication.
+    function resolveAccountDefault(address account, bytes32 resolutionReference) external onlyRole(POLICY_ADMIN_ROLE) {
+        require(account != address(0), "ACCOUNT_ZERO");
+        require(accountDefaulted[account], "ACCOUNT_NOT_DEFAULTED");
+        require(resolutionReference != bytes32(0), "RESOLUTION_REFERENCE_ZERO");
+        accountDefaulted[account] = false;
+        emit AccountDefaultResolved(account, resolutionReference);
     }
 
     function canMintVoucher(
@@ -226,31 +243,46 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
         emit CollateralReleased(account, collateralAsset, amount);
     }
 
-    function noteDebtBorrowed(address account, address debtAsset, uint256 amount) external onlyRole(POLICY_APP_ROLE) {
+    function noteOriginationPrincipalBorrowed(address account, address debtAsset, uint256 amount)
+        external
+        onlyRole(POLICY_APP_ROLE)
+    {
         (bool allowed, bytes32 code) = _canBorrow(account, debtAsset, amount);
         require(allowed, _policyCodeString(code));
-        debtAssetOutstanding[debtAsset] += amount;
-        accountDebtOutstanding[account][debtAsset] += amount;
-        emit DebtBorrowed(account, debtAsset, amount);
+        debtAssetOriginationPrincipalOutstanding[debtAsset] += amount;
+        accountOriginationPrincipalOutstanding[account] += amount;
+        emit OriginationPrincipalBorrowed(account, debtAsset, amount);
     }
 
-    function noteDebtRepaid(address account, address debtAsset, uint256 amount) external onlyRole(POLICY_APP_ROLE) {
-        _reduceDebtOutstanding(account, debtAsset, amount);
-        emit DebtRepaid(account, debtAsset, amount);
+    function noteOriginationPrincipalRepaid(address account, address debtAsset, uint256 amount)
+        external
+        onlyRole(POLICY_APP_ROLE)
+    {
+        _reduceOriginationPrincipalOutstanding(account, debtAsset, amount);
+        emit OriginationPrincipalRepaid(account, debtAsset, amount);
     }
 
-    function noteDebtWrittenOff(address account, address debtAsset, uint256 amount) external onlyRole(POLICY_APP_ROLE) {
-        _reduceDebtOutstanding(account, debtAsset, amount);
-        emit DebtWrittenOff(account, debtAsset, amount);
+    function noteDebtDefaulted(
+        address account,
+        address debtAsset,
+        uint256 originationPrincipalWrittenOff,
+        uint256 totalDebtWrittenOff
+    ) external onlyRole(POLICY_APP_ROLE) {
+        require(totalDebtWrittenOff > 0, "DEBT_WRITE_OFF_ZERO");
+        if (originationPrincipalWrittenOff > 0) {
+            _reduceOriginationPrincipalOutstanding(account, debtAsset, originationPrincipalWrittenOff);
+        }
+        accountDefaulted[account] = true;
+        emit DebtDefaulted(account, debtAsset, originationPrincipalWrittenOff, totalDebtWrittenOff);
     }
 
-    function _reduceDebtOutstanding(address account, address debtAsset, uint256 amount) internal {
-        uint256 assetOutstanding = debtAssetOutstanding[debtAsset];
-        uint256 accountOutstanding = accountDebtOutstanding[account][debtAsset];
-        require(assetOutstanding >= amount, "DEBT_ASSET_UNDERFLOW");
-        require(accountOutstanding >= amount, "ACCOUNT_DEBT_UNDERFLOW");
-        debtAssetOutstanding[debtAsset] = assetOutstanding - amount;
-        accountDebtOutstanding[account][debtAsset] = accountOutstanding - amount;
+    function _reduceOriginationPrincipalOutstanding(address account, address debtAsset, uint256 amount) internal {
+        uint256 assetOutstanding = debtAssetOriginationPrincipalOutstanding[debtAsset];
+        uint256 accountOutstanding = accountOriginationPrincipalOutstanding[account];
+        require(assetOutstanding >= amount, "DEBT_PRINCIPAL_UNDERFLOW");
+        require(accountOutstanding >= amount, "ACCOUNT_PRINCIPAL_UNDERFLOW");
+        debtAssetOriginationPrincipalOutstanding[debtAsset] = assetOutstanding - amount;
+        accountOriginationPrincipalOutstanding[account] = accountOutstanding - amount;
     }
 
     function _canMintVoucher(uint256 sourceChainId, address beneficiary, address canonicalAsset, uint256 amount)
@@ -305,14 +337,14 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
         if (accountCode != POLICY_ALLOWED) return (false, accountCode);
         if (!debtAssetAllowed[debtAsset]) return (false, POLICY_DEBT_ASSET_BLOCKED);
 
-        uint256 assetCap = debtAssetBorrowCap[debtAsset];
-        if (assetCap != 0 && debtAssetOutstanding[debtAsset] + amount > assetCap) {
-            return (false, POLICY_DEBT_CAP_EXCEEDED);
+        uint256 assetCap = debtAssetOriginationPrincipalCap[debtAsset];
+        if (assetCap != 0 && debtAssetOriginationPrincipalOutstanding[debtAsset] + amount > assetCap) {
+            return (false, POLICY_DEBT_ORIGINATION_CAP_EXCEEDED);
         }
 
-        uint256 accountCap = accountBorrowCap[account];
-        if (accountCap != 0 && accountDebtOutstanding[account][debtAsset] + amount > accountCap) {
-            return (false, POLICY_ACCOUNT_BORROW_CAP_EXCEEDED);
+        uint256 accountCap = accountOriginationPrincipalCap[account];
+        if (accountCap != 0 && accountOriginationPrincipalOutstanding[account] + amount > accountCap) {
+            return (false, POLICY_ACCOUNT_ORIGINATION_CAP_EXCEEDED);
         }
 
         return (true, POLICY_ALLOWED);
@@ -324,6 +356,7 @@ contract BankPolicyEngine is AccessControl, IBankPolicyEngine {
 
     function _accountPolicyCode(address account) internal view returns (bytes32) {
         if (!accountAllowed[account]) return POLICY_ACCOUNT_NOT_ALLOWED;
+        if (accountDefaulted[account]) return POLICY_ACCOUNT_DEFAULTED;
         if (address(identityRegistry) != address(0) && !identityRegistry.isEligible(account)) {
             return POLICY_IDENTITY_NOT_ELIGIBLE;
         }

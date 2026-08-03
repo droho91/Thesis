@@ -25,11 +25,15 @@ contract InstitutionalCheckpointClient is AccessControl, EIP712, IInstitutionalC
         bool exists;
     }
 
-    uint256 public immutable trustingPeriod;
+    /// @notice Maximum age of a checkpoint at submission time.
+    /// @dev An accepted checkpoint does not expire automatically; incident recovery advances the
+    ///      authorization floor when historical roots must stop authorizing proofs.
+    uint256 public immutable maxCheckpointSubmissionAge;
     uint256 public immutable maxClockDrift;
 
     mapping(uint256 => InstitutionalCheckpointTypes.ClientStatus) private clientStatuses;
     mapping(uint256 => uint256) public override latestTrustedHeight;
+    mapping(uint256 => uint256) public override checkpointAuthorizationFloor;
     mapping(uint256 => uint64) public currentAttestorEpoch;
     mapping(uint256 => mapping(uint64 => AttestorSet)) private attestorSets;
     mapping(uint256 => mapping(uint64 => mapping(address => bool))) public isAttestor;
@@ -64,12 +68,12 @@ contract InstitutionalCheckpointClient is AccessControl, EIP712, IInstitutionalC
         bytes32 stateRoot
     );
 
-    constructor(address admin, uint256 trustingPeriod_, uint256 maxClockDrift_)
+    constructor(address admin, uint256 maxCheckpointSubmissionAge_, uint256 maxClockDrift_)
         EIP712("InstitutionalCheckpointClient", "1")
     {
         require(admin != address(0), "ADMIN_ZERO");
-        require(trustingPeriod_ > 0, "TRUSTING_PERIOD_ZERO");
-        trustingPeriod = trustingPeriod_;
+        require(maxCheckpointSubmissionAge_ > 0, "MAX_SUBMISSION_AGE_ZERO");
+        maxCheckpointSubmissionAge = maxCheckpointSubmissionAge_;
         maxClockDrift = maxClockDrift_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(CHECKPOINT_ADMIN_ROLE, admin);
@@ -175,6 +179,7 @@ contract InstitutionalCheckpointClient is AccessControl, EIP712, IInstitutionalC
         _installAttestorSet(sourceChainId, nextEpoch, recoveryCheckpoint.blockNumber, attestors, threshold);
         currentAttestorEpoch[sourceChainId] = nextEpoch;
         _storeCheckpoint(recoveryCheckpoint);
+        checkpointAuthorizationFloor[sourceChainId] = recoveryCheckpoint.blockNumber;
         delete conflictEvidence[sourceChainId];
         clientStatuses[sourceChainId] = InstitutionalCheckpointTypes.ClientStatus.Active;
         emit ClientRecovered(sourceChainId, recoveryCheckpoint.blockNumber, nextEpoch, recoveryCheckpoint.stateRoot);
@@ -243,7 +248,10 @@ contract InstitutionalCheckpointClient is AccessControl, EIP712, IInstitutionalC
         require(checkpoint.stateRoot != bytes32(0), "STATE_ROOT_ZERO");
         require(checkpoint.timestamp > 0, "TIMESTAMP_ZERO");
         require(checkpoint.timestamp <= block.timestamp + maxClockDrift, "CHECKPOINT_FROM_FUTURE");
-        require(block.timestamp <= checkpoint.timestamp + trustingPeriod, "CHECKPOINT_EXPIRED");
+        require(
+            block.timestamp <= checkpoint.timestamp + maxCheckpointSubmissionAge,
+            "CHECKPOINT_SUBMISSION_TOO_OLD"
+        );
     }
 
     function _attestorSetForCheckpoint(InstitutionalCheckpointTypes.Checkpoint calldata checkpoint)

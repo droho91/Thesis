@@ -1,6 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { ethers } from "ethers";
+import { readJson, writeJsonAtomic } from "../../../services/shared/json-file.mjs";
+import { createTransactionWaiter } from "../../../services/shared/transaction-receipt.mjs";
 import { defaultBesuRuntimeEnv, loadArtifact, signerForRpc } from "../besu/runtime.mjs";
 
 defaultBesuRuntimeEnv();
@@ -10,10 +11,15 @@ const MANIFEST_PATH = resolve(
   process.env.INSTITUTIONAL_DEPLOYMENT_PATH || ".runtime/institutional-deployment.json",
 );
 const TX_TIMEOUT_MS = Number(process.env.INSTITUTIONAL_TX_TIMEOUT_MS || 90_000);
+const waitForTx = createTransactionWaiter({
+  timeoutMs: TX_TIMEOUT_MS,
+  timeoutMessage: ({ label, hash }) => `${label} timed out; tx=${hash}`,
+  failureMessage: ({ label, hash }) => `${label} failed; tx=${hash}`,
+});
 
 async function main() {
-  const manifest = JSON.parse(await readFile(MANIFEST_PATH, "utf8"));
-  if (manifest.version !== "institutional-deployment-v1" || manifest.status !== "ready") {
+  const manifest = await readJson(MANIFEST_PATH);
+  if (manifest.version !== "institutional-deployment-v2" || manifest.status !== "ready") {
     throw new Error("Institutional deployment manifest is not ready");
   }
   const artifacts = await loadArtifacts();
@@ -71,6 +77,10 @@ async function loadArtifacts() {
     policyEngine: await loadArtifact("apps/BankPolicyEngine.sol", "BankPolicyEngine"),
     escrowVault: await loadArtifact("apps/PolicyControlledEscrowVault.sol", "PolicyControlledEscrowVault"),
     voucherToken: await loadArtifact("apps/PolicyControlledVoucherToken.sol", "PolicyControlledVoucherToken"),
+    restitutionVault: await loadArtifact(
+      "apps/InstitutionalRestitutionVault.sol",
+      "InstitutionalRestitutionVault",
+    ),
     oracle: await loadArtifact("apps/ManualAssetOracle.sol", "ManualAssetOracle"),
     lendingPool: await loadArtifact("apps/PolicyControlledLendingPool.sol", "PolicyControlledLendingPool"),
     collateralApp: await loadArtifact("apps/InstitutionalCollateralApp.sol", "InstitutionalCollateralApp"),
@@ -117,6 +127,13 @@ async function buildRoleMatrix(chainKey, manifest, signer, artifacts) {
   entries.push(roleEntry("collateralApp", collateralApp, [await collateralApp.APP_ADMIN_ROLE(), ethers.ZeroHash], [
     await collateralApp.GUARDIAN_ROLE(),
   ]));
+
+  const restitutionVault = contract("restitutionVault");
+  entries.push(roleEntry("restitutionVault", restitutionVault, [
+    await restitutionVault.APP_ADMIN_ROLE(),
+    await restitutionVault.CLAIM_ADMIN_ROLE(),
+    ethers.ZeroHash,
+  ], []));
 
   if (chainKey === "A") {
     const escrowVault = contract("escrowVault");
@@ -198,29 +215,6 @@ function rolesWithDefaultAdminLast(roles) {
 
 function txOptions() {
   return { gasLimit: 5_000_000n };
-}
-
-async function waitForTx(transaction, label) {
-  let timer;
-  try {
-    const receipt = await Promise.race([
-      transaction.wait(),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out; tx=${transaction.hash}`)), TX_TIMEOUT_MS);
-      }),
-    ]);
-    if (!receipt || receipt.status !== 1) throw new Error(`${label} failed; tx=${transaction.hash}`);
-    return receipt;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function writeJsonAtomic(path, value) {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(temporary, path);
 }
 
 main().catch((error) => {

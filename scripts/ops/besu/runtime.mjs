@@ -102,12 +102,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function withManagedNonce(signer, label) {
+export function withManagedNonce(signer, label, {
+  sendRetries = Number(process.env.BESU_TX_SEND_RETRIES || process.env.TX_SEND_RETRIES || 2),
+} = {}) {
   if (!signer.provider || signer.__besuManagedNonce) return signer;
+  if (!Number.isSafeInteger(sendRetries) || sendRetries < 0 || sendRetries > 20) {
+    throw new RangeError("Besu transaction sendRetries must be an integer between 0 and 20");
+  }
 
   let nextNonce = null;
+  let sendQueue = Promise.resolve();
   const originalSendTransaction = signer.sendTransaction.bind(signer);
-  const sendRetries = Math.max(0, Number(process.env.BESU_TX_SEND_RETRIES || process.env.TX_SEND_RETRIES || 2));
 
   Object.defineProperty(signer, "__besuManagedNonce", {
     configurable: false,
@@ -149,7 +154,7 @@ function withManagedNonce(signer, label) {
     }
   }
 
-  signer.sendTransaction = async (transaction) => {
+  async function sendManagedTransaction(transaction) {
     const address = await signer.getAddress();
     const currentNonce = await networkTransactionCount(signer, address);
     if (nextNonce === null || nextNonce < currentNonce) {
@@ -160,21 +165,29 @@ function withManagedNonce(signer, label) {
     }
 
     const nonce = nextNonce;
-    nextNonce += 1;
 
     try {
-      return await sendWithRetries(transaction, nonce);
+      const response = await sendWithRetries(transaction, nonce);
+      nextNonce = nonce + 1;
+      return response;
     } catch (error) {
-      if (!isNonceExpired(error)) throw error;
-
-      const refreshedNonce = await networkTransactionCount(signer, address);
-      if (refreshedNonce <= nonce) throw error;
-      nextNonce = refreshedNonce + 1;
-      if (process.env.LOG_NONCES === "true") {
-        console.log(`[nonce] ${label} ${address} refreshed from ${nonce} to ${refreshedNonce}`);
+      // A nonce-expired response is ambiguous: an earlier attempt may have
+      // reached the node even when its RPC response was lost. Moving the same
+      // business call to a refreshed nonce could therefore execute it twice.
+      // Reset local state and require the caller to reconcile on-chain state;
+      // never manufacture a replacement transaction at a new nonce here.
+      nextNonce = null;
+      if (isNonceExpired(error)) {
+        error.outcomeUncertain = true;
       }
-      return sendWithRetries(transaction, refreshedNonce);
+      throw error;
     }
+  }
+
+  signer.sendTransaction = (transaction) => {
+    const operation = sendQueue.then(() => sendManagedTransaction(transaction));
+    sendQueue = operation.then(() => undefined, () => undefined);
+    return operation;
   };
 
   return signer;
@@ -207,29 +220,123 @@ export async function deploy(artifact, signer, args = [], overrides = {}) {
   return contract;
 }
 
-export function providerForRpc(rpc) {
-  return new ethers.JsonRpcProvider(rpc);
+export function rpcFetchRequest(
+  rpc,
+  { timeoutMs = Number(process.env.RPC_REQUEST_TIMEOUT_MS || 5_000) } = {},
+) {
+  requireRpcTimeout(timeoutMs);
+  const request = new ethers.FetchRequest(rpc);
+  request.timeout = timeoutMs;
+  return request;
 }
 
-async function rpcCall(rpc, method, params = []) {
-  const response = await fetch(rpc, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`RPC ${rpc} returned HTTP ${response.status}`);
+export function providerForRpc(rpc, options = {}) {
+  return new ethers.JsonRpcProvider(rpcFetchRequest(rpc, options));
+}
+
+export async function readContractCode(
+  provider,
+  address,
+  {
+    label = address,
+    retries = Number(process.env.BESU_CODE_READ_RETRIES || 8),
+    intervalMs = Number(process.env.BESU_CODE_READ_RETRY_MS || 500),
+  } = {},
+) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const code = await provider.getCode(address);
+      if (typeof code !== "string" || !ethers.isHexString(code)) {
+        throw new Error(`eth_getCode returned ${code === null ? "null" : typeof code}`);
+      }
+      return code;
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) await sleep(intervalMs);
+    }
   }
-  const payload = await response.json();
-  if (payload.error) {
-    throw new Error(payload.error.message || `${method} failed`);
+  throw new Error(
+    `[rpc] failed to read ${label} bytecode after ${retries + 1} attempts: ${lastError?.shortMessage || lastError?.message || lastError}`,
+  );
+}
+
+export async function readLatestBlock(
+  provider,
+  {
+    label = "latest block",
+    retries = Number(process.env.BESU_BLOCK_READ_RETRIES || 8),
+    intervalMs = Number(process.env.BESU_BLOCK_READ_RETRY_MS || 500),
+  } = {},
+) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const block = await provider.getBlock("latest");
+      if (!block || block.timestamp == null) {
+        throw new Error(`eth_getBlockByNumber returned ${block === null ? "null" : "an incomplete block"}`);
+      }
+      return block;
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) await sleep(intervalMs);
+    }
   }
-  return payload.result;
+  throw new Error(
+    `[rpc] failed to read ${label} after ${retries + 1} attempts: ` +
+      `${lastError?.shortMessage || lastError?.message || lastError}`,
+  );
+}
+
+export async function rpcCall(
+  rpc,
+  method,
+  params = [],
+  {
+    timeoutMs = Number(process.env.RPC_REQUEST_TIMEOUT_MS || 5_000),
+    fetchImpl = fetch,
+  } = {},
+) {
+  requireRpcTimeout(timeoutMs);
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`RPC ${method} timed out after ${timeoutMs}ms`)),
+    timeoutMs,
+  );
+  try {
+    const response = await fetchImpl(rpc, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`RPC ${rpc} returned HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    if (payload.error) {
+      throw new Error(payload.error.message || `${method} failed`);
+    }
+    return payload.result;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`RPC ${method} timed out after ${timeoutMs}ms`, { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function requireRpcTimeout(timeoutMs) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
+    throw new Error("RPC request timeout must be a positive safe integer no greater than 2147483647ms");
+  }
 }
 
 async function rpcReady(rpc) {
@@ -309,10 +416,31 @@ export async function waitForProviderBlockHeight(
   );
 }
 
-export async function signerForRpc(rpc, chainKey, index = 0) {
-  const provider = providerForRpc(rpc);
-  if (useBesuKeys()) return besuOperatorWallet(chainKey, provider, index);
-  return provider.getSigner(index);
+export async function signerForRpc(
+  rpc,
+  chainKey,
+  index = 0,
+  {
+    createProvider = providerForRpc,
+    localOperatorKeys = useBesuKeys(),
+    createLocalSigner = besuOperatorWallet,
+  } = {},
+) {
+  const provider = createProvider(rpc);
+  try {
+    if (localOperatorKeys) return await createLocalSigner(chainKey, provider, index);
+    return await provider.getSigner(index);
+  } catch (signerError) {
+    try {
+      await Promise.resolve().then(() => provider.destroy?.());
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [signerError, cleanupError],
+        `Signer initialization failed for chain ${chainKey} and its RPC provider could not be released`,
+      );
+    }
+    throw signerError;
+  }
 }
 
 export async function rpcBlockHeader(provider, blockNumber) {

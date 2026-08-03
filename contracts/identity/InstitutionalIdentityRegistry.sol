@@ -107,6 +107,10 @@ contract InstitutionalIdentityRegistry is AccessControl, IInstitutionalIdentityR
         return effectiveStatus(account) == CredentialStatus.Active;
     }
 
+    function isRevoked(address account) external view override returns (bool) {
+        return credentials[account].status == CredentialStatus.Revoked;
+    }
+
     function effectiveStatus(address account) public view returns (CredentialStatus) {
         Credential storage credential = credentials[account];
         if (credential.status == CredentialStatus.Active && credential.validUntil <= block.timestamp) {

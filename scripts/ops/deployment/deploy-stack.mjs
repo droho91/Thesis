@@ -1,16 +1,30 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
+import { readJsonIfExists, writeJsonAtomic } from "../../../services/shared/json-file.mjs";
+import { createTransactionWaiter } from "../../../services/shared/transaction-receipt.mjs";
 import {
   CHAIN_A_RPC,
   CHAIN_B_RPC,
   defaultBesuRuntimeEnv,
   loadArtifact,
   providerForRpc,
+  readContractCode,
+  readLatestBlock,
   signerForRpc,
   waitForBesuRuntimeReady,
 } from "../besu/runtime.mjs";
+import {
+  artifactFingerprint,
+  compareAddresses,
+  createDeploymentManifest,
+  deploymentManifestMatchesRuntime,
+  runtimeAccountsFromSigners,
+  sameAddress,
+  sameAddressList,
+} from "./deployment-manifest.mjs";
+
+export { manifestAccountsMatchRuntime } from "./deployment-manifest.mjs";
 
 defaultBesuRuntimeEnv();
 
@@ -23,12 +37,13 @@ export const INSTITUTIONAL_ATTESTOR_SECRETS_PATH = resolve(
   process.env.INSTITUTIONAL_ATTESTOR_SECRETS_PATH || ".runtime/institutional-attestor-secrets.json",
 );
 
-const MANIFEST_VERSION = "institutional-deployment-v1";
 const ATTESTOR_SECRETS_VERSION = "institutional-attestor-secrets-v1";
 const DEPLOY_GAS_LIMIT = BigInt(process.env.INSTITUTIONAL_DEPLOY_GAS_LIMIT || "10000000");
 const TX_GAS_LIMIT = BigInt(process.env.INSTITUTIONAL_TX_GAS_LIMIT || "5000000");
 const TX_TIMEOUT_MS = Number(process.env.INSTITUTIONAL_TX_TIMEOUT_MS || "90000");
-const TRUSTING_PERIOD = BigInt(process.env.INSTITUTIONAL_TRUSTING_PERIOD_SECONDS || 7 * 24 * 60 * 60);
+const MAX_CHECKPOINT_SUBMISSION_AGE = BigInt(
+  process.env.INSTITUTIONAL_MAX_CHECKPOINT_SUBMISSION_AGE_SECONDS || 7 * 24 * 60 * 60,
+);
 const MAX_CLOCK_DRIFT = BigInt(process.env.INSTITUTIONAL_MAX_CLOCK_DRIFT_SECONDS || 30);
 const GOVERNANCE_DELAY = BigInt(process.env.INSTITUTIONAL_GOVERNANCE_DELAY_SECONDS || 60);
 const COLLATERAL_FACTOR_BPS = 7_000n;
@@ -41,6 +56,12 @@ const USER_CANONICAL_SEED = ethers.parseEther("100000");
 const USER_REPAYMENT_BALANCE_SEED = ethers.parseEther("100");
 const LENDER_LIQUIDITY_SEED = ethers.parseEther("1000000");
 const ONE_E18 = ethers.parseEther("1");
+const waitForTx = createTransactionWaiter({
+  timeoutMs: TX_TIMEOUT_MS,
+  timeoutMessage: ({ label, hash, timeoutMs }) =>
+    `[institutional:deploy] ${label} timed out after ${timeoutMs}ms; tx=${hash}`,
+  failureMessage: ({ label, hash }) => `[institutional:deploy] ${label} failed; tx=${hash}`,
+});
 
 async function main() {
   console.log("[institutional:deploy] checking Besu runtime");
@@ -67,7 +88,7 @@ async function main() {
     B: (await providers.B.getNetwork()).chainId,
   };
   if (chainIds.A === chainIds.B) throw new Error("Institutional deployment requires two distinct chain ids");
-  const runtimeAccounts = await resolveRuntimeAccounts({ owners, users, relayers });
+  const runtimeAccounts = await runtimeAccountsFromSigners({ owners, users, relayers });
 
   const artifacts = await loadArtifacts();
   const fingerprint = artifactFingerprint(artifacts);
@@ -77,7 +98,18 @@ async function main() {
 
   let manifest = await loadReusableManifest({ fingerprint, chainIds, attestors, runtimeAccounts });
   if (!manifest) {
-    manifest = await createManifest({ fingerprint, chainIds, owners, users, relayers, attestors, threshold });
+    manifest = createDeploymentManifest({
+      fingerprint,
+      chainIds,
+      chainRpcs: { A: CHAIN_A_RPC, B: CHAIN_B_RPC },
+      accounts: runtimeAccounts,
+      attestors,
+      threshold,
+      maxCheckpointSubmissionAge: MAX_CHECKPOINT_SUBMISSION_AGE,
+      maxClockDrift: MAX_CLOCK_DRIFT,
+      finalityDepth: process.env.INSTITUTIONAL_FINALITY_DEPTH || 2,
+      governanceDelay: GOVERNANCE_DELAY,
+    });
     await saveManifest(manifest);
   }
 
@@ -106,69 +138,13 @@ async function loadArtifacts() {
     policyEngine: await loadArtifact("apps/BankPolicyEngine.sol", "BankPolicyEngine"),
     escrowVault: await loadArtifact("apps/PolicyControlledEscrowVault.sol", "PolicyControlledEscrowVault"),
     voucherToken: await loadArtifact("apps/PolicyControlledVoucherToken.sol", "PolicyControlledVoucherToken"),
+    restitutionVault: await loadArtifact(
+      "apps/InstitutionalRestitutionVault.sol",
+      "InstitutionalRestitutionVault",
+    ),
     oracle: await loadArtifact("apps/ManualAssetOracle.sol", "ManualAssetOracle"),
     lendingPool: await loadArtifact("apps/PolicyControlledLendingPool.sol", "PolicyControlledLendingPool"),
     collateralApp: await loadArtifact("apps/InstitutionalCollateralApp.sol", "InstitutionalCollateralApp"),
-  };
-}
-
-function artifactFingerprint(artifacts) {
-  const hashes = Object.keys(artifacts)
-    .sort()
-    .map((name) => ethers.keccak256(artifacts[name].deployedBytecode || artifacts[name].bytecode));
-  return ethers.keccak256(ethers.concat(hashes));
-}
-
-async function createManifest({ fingerprint, chainIds, owners, users, relayers, attestors, threshold }) {
-  const now = new Date().toISOString();
-  return {
-    version: MANIFEST_VERSION,
-    status: "deploying",
-    artifactFingerprint: fingerprint,
-    createdAt: now,
-    updatedAt: now,
-    securityProfile: {
-      checkpointModel: `${threshold}-of-${attestors.length} institutional attestors`,
-      attestorThreshold: threshold,
-      attestors,
-      trustingPeriodSeconds: TRUSTING_PERIOD.toString(),
-      maxClockDriftSeconds: MAX_CLOCK_DRIFT.toString(),
-      finalityDepth: Number(process.env.INSTITUTIONAL_FINALITY_DEPTH || 2),
-      governanceMode: "bootstrap",
-      governanceDelaySeconds: GOVERNANCE_DELAY.toString(),
-      note: "Local integration profile. Production attestor keys must be held by separate institutions/HSMs.",
-    },
-    accounts: {
-      A: {
-        owner: await owners.A.getAddress(),
-        user: await users.A.getAddress(),
-        relayer: await relayers.A.getAddress(),
-      },
-      B: {
-        owner: await owners.B.getAddress(),
-        user: await users.B.getAddress(),
-        relayer: await relayers.B.getAddress(),
-      },
-    },
-    chains: {
-      A: { chainId: chainIds.A.toString(), rpc: CHAIN_A_RPC, deploymentBlock: null, contracts: {} },
-      B: { chainId: chainIds.B.toString(), rpc: CHAIN_B_RPC, deploymentBlock: null, contracts: {} },
-    },
-  };
-}
-
-async function resolveRuntimeAccounts({ owners, users, relayers }) {
-  return {
-    A: {
-      owner: await owners.A.getAddress(),
-      user: await users.A.getAddress(),
-      relayer: await relayers.A.getAddress(),
-    },
-    B: {
-      owner: await owners.B.getAddress(),
-      user: await users.B.getAddress(),
-      relayer: await relayers.B.getAddress(),
-    },
   };
 }
 
@@ -176,14 +152,13 @@ async function loadReusableManifest({ fingerprint, chainIds, attestors, runtimeA
   if (process.argv.includes("--force")) return null;
   const current = await readJsonIfExists(INSTITUTIONAL_DEPLOYMENT_PATH);
   if (!current) return null;
-  if (
-    current.version !== MANIFEST_VERSION ||
-    current.artifactFingerprint !== fingerprint ||
-    BigInt(current.chains?.A?.chainId || 0) !== chainIds.A ||
-    BigInt(current.chains?.B?.chainId || 0) !== chainIds.B ||
-    !sameAddressList(current.securityProfile?.attestors, attestors) ||
-    !manifestAccountsMatchRuntime(current.accounts, runtimeAccounts)
-  ) {
+  if (!deploymentManifestMatchesRuntime({
+    manifest: current,
+    fingerprint,
+    chainIds,
+    attestors,
+    accounts: runtimeAccounts,
+  })) {
     console.log("[institutional:deploy] manifest does not match current bytecode/network/accounts; starting a fresh stack");
     return null;
   }
@@ -212,7 +187,7 @@ async function loadOrCreateAttestorSecrets() {
       return { id: `attestor-${index + 1}`, address: wallet.address, privateKey: wallet.privateKey };
     }),
   };
-  await writeJsonAtomic(INSTITUTIONAL_ATTESTOR_SECRETS_PATH, created, 0o600);
+  await writeJsonAtomic(INSTITUTIONAL_ATTESTOR_SECRETS_PATH, created, { mode: 0o600 });
   console.log(`[institutional:deploy] generated local attestor keys at ${INSTITUTIONAL_ATTESTOR_SECRETS_PATH}`);
   return created;
 }
@@ -223,7 +198,7 @@ async function deployChainA(context) {
   const chainId = BigInt(manifest.chains.A.chainId);
   const checkpointClient = await deployOrAttach(context, "A", "checkpointClient", artifacts.checkpointClient, [
     ownerAddress,
-    TRUSTING_PERIOD,
+    MAX_CHECKPOINT_SUBMISSION_AGE,
     MAX_CLOCK_DRIFT,
   ]);
   const gateway = await deployOrAttach(context, "A", "gateway", artifacts.gateway, [
@@ -244,6 +219,11 @@ async function deployChainA(context) {
     await canonicalToken.getAddress(),
     await policyEngine.getAddress(),
   ]);
+  const restitutionVault = await deployOrAttach(context, "A", "restitutionVault", artifacts.restitutionVault, [
+    ownerAddress,
+    await identityRegistry.getAddress(),
+    await policyEngine.getAddress(),
+  ]);
   const collateralApp = await deployOrAttach(context, "A", "collateralApp", artifacts.collateralApp, [
     chainId,
     await gateway.getAddress(),
@@ -258,7 +238,17 @@ async function deployChainA(context) {
     [ownerAddress],
     ownerAddress,
   ]);
-  return { checkpointClient, gateway, identityRegistry, policyEngine, canonicalToken, escrowVault, collateralApp, governance };
+  return {
+    checkpointClient,
+    gateway,
+    identityRegistry,
+    policyEngine,
+    canonicalToken,
+    escrowVault,
+    restitutionVault,
+    collateralApp,
+    governance,
+  };
 }
 
 async function deployChainB(context) {
@@ -267,7 +257,7 @@ async function deployChainB(context) {
   const chainId = BigInt(manifest.chains.B.chainId);
   const checkpointClient = await deployOrAttach(context, "B", "checkpointClient", artifacts.checkpointClient, [
     ownerAddress,
-    TRUSTING_PERIOD,
+    MAX_CHECKPOINT_SUBMISSION_AGE,
     MAX_CLOCK_DRIFT,
   ]);
   const gateway = await deployOrAttach(context, "B", "gateway", artifacts.gateway, [
@@ -279,6 +269,11 @@ async function deployChainB(context) {
     ownerAddress,
   ]);
   const policyEngine = await deployOrAttach(context, "B", "policyEngine", artifacts.policyEngine, [ownerAddress]);
+  const restitutionVault = await deployOrAttach(context, "B", "restitutionVault", artifacts.restitutionVault, [
+    ownerAddress,
+    await identityRegistry.getAddress(),
+    await policyEngine.getAddress(),
+  ]);
   const voucherToken = await deployOrAttach(context, "B", "voucherToken", artifacts.voucherToken, [
     ownerAddress,
     await policyEngine.getAddress(),
@@ -312,7 +307,19 @@ async function deployChainB(context) {
     [ownerAddress],
     ownerAddress,
   ]);
-  return { checkpointClient, gateway, identityRegistry, policyEngine, voucherToken, debtToken, oracle, lendingPool, collateralApp, governance };
+  return {
+    checkpointClient,
+    gateway,
+    identityRegistry,
+    policyEngine,
+    restitutionVault,
+    voucherToken,
+    debtToken,
+    oracle,
+    lendingPool,
+    collateralApp,
+    governance,
+  };
 }
 
 async function configureStack({ chainA, chainB, chainIds, attestors, threshold, users }) {
@@ -323,6 +330,8 @@ async function configureStack({ chainA, chainB, chainIds, attestors, threshold, 
   const canonicalAsset = await chainA.canonicalToken.getAddress();
   const voucherAsset = await chainB.voucherToken.getAddress();
   const debtAsset = await chainB.debtToken.getAddress();
+  const restitutionVaultA = await chainA.restitutionVault.getAddress();
+  const restitutionVaultB = await chainB.restitutionVault.getAddress();
   const userA = await users.A.getAddress();
   const userB = await users.B.getAddress();
 
@@ -358,10 +367,34 @@ async function configureStack({ chainA, chainB, chainIds, attestors, threshold, 
   await ensureRole(chainA.escrowVault, await chainA.escrowVault.APP_ROLE(), appA, "Bank A escrow app role");
   await ensureRole(chainB.voucherToken, await chainB.voucherToken.APP_ROLE(), appB, "Bank B voucher app role");
   await ensureRole(
+    chainA.restitutionVault,
+    await chainA.restitutionVault.APP_ROLE(),
+    appA,
+    "Bank A restitution app role",
+  );
+  await ensureRole(
+    chainB.restitutionVault,
+    await chainB.restitutionVault.APP_ROLE(),
+    appB,
+    "Bank B restitution app role",
+  );
+  await ensureValue(chainA.collateralApp.restitutionVault(), restitutionVaultA, "Bank A restitution vault", () =>
+    chainA.collateralApp.setRestitutionVault(restitutionVaultA, txOptions()),
+  );
+  await ensureValue(chainB.collateralApp.restitutionVault(), restitutionVaultB, "Bank B restitution vault", () =>
+    chainB.collateralApp.setRestitutionVault(restitutionVaultB, txOptions()),
+  );
+  await ensureRole(
     chainB.voucherToken,
     await chainB.voucherToken.TRANSFER_OPERATOR_ROLE(),
     await chainB.lendingPool.getAddress(),
     "Bank B voucher lending transfer role",
+  );
+  await ensureRole(
+    chainB.voucherToken,
+    await chainB.voucherToken.TRANSFER_OPERATOR_ROLE(),
+    restitutionVaultB,
+    "Bank B restitution transfer role",
   );
   await ensureRole(
     chainA.policyEngine,
@@ -398,11 +431,25 @@ async function configureStack({ chainA, chainB, chainIds, attestors, threshold, 
   );
   await ensureCredential(chainA.identityRegistry, userA, "bank-a-user");
   await ensureCredential(chainB.identityRegistry, userB, "bank-b-user");
+  await ensureCredential(chainA.identityRegistry, restitutionVaultA, "bank-a-restitution-vault");
+  await ensureCredential(chainB.identityRegistry, restitutionVaultB, "bank-b-restitution-vault");
   await ensureBoolean(chainA.policyEngine.accountAllowed(userA), true, "allow Bank A user", () =>
     chainA.policyEngine.setAccountAllowed(userA, true, txOptions()),
   );
   await ensureBoolean(chainB.policyEngine.accountAllowed(userB), true, "allow Bank B user", () =>
     chainB.policyEngine.setAccountAllowed(userB, true, txOptions()),
+  );
+  await ensureBoolean(
+    chainA.policyEngine.accountAllowed(restitutionVaultA),
+    true,
+    "allow Bank A restitution vault",
+    () => chainA.policyEngine.setAccountAllowed(restitutionVaultA, true, txOptions()),
+  );
+  await ensureBoolean(
+    chainB.policyEngine.accountAllowed(restitutionVaultB),
+    true,
+    "allow Bank B restitution vault",
+    () => chainB.policyEngine.setAccountAllowed(restitutionVaultB, true, txOptions()),
   );
   await ensureBoolean(chainA.policyEngine.sourceChainAllowed(chainIds.B), true, "allow Bank B source", () =>
     chainA.policyEngine.setSourceChainAllowed(chainIds.B, true, txOptions()),
@@ -431,11 +478,17 @@ async function configureStack({ chainA, chainB, chainIds, attestors, threshold, 
   await ensureBigInt(chainB.policyEngine.collateralCap(voucherAsset), EXPOSURE_CAP, "collateral cap", () =>
     chainB.policyEngine.setCollateralCap(voucherAsset, EXPOSURE_CAP, txOptions()),
   );
-  await ensureBigInt(chainB.policyEngine.debtAssetBorrowCap(debtAsset), EXPOSURE_CAP, "debt asset cap", () =>
-    chainB.policyEngine.setDebtAssetBorrowCap(debtAsset, EXPOSURE_CAP, txOptions()),
+  await ensureBigInt(
+    chainB.policyEngine.debtAssetOriginationPrincipalCap(debtAsset),
+    EXPOSURE_CAP,
+    "debt-asset origination-principal cap",
+    () => chainB.policyEngine.setDebtAssetOriginationPrincipalCap(debtAsset, EXPOSURE_CAP, txOptions()),
   );
-  await ensureBigInt(chainB.policyEngine.accountBorrowCap(userB), USER_BORROW_CAP, "user borrow cap", () =>
-    chainB.policyEngine.setAccountBorrowCap(userB, USER_BORROW_CAP, txOptions()),
+  await ensureBigInt(
+    chainB.policyEngine.accountOriginationPrincipalCap(userB),
+    USER_BORROW_CAP,
+    "account aggregate origination-principal cap",
+    () => chainB.policyEngine.setAccountOriginationPrincipalCap(userB, USER_BORROW_CAP, txOptions()),
   );
 
   await ensureValue(chainB.lendingPool.valuationOracle(), await chainB.oracle.getAddress(), "lending oracle", () =>
@@ -462,7 +515,9 @@ async function deployOrAttach(context, chainKey, name, artifact, args) {
   const chain = manifest.chains[chainKey];
   let entry = chain.contracts[name];
   if (entry?.address) {
-    const code = await providers[chainKey].getCode(entry.address);
+    const code = await readContractCode(providers[chainKey], entry.address, {
+      label: `${chainKey}.${name}`,
+    });
     if (code !== "0x") {
       console.log(`[institutional:deploy] reuse ${chainKey}.${name} at ${entry.address}`);
       return new ethers.Contract(entry.address, artifact.abi, owners[chainKey]);
@@ -549,7 +604,7 @@ async function ensureCredential(registry, account, reference) {
     if (status !== 1n) throw new Error(`Credential for ${account} is not active (status=${status})`);
     return;
   }
-  const currentBlock = await registry.runner.provider.getBlock("latest");
+  const currentBlock = await readLatestBlock(registry.runner.provider, { label: "credential timestamp block" });
   const validUntil = BigInt(currentBlock.timestamp) + 365n * 24n * 60n * 60n;
   await txStep(`issue credential for ${reference}`, () =>
     registry.issueCredential(
@@ -579,7 +634,7 @@ async function ensureFreshOraclePrice(oracle, asset, expectedPrice, label) {
     oracle.assetPriceE18(asset),
     oracle.assetPriceUpdatedAt(asset),
     oracle.maxStaleness(),
-    oracle.runner.provider.getBlock("latest"),
+    readLatestBlock(oracle.runner.provider, { label: `${label} oracle timestamp block` }),
   ]);
   const refreshBefore = BigInt(updatedAt) + BigInt(maxStaleness) / 2n;
   if (BigInt(price) === expectedPrice && BigInt(block.timestamp) < refreshBefore) return;
@@ -602,31 +657,6 @@ async function ensureBigInt(currentPromise, expected, label, send) {
   await txStep(label, send);
 }
 
-function sameAddress(left, right) {
-  return ethers.getAddress(left) === ethers.getAddress(right);
-}
-
-function compareAddresses(left, right) {
-  const a = BigInt(left);
-  const b = BigInt(right);
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function sameAddressList(left, right) {
-  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-  return left.every((address, index) => sameAddress(address, right[index]));
-}
-
-export function manifestAccountsMatchRuntime(manifestAccounts, runtimeAccounts) {
-  return ["A", "B"].every((chainKey) =>
-    ["owner", "user", "relayer"].every((role) => {
-      const manifestAddress = manifestAccounts?.[chainKey]?.[role];
-      const runtimeAddress = runtimeAccounts?.[chainKey]?.[role];
-      return Boolean(manifestAddress && runtimeAddress && sameAddress(manifestAddress, runtimeAddress));
-    }),
-  );
-}
-
 function txOptions() {
   return { gasLimit: TX_GAS_LIMIT };
 }
@@ -637,44 +667,9 @@ async function txStep(label, send) {
   await waitForTx(transaction, label);
 }
 
-async function waitForTx(transaction, label) {
-  let timer;
-  try {
-    const receipt = await Promise.race([
-      transaction.wait(),
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`[institutional:deploy] ${label} timed out after ${TX_TIMEOUT_MS}ms; tx=${transaction.hash}`)),
-          TX_TIMEOUT_MS,
-        );
-      }),
-    ]);
-    if (!receipt || receipt.status !== 1) throw new Error(`[institutional:deploy] ${label} failed; tx=${transaction.hash}`);
-    return receipt;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function saveManifest(manifest) {
   manifest.updatedAt = new Date().toISOString();
-  await writeJsonAtomic(INSTITUTIONAL_DEPLOYMENT_PATH, manifest);
-}
-
-async function readJsonIfExists(path) {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-async function writeJsonAtomic(path, value, mode = 0o644) {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode });
-  await rename(temporary, path);
+  await writeJsonAtomic(INSTITUTIONAL_DEPLOYMENT_PATH, manifest, { mode: 0o644 });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

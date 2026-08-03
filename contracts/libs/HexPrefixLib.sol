@@ -18,8 +18,12 @@ library HexPrefixLib {
 
         uint8 first = uint8(compact[0]);
         uint8 flag = first >> 4;
+        require(flag <= 3, "HEX_PREFIX_FLAG_INVALID");
         bool isOdd = (flag & 1) == 1;
         isLeaf = (flag & 2) == 2;
+        if (!isOdd) {
+            require((first & 0x0f) == 0, "HEX_PREFIX_PADDING_INVALID");
+        }
 
         uint256 nibbleLength = isOdd ? (compact.length * 2) - 1 : (compact.length - 1) * 2;
         nibbles = new bytes(nibbleLength);

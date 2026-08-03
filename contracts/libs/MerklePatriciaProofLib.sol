@@ -117,6 +117,7 @@ library MerklePatriciaProofLib {
         if (isRoot || expectedNodeRef.length == 32) {
             return keccak256(node) == bytes32(expectedNodeRef);
         }
+        if (expectedNodeRef.length >= 32) return false;
         return _equalBytes(expectedNodeRef, node);
     }
 

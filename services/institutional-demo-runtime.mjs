@@ -1,9 +1,24 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import { ethers } from "ethers";
-import { InstitutionalActionJournal } from "./institutional-action-journal.mjs";
-import { defaultBesuRuntimeEnv, loadArtifact, providerForRpc, signerForRpc } from "../scripts/ops/besu/runtime.mjs";
+import {
+  InstitutionalActionJournal,
+  UnresolvedActionConflictError,
+} from "./institutional-action-journal.mjs";
+import {
+  ActiveExecutionTracker,
+  executeDurableTransaction,
+  recoverUnresolvedActionJournal,
+  transactionOutcomeIsUncertain,
+} from "./institutional-durable-action-runtime.mjs";
+import {
+  defaultBesuRuntimeEnv,
+  loadArtifact,
+  providerForRpc,
+  readLatestBlock,
+  signerForRpc,
+} from "../scripts/ops/besu/runtime.mjs";
 import {
   INSTITUTIONAL_DEMO_STATE_PATH,
   INSTITUTIONAL_DEPLOYMENT_PATH,
@@ -18,39 +33,87 @@ import { createAttestorHttpServer } from "./institutional-relay/attestor-http-se
 import { createEthersLaneWorkflow } from "./institutional-relay/ethers-lane-workflow.mjs";
 import { InstitutionalRelayEngine } from "./institutional-relay/relay-engine.mjs";
 import { RelayJournal } from "./institutional-relay/relay-journal.mjs";
+import { readJson, readJsonIfExists, writeJsonAtomic } from "./shared/json-file.mjs";
+import { createTransactionWaiter } from "./shared/transaction-receipt.mjs";
 
 const ATTESTOR_SECRETS_PATH = resolve(
   process.cwd(),
   process.env.INSTITUTIONAL_ATTESTOR_SECRETS_PATH || ".runtime/institutional-attestor-secrets.json",
 );
 const RUNTIME_ROOT = resolve(process.cwd(), process.env.INSTITUTIONAL_DEMO_ROOT || ".runtime/institutional-demo");
-const TX_TIMEOUT_MS = Number(process.env.INSTITUTIONAL_TX_TIMEOUT_MS || 90_000);
-const FLOW_TIMEOUT_MS = Number(process.env.INSTITUTIONAL_FLOW_TIMEOUT_MS || 180_000);
-const RELAY_POLL_MS = Number(process.env.INSTITUTIONAL_DEMO_RELAY_POLL_MS || 1_000);
+const TX_TIMEOUT_MS = positiveMilliseconds(
+  process.env.INSTITUTIONAL_TX_TIMEOUT_MS || 90_000,
+  "INSTITUTIONAL_TX_TIMEOUT_MS",
+);
+const FLOW_TIMEOUT_MS = positiveMilliseconds(
+  process.env.INSTITUTIONAL_FLOW_TIMEOUT_MS || 180_000,
+  "INSTITUTIONAL_FLOW_TIMEOUT_MS",
+);
+const RELAY_POLL_MS = positiveMilliseconds(
+  process.env.INSTITUTIONAL_DEMO_RELAY_POLL_MS || 1_000,
+  "INSTITUTIONAL_DEMO_RELAY_POLL_MS",
+);
+const ACTION_RECOVERY_POLL_MS = positiveMilliseconds(
+  process.env.INSTITUTIONAL_ACTION_RECOVERY_POLL_MS || 2_000,
+  "INSTITUTIONAL_ACTION_RECOVERY_POLL_MS",
+);
+const ACTION_RECOVERY_MAX_POLL_MS = positiveMilliseconds(
+  process.env.INSTITUTIONAL_ACTION_RECOVERY_MAX_POLL_MS || 60_000,
+  "INSTITUTIONAL_ACTION_RECOVERY_MAX_POLL_MS",
+);
+if (ACTION_RECOVERY_MAX_POLL_MS < ACTION_RECOVERY_POLL_MS) {
+  throw new RangeError("INSTITUTIONAL_ACTION_RECOVERY_MAX_POLL_MS must be at least the recovery poll interval");
+}
 const MINIMUM_POOL_LIQUIDITY = ethers.parseEther(process.env.INSTITUTIONAL_DEMO_MIN_LIQUIDITY || "100000");
 const TX_OPTIONS = Object.freeze({ gasLimit: 5_000_000n });
+const waitForTx = createTransactionWaiter({
+  timeoutMs: TX_TIMEOUT_MS,
+  timeoutMessage: ({ label, hash }) => `${label} timed out; tx=${hash}`,
+  failureMessage: ({ label, hash }) => `${label} failed; tx=${hash}`,
+});
 
 defaultBesuRuntimeEnv();
 
 const ACTIONS = Object.freeze({
-  bridge: { label: "Transfer collateral to Bank B", lane: "A-to-B" },
+  bridge: { label: "Lock aBANK and issue vA on Bank B", lane: "A-to-B" },
   deposit: { label: "Activate voucher collateral", lane: "Bank B" },
-  borrow: { label: "Borrow Bank B credit", lane: "Bank B" },
-  repay: { label: "Repay Bank B credit", lane: "Bank B" },
+  borrow: { label: "Borrow bCASH from Bank B", lane: "Bank B" },
+  repay: { label: "Repay Bank B debt", lane: "Bank B" },
   repayAll: { label: "Repay complete Bank B balance", lane: "Bank B" },
   withdraw: { label: "Withdraw voucher collateral", lane: "Bank B" },
   return: { label: "Return collateral to Bank A", lane: "B-to-A" },
 });
 
+export {
+  ActiveExecutionTracker,
+  executeDurableTransaction,
+  recoverUnresolvedActionJournal,
+  transactionOutcomeIsUncertain,
+};
+
 export class InstitutionalDemoRuntime {
-  constructor({ logger = console } = {}) {
+  constructor({ logger = console, activityWriter = writeJsonAtomic } = {}) {
+    if (typeof activityWriter !== "function") throw new TypeError("activityWriter must be a function");
     this.logger = logger;
+    this.activityWriter = activityWriter;
     this.initializing = null;
     this.context = null;
     this.activity = null;
     this.activeOperation = null;
+    this.executionTracker = new ActiveExecutionTracker();
     this.relayTimer = null;
     this.relayTickPromise = null;
+    this.readinessState = { chainProgress: {} };
+    this.relayHealth = {
+      lastAttemptAt: null,
+      lastHealthyAt: null,
+      lastError: null,
+    };
+    this.recoveryTimer = null;
+    this.recoveryPromise = null;
+    this.lastRecoveryError = null;
+    this.recoveryFailureCount = 0;
+    this.closing = null;
   }
 
   async initialize() {
@@ -62,25 +125,52 @@ export class InstitutionalDemoRuntime {
   async status() {
     try {
       const context = await this.initialize();
-      return readInstitutionalStatus({
+      const status = await readInstitutionalStatus({
         ...context,
         activity: this.activity,
         relayJournal: context.relay.journal,
-        activeAttestors: context.attestorCluster.nodes.length,
+        activeAttestors: context.attestorCluster.nodes.filter((node) => node.server?.listening).length,
+        readinessState: this.readinessState,
+        relayHealth: this.relayHealth,
         activeOperation: this.publicActiveOperation(),
       });
+      const unresolved = publicRecoverableOperations(context.actionJournal.unresolved());
+      this.#scheduleActionRecovery();
+      return {
+        ...status,
+        controller: {
+          ...status.controller,
+          recoverableOperations: unresolved,
+          recovery: {
+            running: Boolean(this.recoveryPromise),
+            pendingCount: unresolved.length,
+            lastError: this.lastRecoveryError,
+          },
+        },
+      };
     } catch (error) {
       return readInstitutionalStatus({ activity: this.activity }).then((status) => ({
         ...status,
         ready: false,
         error: compactError(error),
         message: compactError(error),
-        controller: { busy: false, activeOperation: null },
+        controller: {
+          busy: false,
+          activeOperation: null,
+          recoverableOperations: [],
+          recovery: { running: false, pendingCount: 0, lastError: null },
+        },
       }));
     }
   }
 
   async execute(request) {
+    if (this.closing) throw httpError(503, "Institutional runtime is shutting down");
+    const execution = this.#executeRequest(request);
+    return this.executionTracker.track(execution);
+  }
+
+  async #executeRequest(request) {
     const action = String(request?.action || "");
     if (!ACTIONS[action]) throw httpError(400, `Unsupported institutional action: ${action || "missing"}`);
     const requestId = normalizeRequestId(request?.requestId);
@@ -111,19 +201,45 @@ export class InstitutionalDemoRuntime {
       const existing = context.actionJournal.get(requestId);
       if (existing) {
         if (existing.action !== action) {
-          throw httpError(409, `Idempotency key ${requestId} belongs to ${existing.action}, not ${action}`);
+          throw journalOperationHttpError(
+            409,
+            `Idempotency key ${requestId} belongs to ${existing.action}, not ${action}`,
+            existing,
+          );
+        }
+        if (request?.amount != null && String(request.amount).trim() !== "") {
+          let requestedAmount;
+          try {
+            requestedAmount = parseActionAmount(request.amount);
+          } catch (amountError) {
+            throw journalOperationHttpError(
+              amountError.statusCode || 400,
+              compactError(amountError),
+              existing,
+            );
+          }
+          if (requestedAmount !== ethers.parseUnits(existing.amount, 18)) {
+            throw journalOperationHttpError(
+              409,
+              `Idempotency key ${requestId} was already used for a different amount`,
+              existing,
+            );
+          }
         }
         if (existing.status === "completed") {
+          await this.#recordActivity(existing.result);
           this.activeOperation = null;
           return { ok: true, replayed: true, operation: existing.result, status: await this.status() };
         }
         if (existing.status === "failed") {
-          throw httpError(409, `Request ${requestId} previously failed`, { operation: existing });
+          throw journalOperationHttpError(409, `Request ${requestId} previously failed`, existing);
         }
-        if (!["prepared", "submitted", "uncertain"].includes(existing.status)) {
-          throw httpError(409, `Request ${requestId} has unsupported journal status ${existing.status}`, {
-            operation: existing,
-          });
+        if (!["prepared", "signed", "broadcasting", "submitted", "uncertain"].includes(existing.status)) {
+          throw journalOperationHttpError(
+            409,
+            `Request ${requestId} has unsupported journal status ${existing.status}`,
+            existing,
+          );
         }
         journalPrepared = true;
         startedAt = existing.createdAt || startedAt;
@@ -158,7 +274,7 @@ export class InstitutionalDemoRuntime {
       const activityStatus = existing && existing.status !== "prepared" ? existing.status : "pending";
       await this.#recordActivity(this.#activeActivity(activityStatus));
 
-      const result = existing && existing.status !== "prepared"
+      const result = existing && (existing.status !== "prepared" || existing.outbox)
         ? await this.#resumeSubmittedAction(context, existing)
         : await this.#executeAction(context, action, amount);
       const entry = {
@@ -178,11 +294,23 @@ export class InstitutionalDemoRuntime {
       this.activeOperation = null;
       return { ok: true, operation: entry, status: await this.status() };
     } catch (error) {
-      const outcomeUncertain = Boolean(
-        this.activeOperation?.sourceTransaction
-        && !error?.outcomeCertain
-        && Number(error?.receipt?.status ?? -1) !== 0,
-      );
+      if (error instanceof UnresolvedActionConflictError) {
+        const conflict = journalOperationHttpError(409, error.message, error.blockingOperation);
+        conflict.code = error.code;
+        conflict.payload.code = error.code;
+        this.activeOperation = null;
+        throw conflict;
+      }
+      if (error?.preserveJournalOperation) {
+        this.activeOperation = null;
+        throw error;
+      }
+      const journalOperation = context?.actionJournal?.get(requestId);
+      const knownSourceTransaction = this.activeOperation?.sourceTransaction
+        || journalOperation?.outbox?.transactionHash
+        || journalOperation?.sourceTransaction
+        || null;
+      const outcomeUncertain = transactionOutcomeIsUncertain(error, knownSourceTransaction);
       const entry = {
         id: operationId,
         requestId,
@@ -193,14 +321,14 @@ export class InstitutionalDemoRuntime {
         status: outcomeUncertain ? "uncertain" : "failed",
         startedAt,
         finishedAt: new Date().toISOString(),
-        sourceTransaction: this.activeOperation?.sourceTransaction || null,
+        sourceTransaction: knownSourceTransaction,
         error: compactError(error),
       };
       if (journalPrepared) {
         try {
           await context.actionJournal.fail(requestId, error, {
             uncertain: outcomeUncertain,
-            sourceTransaction: this.activeOperation?.sourceTransaction || null,
+            sourceTransaction: knownSourceTransaction,
           });
           await this.#recordActivity(entry);
         } catch (journalError) {
@@ -222,10 +350,39 @@ export class InstitutionalDemoRuntime {
   }
 
   async close() {
+    if (!this.closing) {
+      this.closing = this.#close().finally(() => { this.closing = null; });
+    }
+    return this.closing;
+  }
+
+  async #close() {
     if (this.relayTimer) clearInterval(this.relayTimer);
     this.relayTimer = null;
-    if (this.context?.attestorCluster) await this.context.attestorCluster.close();
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = null;
+    if (this.initializing) await this.initializing.catch(() => {});
+    if (this.relayTimer) clearInterval(this.relayTimer);
+    this.relayTimer = null;
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = null;
+    if (this.recoveryPromise) await this.recoveryPromise.catch(() => {});
+    await this.executionTracker.waitForIdle();
+
+    const context = this.context;
     this.context = null;
+    const cleanupErrors = [];
+    if (this.relayTickPromise) {
+      try {
+        await this.relayTickPromise;
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    cleanupErrors.push(...await closeRuntimeResources(context));
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, "Institutional demo runtime did not close cleanly");
+    }
   }
 
   async #initialize() {
@@ -235,56 +392,94 @@ export class InstitutionalDemoRuntime {
       readJsonIfExists(INSTITUTIONAL_DEMO_STATE_PATH),
     ]);
     validateDeployment(manifest, secrets);
+    this.readinessState = { chainProgress: {} };
+    this.relayHealth = { lastAttemptAt: null, lastHealthyAt: null, lastError: null };
     const runtimeKey = `${manifest.chains.A.contracts.gateway.address.slice(2, 10)}-${manifest.chains.B.contracts.gateway.address.slice(2, 10)}`;
     this.activity = activity?.version === "institutional-demo-state-v1" && activity.deploymentId === runtimeKey
       ? activity
       : emptyActivity(runtimeKey);
 
-    const providers = {
-      A: providerForRpc(manifest.chains.A.rpc),
-      B: providerForRpc(manifest.chains.B.rpc),
-    };
-    const users = {
-      A: await signerForRpc(manifest.chains.A.rpc, "A", 1),
-      B: await signerForRpc(manifest.chains.B.rpc, "B", 1),
-    };
-    const owners = { B: await signerForRpc(manifest.chains.B.rpc, "B", 0) };
-    const relayers = {
-      A: await signerForRpc(manifest.chains.A.rpc, "A", 2),
-      B: await signerForRpc(manifest.chains.B.rpc, "B", 2),
-    };
-    const artifacts = {
-      ...await loadViewArtifacts(),
-      app: await loadArtifact("apps/InstitutionalCollateralApp.sol", "InstitutionalCollateralApp"),
-    };
-    const contracts = createActionContracts({ manifest, providers, users, owners, artifacts });
-    const runtimeDirectory = resolve(RUNTIME_ROOT, runtimeKey);
-    await mkdir(runtimeDirectory, { recursive: true });
-    const actionJournal = await InstitutionalActionJournal.open(resolve(runtimeDirectory, "action-journal.json"));
+    let context = null;
+    const partial = { providers: null, users: null, owners: null, relayers: null };
+    try {
+      const providers = {};
+      partial.providers = providers;
+      providers.A = providerForRpc(manifest.chains.A.rpc);
+      providers.B = providerForRpc(manifest.chains.B.rpc);
+      const users = {};
+      partial.users = users;
+      users.A = await signerForRpc(manifest.chains.A.rpc, "A", 1);
+      users.B = await signerForRpc(manifest.chains.B.rpc, "B", 1);
+      const owners = {};
+      partial.owners = owners;
+      owners.B = await signerForRpc(manifest.chains.B.rpc, "B", 0);
+      const relayers = {};
+      partial.relayers = relayers;
+      relayers.A = await signerForRpc(manifest.chains.A.rpc, "A", 2);
+      relayers.B = await signerForRpc(manifest.chains.B.rpc, "B", 2);
+      const artifacts = {
+        ...await loadViewArtifacts(),
+        app: await loadArtifact("apps/InstitutionalCollateralApp.sol", "InstitutionalCollateralApp"),
+      };
+      const contracts = createActionContracts({ manifest, providers, users, owners, artifacts });
+      const runtimeDirectory = resolve(RUNTIME_ROOT, runtimeKey);
+      await mkdir(runtimeDirectory, { recursive: true });
+      const actionJournal = await InstitutionalActionJournal.open(resolve(runtimeDirectory, "action-journal.json"));
+      partial.actionJournal = actionJournal;
 
-    await ensurePoolLiquidity(contracts, manifest.accounts.B.owner);
-    const attestorCluster = await startAttestorCluster({ manifest, secrets, providers, runtimeDirectory, logger: this.logger });
-    const relay = await createRelayRuntime({ manifest, relayers, endpoints: attestorCluster.endpoints, runtimeDirectory });
-    const context = {
-      manifest,
-      secrets,
-      providers,
-      users,
-      owners,
-      relayers,
-      artifacts,
-      contracts,
-      attestorCluster,
-      relay,
-      actionJournal,
-    };
-    this.context = context;
-    this.relayTimer = setInterval(() => {
-      this.#tickRelay().catch((error) => this.logger.error?.(`[institutional-ui] relay tick: ${compactError(error)}`));
-    }, RELAY_POLL_MS);
-    this.relayTimer.unref?.();
-    await this.#tickRelay();
-    return context;
+      await ensurePoolLiquidity(contracts, manifest.accounts.B.owner);
+      const attestorCluster = await startAttestorCluster({
+        manifest,
+        secrets,
+        providers,
+        runtimeDirectory,
+        logger: this.logger,
+      });
+      partial.attestorCluster = attestorCluster;
+      const relay = await createRelayRuntime({
+        manifest,
+        relayers,
+        endpoints: attestorCluster.endpoints,
+        runtimeDirectory,
+      });
+      partial.relay = relay;
+      context = {
+        manifest,
+        secrets,
+        providers,
+        users,
+        owners,
+        relayers,
+        artifacts,
+        contracts,
+        attestorCluster,
+        relay,
+        actionJournal,
+      };
+      this.context = context;
+      this.relayTimer = setInterval(() => {
+        this.#tickRelay().catch((error) => this.logger.error?.(`[institutional-ui] relay tick: ${compactError(error)}`));
+      }, RELAY_POLL_MS);
+      this.relayTimer.unref?.();
+      await this.#tickRelay();
+      this.#scheduleActionRecovery();
+      return context;
+    } catch (initializationError) {
+      if (this.relayTimer) clearInterval(this.relayTimer);
+      this.relayTimer = null;
+      if (this.relayTickPromise) {
+        await this.relayTickPromise.catch(() => {});
+      }
+      if (this.context === context) this.context = null;
+      const cleanupErrors = await closeRuntimeResources(context || partial);
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(
+          [initializationError, ...cleanupErrors],
+          "Institutional demo runtime failed to initialize and fully release its resources",
+        );
+      }
+      throw initializationError;
+    }
   }
 
   async #executeAction(context, action, amount) {
@@ -309,21 +504,27 @@ export class InstitutionalDemoRuntime {
   }
 
   async #resumeSubmittedAction(context, operation) {
-    const sourceTransaction = operation.sourceTransaction;
+    const sourceTransaction = operation.outbox?.transactionHash || operation.sourceTransaction;
     if (!/^0x[0-9a-fA-F]{64}$/.test(sourceTransaction || "")) {
       throw certainError(`Request ${operation.requestId} has no recoverable source transaction`);
     }
 
     this.activeOperation.stage = "reconciling-transaction";
-    const provider = operation.action === "bridge" ? context.providers.A : context.providers.B;
-    const receipt = await provider.getTransactionReceipt(sourceTransaction);
-    if (!receipt) {
-      throw httpError(409, `Transaction ${sourceTransaction} is still pending; retry reconciliation shortly`);
-    }
-    if (Number(receipt.status) !== 1) {
-      const error = certainError(`Transaction ${sourceTransaction} reverted on-chain`);
-      error.receipt = receipt;
-      throw error;
+    let receipt;
+    if (operation.outbox) {
+      const signer = operation.action === "bridge" ? context.users.A : context.users.B;
+      receipt = await this.#executeDurableTransaction(context, {
+        signer,
+        transactionRequest: null,
+        label: `${operation.action} transaction reconciliation`,
+      });
+    } else {
+      const provider = operation.action === "bridge" ? context.providers.A : context.providers.B;
+      receipt = await provider.getTransactionReceipt(sourceTransaction);
+      if (!receipt) {
+        throw httpError(409, `Transaction ${sourceTransaction} is still pending; retry reconciliation shortly`);
+      }
+      assertSuccessfulReceipt(receipt, sourceTransaction, `${operation.action} transaction reconciliation`);
     }
 
     if (["bridge", "return"].includes(operation.action)) {
@@ -404,21 +605,41 @@ export class InstitutionalDemoRuntime {
     }
 
     this.activeOperation.stage = "source-confirmation";
-    const sourceBlock = await sourceApp.runner.provider.getBlock("latest");
+    const sourceBlock = await readLatestBlock(sourceApp.runner.provider, {
+      label: `${direction} source block`,
+    });
     const timeout = BigInt(sourceBlock.timestamp) + 30n * 60n;
     const reference = ethers.keccak256(
       ethers.toUtf8Bytes(`institutional-ui:${direction}:${this.activeOperation.requestId}`),
     );
     this.activeOperation.clientReference = reference;
-    const transaction = forward
-      ? await sourceApp.lockAndMint(destinationChainId, destinationAccount, amount, timeout, reference, TX_OPTIONS)
-      : await sourceApp.burnAndUnlock(destinationChainId, destinationAccount, amount, timeout, reference, TX_OPTIONS);
-    await this.#recordSubmitted(transaction, { clientReference: reference });
-    const receipt = await waitForTx(transaction, `${direction} source transaction`);
+    const transactionRequest = forward
+      ? await sourceApp.lockAndMint.populateTransaction(
+          destinationChainId,
+          destinationAccount,
+          amount,
+          timeout,
+          reference,
+          TX_OPTIONS,
+        )
+      : await sourceApp.burnAndUnlock.populateTransaction(
+          destinationChainId,
+          destinationAccount,
+          amount,
+          timeout,
+          reference,
+          TX_OPTIONS,
+        );
+    const receipt = await this.#executeDurableTransaction(context, {
+      signer: sourceApp.runner,
+      transactionRequest,
+      label: `${direction} source transaction`,
+      patch: { clientReference: reference },
+    });
     const messageId = findEventArgument(sourceApp, receipt, "CollateralMessageSent", "messageId");
     if (!messageId) throw new Error("Source application emitted no CollateralMessageSent event");
     this.activeOperation.messageId = messageId;
-    await this.#recordSubmitted(transaction, { messageId, sourceBlock: receipt.blockNumber });
+    await this.#recordSubmitted({ hash: receipt.hash }, { messageId, sourceBlock: receipt.blockNumber });
 
     this.activeOperation.stage = "attestor-quorum";
     await runUntil(
@@ -440,33 +661,40 @@ export class InstitutionalDemoRuntime {
 
   async #bankBTransaction(context, amount, action) {
     const pool = context.contracts.lendingPoolB;
-    let transaction;
+    let transactionRequest;
     if (action === "deposit") {
       await ensureAllowance(context.contracts.voucherTokenB, await pool.getAddress(), context.manifest.accounts.B.user, amount);
       this.activeOperation.stage = "depositing-collateral";
-      transaction = await pool.depositCollateral(amount, TX_OPTIONS);
+      transactionRequest = await pool.depositCollateral.populateTransaction(amount, TX_OPTIONS);
     } else if (action === "borrow") {
       this.activeOperation.stage = "risk-policy-check";
-      transaction = await pool.borrow(amount, TX_OPTIONS);
+      transactionRequest = await pool.borrow.populateTransaction(amount, TX_OPTIONS);
     } else if (action === "repay") {
       await ensureAllowance(context.contracts.debtTokenB, await pool.getAddress(), context.manifest.accounts.B.user, amount);
       this.activeOperation.stage = "repaying-credit";
-      transaction = await pool.repay(amount, TX_OPTIONS);
+      transactionRequest = await pool.repay.populateTransaction(amount, TX_OPTIONS);
     } else if (action === "repayAll") {
       await ensureAllowance(context.contracts.debtTokenB, await pool.getAddress(), context.manifest.accounts.B.user, amount);
       this.activeOperation.stage = "repaying-complete-balance";
-      transaction = await pool.repayAll(TX_OPTIONS);
+      transactionRequest = await pool.repayAll.populateTransaction(TX_OPTIONS);
     } else if (action === "withdraw") {
       this.activeOperation.stage = "withdrawing-collateral";
-      transaction = await pool.withdrawCollateral(amount, TX_OPTIONS);
+      transactionRequest = await pool.withdrawCollateral.populateTransaction(amount, TX_OPTIONS);
     } else {
       throw new Error(`Unsupported Bank B action ${action}`);
     }
-    await this.#recordSubmitted(transaction);
-    const receipt = await waitForTx(transaction, `${action} transaction`);
+    const receipt = await this.#executeDurableTransaction(context, {
+      signer: pool.runner,
+      transactionRequest,
+      label: `${action} transaction`,
+    });
+    await this.#recordSubmitted({ hash: receipt.hash }, { sourceBlock: receipt.blockNumber });
     const payment = ["repay", "repayAll"].includes(action)
       ? findEventArgument(pool, receipt, "Repaid", "amount")
       : null;
+    if (["repay", "repayAll"].includes(action) && payment == null) {
+      throw new Error(`Transaction ${receipt.hash} emitted no Repaid event`);
+    }
     return {
       sourceTransaction: receipt.hash,
       sourceBlock: receipt.blockNumber,
@@ -477,9 +705,108 @@ export class InstitutionalDemoRuntime {
   async #tickRelay() {
     if (!this.context?.relay?.engine) return;
     if (!this.relayTickPromise) {
-      this.relayTickPromise = this.context.relay.engine.tick().finally(() => { this.relayTickPromise = null; });
+      this.relayHealth.lastAttemptAt = new Date().toISOString();
+      this.relayTickPromise = this.context.relay.engine.tick()
+        .then((result) => {
+          if (result.scanErrors?.length > 0) {
+            this.relayHealth.lastError = result.scanErrors.map((entry) => (
+              `${entry.laneId}: ${entry.error?.message || "scan failed"}`
+            )).join("; ");
+          } else {
+            this.relayHealth.lastHealthyAt = new Date().toISOString();
+            this.relayHealth.lastError = null;
+          }
+          return result;
+        })
+        .catch((error) => {
+          this.relayHealth.lastError = compactError(error);
+          throw error;
+        })
+        .finally(() => { this.relayTickPromise = null; });
     }
     return this.relayTickPromise;
+  }
+
+  #scheduleActionRecovery(delayMs = 0) {
+    if (this.closing || this.recoveryTimer || this.recoveryPromise || !this.context?.actionJournal) return;
+    if (this.context.actionJournal.unresolved().length === 0) return;
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = null;
+      this.#recoverUnresolvedActions().catch((error) => {
+        this.logger.error?.(`[institutional-ui] action recovery: ${compactError(error)}`);
+      });
+    }, delayMs);
+    this.recoveryTimer.unref?.();
+  }
+
+  async #recoverUnresolvedActions() {
+    if (this.recoveryPromise) return this.recoveryPromise;
+    if (this.closing || !this.context?.actionJournal) return [];
+    if (this.activeOperation) {
+      this.#scheduleActionRecovery(ACTION_RECOVERY_POLL_MS);
+      return [];
+    }
+
+    const context = this.context;
+    const recovery = recoverUnresolvedActionJournal({
+      actionJournal: context.actionJournal,
+      executeAction: (request) => this.execute(request),
+      onError: (error, operation) => {
+        this.lastRecoveryError = {
+          requestId: operation.requestId,
+          message: compactError(error),
+          at: new Date().toISOString(),
+        };
+        this.logger.error?.(
+          `[institutional-ui] recover action ${operation.requestId}: ${compactError(error)}`,
+        );
+      },
+    });
+    this.recoveryPromise = recovery;
+    try {
+      const results = await recovery;
+      if (results.length > 0 && results.every((result) => result.ok)) {
+        this.lastRecoveryError = null;
+        this.recoveryFailureCount = 0;
+      } else if (results.some((result) => !result.ok)) {
+        this.recoveryFailureCount += 1;
+      }
+      return results;
+    } catch (error) {
+      this.recoveryFailureCount += 1;
+      throw error;
+    } finally {
+      if (this.recoveryPromise === recovery) this.recoveryPromise = null;
+      if (!this.closing && this.context === context && context.actionJournal.unresolved().length > 0) {
+        this.#scheduleActionRecovery(recoveryBackoffMilliseconds(this.recoveryFailureCount));
+      }
+    }
+  }
+
+  async #executeDurableTransaction(context, { signer, transactionRequest, label, patch = {} }) {
+    const operation = context.actionJournal.get(this.activeOperation.requestId);
+    if (operation?.outbox) this.activeOperation.sourceTransaction = operation.outbox.transactionHash;
+    return executeDurableTransaction({
+      actionJournal: context.actionJournal,
+      requestId: this.activeOperation.requestId,
+      signer,
+      transactionRequest,
+      label,
+      patch: { stage: this.activeOperation.stage, ...patch },
+      hooks: {
+        afterPersist: async (outbox) => this.#recordOutboxActivity(outbox, "signed", patch),
+        onBroadcasting: async (outbox) => this.#recordOutboxActivity(outbox, "broadcasting", patch),
+        onSubmitted: async (outbox) => this.#recordOutboxActivity(outbox, "submitted", patch),
+      },
+      onHookError: (error) => {
+        this.logger.error?.(`[institutional-ui] action activity projection: ${compactError(error)}`);
+      },
+    });
+  }
+
+  async #recordOutboxActivity(outbox, status, patch) {
+    Object.assign(this.activeOperation, patch, { sourceTransaction: outbox.transactionHash });
+    await this.#recordActivity(this.#activeActivity(status));
   }
 
   async #recordActivity(entry) {
@@ -488,7 +815,13 @@ export class InstitutionalDemoRuntime {
     state.history = [entry, ...(state.history || []).filter((item) => item.id !== entry.id)].slice(0, 40);
     state.updatedAt = new Date().toISOString();
     this.activity = state;
-    await writeJsonAtomic(INSTITUTIONAL_DEMO_STATE_PATH, state);
+    try {
+      await this.activityWriter(INSTITUTIONAL_DEMO_STATE_PATH, state);
+      return true;
+    } catch (error) {
+      this.logger.error?.(`[institutional-ui] activity projection: ${compactError(error)}`);
+      return false;
+    }
   }
 
   async #recordSubmitted(transaction, patch = {}) {
@@ -542,7 +875,7 @@ function actionAmount(action, requested, status) {
   if (action === "repayAll") {
     const debt = ethers.parseUnits(status.balances.outstandingDebt || "0", 18);
     const balance = ethers.parseUnits(status.balances.creditAvailable || "0", 18);
-    if (debt === 0n) throw httpError(400, "No outstanding Bank B credit remains");
+    if (debt === 0n) throw httpError(400, "No outstanding Bank B debt remains");
     if (balance < debt) throw httpError(409, "Wallet bCASH balance is insufficient to repay the complete debt");
     return debt;
   }
@@ -558,12 +891,32 @@ function actionAmount(action, requested, status) {
   return parseActionAmount(requested, { maximum });
 }
 
+function publicRecoverableOperations(operations) {
+  return operations.map((operation) => ({
+    requestId: operation.requestId,
+    action: operation.action,
+    label: operation.label,
+    lane: operation.lane,
+    amount: operation.amount,
+    status: operation.status,
+    sourceTransaction: operation.outbox?.transactionHash || operation.sourceTransaction || null,
+    broadcastAttempts: operation.outbox?.broadcastAttempts || 0,
+    createdAt: operation.createdAt,
+    updatedAt: operation.updatedAt,
+    error: operation.error || null,
+  }));
+}
+
 function normalizeRequestId(value) {
-  const requestId = value == null || String(value).trim() === ""
-    ? `request-${Date.now()}-${randomBytes(8).toString("hex")}`
-    : String(value).trim();
+  if (value == null || String(value).trim() === "") {
+    throw httpError(400, "requestId is required for every financial action");
+  }
+  const requestId = String(value).trim();
   if (!/^[A-Za-z0-9._:-]{8,128}$/.test(requestId)) {
     throw httpError(400, "requestId must contain 8-128 letters, digits, dots, colons, underscores or hyphens");
+  }
+  if (["__proto__", "constructor", "prototype"].includes(requestId)) {
+    throw httpError(400, "requestId uses a reserved identifier");
   }
   return requestId;
 }
@@ -590,31 +943,78 @@ async function ensurePoolLiquidity(contracts, ownerAddress) {
   await waitForTx(await contracts.lendingPoolBOwner.depositLiquidity(amount, TX_OPTIONS), "seed institutional liquidity");
 }
 
-async function startAttestorCluster({ manifest, secrets, providers, runtimeDirectory, logger }) {
+export async function startAttestorCluster({
+  manifest,
+  secrets,
+  providers,
+  runtimeDirectory,
+  logger,
+  dependencies = {},
+}) {
+  const openJournal = dependencies.openJournal || ((path) => AttestorJournal.open(path));
+  const createAttestor = dependencies.createAttestor || ((options) => new CheckpointAttestor(options));
+  const createServer = dependencies.createServer || createAttestorHttpServer;
+  const listenServer = dependencies.listenServer || listen;
   const token = `ui-${randomBytes(24).toString("hex")}`;
   const finalityDepth = Number(manifest.securityProfile.finalityDepth);
   const sources = {
     [manifest.chains.A.chainId]: { provider: providers.A, finalityDepth },
     [manifest.chains.B.chainId]: { provider: providers.B, finalityDepth },
   };
+  const allowedDomains = allowedCheckpointDomains(manifest);
   const nodes = [];
-  for (const entry of secrets.attestors) {
-    const journal = await AttestorJournal.open(resolve(runtimeDirectory, `attestor-${entry.address}.json`));
-    const attestor = new CheckpointAttestor({ wallet: new ethers.Wallet(entry.privateKey), sources, journal });
-    const server = createAttestorHttpServer({ attestor, token, logger });
-    await listen(server, 0);
-    nodes.push({ server, signer: attestor.signerAddress, port: server.address().port });
+  try {
+    for (const entry of secrets.attestors) {
+      const node = { server: null, journal: null, signer: null, port: null };
+      nodes.push(node);
+      const wallet = new ethers.Wallet(entry.privateKey);
+      node.journal = await openJournal(resolve(runtimeDirectory, `attestor-${wallet.address}.json`));
+      const attestor = createAttestor({
+        wallet,
+        sources,
+        journal: node.journal,
+        allowedDomains,
+      });
+      node.signer = attestor.signerAddress;
+      node.server = createServer({ attestor, token, logger });
+      await listenServer(node.server, 0);
+      node.port = node.server.address().port;
+    }
+  } catch (startupError) {
+    const cleanupErrors = await closeAttestorNodes(nodes);
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [startupError, ...cleanupErrors],
+        "Attestor cluster failed to start and fully release its partial resources",
+      );
+    }
+    throw startupError;
   }
+  let closePromise = null;
   return {
     nodes,
     endpoints: nodes.map((node) => ({ url: `http://127.0.0.1:${node.port}`, token })),
-    async close() {
-      await Promise.all(nodes.map((node) => close(node.server)));
+    close() {
+      if (!closePromise) {
+        closePromise = closeAttestorNodes(nodes).then((errors) => {
+          if (errors.length > 0) throw new AggregateError(errors, "Attestor cluster did not close cleanly");
+        });
+      }
+      return closePromise;
     },
   };
 }
 
-async function createRelayRuntime({ manifest, relayers, endpoints, runtimeDirectory }) {
+export async function createRelayRuntime({
+  manifest,
+  relayers,
+  endpoints,
+  runtimeDirectory,
+  dependencies = {},
+}) {
+  const openJournal = dependencies.openJournal || ((path) => RelayJournal.open(path));
+  const createWorkflow = dependencies.createWorkflow || createEthersLaneWorkflow;
+  const createEngine = dependencies.createEngine || ((options) => new InstitutionalRelayEngine(options));
   const finalityDepth = Number(manifest.securityProfile.finalityDepth);
   const laneConfig = (sourceKey, destinationKey) => ({
     source: endpointConfig(manifest, sourceKey, finalityDepth),
@@ -626,33 +1026,45 @@ async function createRelayRuntime({ manifest, relayers, endpoints, runtimeDirect
     scanRange: 500,
     gasLimit: "5000000",
   });
-  const journal = await RelayJournal.open(resolve(runtimeDirectory, "relay-journal.json"));
-  const lanes = [
-    {
-      id: "A-to-B",
-      startBlock: Number(manifest.chains.A.deploymentBlock),
-      workflow: await createEthersLaneWorkflow(laneConfig("A", "B"), {
-        sourceSigner: relayers.A,
-        destinationSigner: relayers.B,
-      }),
-    },
-    {
-      id: "B-to-A",
-      startBlock: Number(manifest.chains.B.deploymentBlock),
-      workflow: await createEthersLaneWorkflow(laneConfig("B", "A"), {
-        sourceSigner: relayers.B,
-        destinationSigner: relayers.A,
-      }),
-    },
-  ];
-  const engine = new InstitutionalRelayEngine({
-    journal,
-    lanes,
-    leaseMs: 15_000,
-    batchSize: 20,
-    retry: { initialMs: 250, maximumMs: 2_000, jitterRatio: 0 },
-  });
-  return { engine, journal };
+  const journal = await openJournal(resolve(runtimeDirectory, "relay-journal.json"));
+  try {
+    const lanes = [
+      {
+        id: "A-to-B",
+        startBlock: Number(manifest.chains.A.deploymentBlock),
+        workflow: await createWorkflow(laneConfig("A", "B"), {
+          sourceSigner: relayers.A,
+          destinationSigner: relayers.B,
+        }),
+      },
+      {
+        id: "B-to-A",
+        startBlock: Number(manifest.chains.B.deploymentBlock),
+        workflow: await createWorkflow(laneConfig("B", "A"), {
+          sourceSigner: relayers.B,
+          destinationSigner: relayers.A,
+        }),
+      },
+    ];
+    const engine = createEngine({
+      journal,
+      lanes,
+      leaseMs: 15_000,
+      batchSize: 20,
+      retry: { baseMs: 250, maxMs: 2_000, jitterRatio: 0 },
+    });
+    return { engine, journal };
+  } catch (startupError) {
+    try {
+      await journal.close();
+    } catch (closeError) {
+      throw new AggregateError(
+        [startupError, closeError],
+        "Relay runtime failed to start and release its journal",
+      );
+    }
+    throw startupError;
+  }
 }
 
 function endpointConfig(manifest, key, finalityDepth) {
@@ -666,8 +1078,15 @@ function endpointConfig(manifest, key, finalityDepth) {
   };
 }
 
+function allowedCheckpointDomains(manifest) {
+  return ["A", "B"].map((key) => ({
+    destinationChainId: manifest.chains[key].chainId,
+    checkpointClient: manifest.chains[key].contracts.checkpointClient.address,
+  }));
+}
+
 function validateDeployment(manifest, secrets) {
-  if (manifest.version !== "institutional-deployment-v1" || manifest.status !== "ready") {
+  if (manifest.version !== "institutional-deployment-v2" || manifest.status !== "ready") {
     throw new Error("Run npm run institutional:deploy before starting the institutional UI");
   }
   if (manifest.securityProfile.governanceMode !== "timelock-enforced") {
@@ -711,22 +1130,6 @@ function findEventArgument(contract, receipt, eventName, argument) {
   return null;
 }
 
-async function waitForTx(transaction, label) {
-  let timer;
-  try {
-    const receipt = await Promise.race([
-      transaction.wait(),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out; tx=${transaction.hash}`)), TX_TIMEOUT_MS);
-      }),
-    ]);
-    if (!receipt || receipt.status !== 1) throw new Error(`${label} failed; tx=${transaction.hash}`);
-    return receipt;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function smallerDecimal(left, right) {
   const a = ethers.parseUnits(left || "0", 18);
   const b = ethers.parseUnits(right || "0", 18);
@@ -754,8 +1157,64 @@ function close(server) {
   });
 }
 
+async function closeAttestorNodes(nodes) {
+  const errors = [];
+  const serverResults = await Promise.allSettled(
+    nodes.filter((node) => node.server).map((node) => close(node.server)),
+  );
+  errors.push(...serverResults.filter((result) => result.status === "rejected").map((result) => result.reason));
+  const journalResults = await Promise.allSettled(
+    nodes.filter((node) => node.journal).map((node) => node.journal.close()),
+  );
+  errors.push(...journalResults.filter((result) => result.status === "rejected").map((result) => result.reason));
+  return errors;
+}
+
+export async function closeRuntimeResources(context) {
+  if (!context) return [];
+  const errors = [];
+  for (const resource of [context.attestorCluster, context.relay?.journal, context.actionJournal]) {
+    if (!resource || typeof resource.close !== "function") continue;
+    try {
+      await resource.close();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  const providers = new Set(Object.values(context.providers || {}));
+  for (const signerGroup of [context.users, context.owners, context.relayers]) {
+    for (const signer of Object.values(signerGroup || {})) {
+      if (signer?.provider) providers.add(signer.provider);
+    }
+  }
+  const providerResults = await Promise.allSettled(
+    [...providers]
+      .filter((provider) => typeof provider?.destroy === "function")
+      .map((provider) => Promise.resolve().then(() => provider.destroy())),
+  );
+  errors.push(...providerResults.filter((result) => result.status === "rejected").map((result) => result.reason));
+  return errors;
+}
+
 function sleep(milliseconds) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
+}
+
+export function positiveMilliseconds(value, label) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 2_147_483_647) {
+    throw new RangeError(`${label} must be an integer between 1 and 2147483647 milliseconds`);
+  }
+  return parsed;
+}
+
+export function recoveryBackoffMilliseconds(failureCount) {
+  if (!Number.isSafeInteger(failureCount) || failureCount < 0) {
+    throw new RangeError("Action recovery failure count must be a non-negative safe integer");
+  }
+  const exponent = Math.min(Math.max(0, failureCount - 1), 20);
+  return Math.min(ACTION_RECOVERY_MAX_POLL_MS, ACTION_RECOVERY_POLL_MS * (2 ** exponent));
 }
 
 function compactError(error) {
@@ -768,31 +1227,23 @@ function certainError(message) {
   return error;
 }
 
+function certainHttpError(statusCode, message, payload = {}) {
+  const error = httpError(statusCode, message, payload);
+  error.outcomeCertain = true;
+  return error;
+}
+
+function journalOperationHttpError(statusCode, message, operation) {
+  const error = certainHttpError(statusCode, message, { operation });
+  error.preserveJournalOperation = true;
+  return error;
+}
+
 function httpError(statusCode, message, payload = {}) {
   const error = new Error(message);
   error.statusCode = statusCode;
   error.payload = { ok: false, error: message, ...payload };
   return error;
-}
-
-async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
-async function readJsonIfExists(path) {
-  try {
-    return await readJson(path);
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-async function writeJsonAtomic(path, value) {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
-  await rename(temporary, path);
 }
 
 export const INSTITUTIONAL_ACTIONS = ACTIONS;

@@ -41,9 +41,14 @@ interface IBankPolicyEngine {
 
     function noteCollateralReleased(address account, address collateralAsset, uint256 amount) external;
 
-    function noteDebtBorrowed(address account, address debtAsset, uint256 amount) external;
+    function noteOriginationPrincipalBorrowed(address account, address debtAsset, uint256 amount) external;
 
-    function noteDebtRepaid(address account, address debtAsset, uint256 amount) external;
+    function noteOriginationPrincipalRepaid(address account, address debtAsset, uint256 amount) external;
 
-    function noteDebtWrittenOff(address account, address debtAsset, uint256 amount) external;
+    function noteDebtDefaulted(
+        address account,
+        address debtAsset,
+        uint256 originationPrincipalWrittenOff,
+        uint256 totalDebtWrittenOff
+    ) external;
 }

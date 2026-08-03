@@ -1,14 +1,27 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { ethers } from "ethers";
-import { defaultBesuRuntimeEnv, loadArtifact, providerForRpc, signerForRpc } from "../ops/besu/runtime.mjs";
+import { readJson, writeJsonAtomic } from "../../services/shared/json-file.mjs";
+import { createTransactionWaiter } from "../../services/shared/transaction-receipt.mjs";
+import {
+  defaultBesuRuntimeEnv,
+  loadArtifact,
+  providerForRpc,
+  readLatestBlock,
+  signerForRpc,
+} from "../ops/besu/runtime.mjs";
 import { AttestorJournal } from "../../services/institutional-relay/attestor-journal.mjs";
 import { CheckpointAttestor } from "../../services/institutional-relay/checkpoint-attestor.mjs";
 import { createAttestorHttpServer } from "../../services/institutional-relay/attestor-http-server.mjs";
 import { createEthersLaneWorkflow } from "../../services/institutional-relay/ethers-lane-workflow.mjs";
 import { InstitutionalRelayEngine } from "../../services/institutional-relay/relay-engine.mjs";
 import { RelayJournal } from "../../services/institutional-relay/relay-journal.mjs";
+import { summarizeBenchmark } from "./institutional-integration/benchmark.mjs";
+import {
+  collectValidatorAvailabilityEvidence,
+} from "./institutional-integration/validator-availability-evidence.mjs";
+import { createLiveClientProofCollector } from "./live-client-proof-evidence.mjs";
 
 const DEPLOYMENT_PATH = resolve(
   process.cwd(),
@@ -35,18 +48,25 @@ const COLLATERAL_AMOUNT = ethers.parseEther("600");
 const BORROW_AMOUNT = ethers.parseEther("200");
 const RETURN_AMOUNT = ethers.parseEther("200");
 const CHAOS_AMOUNT = ethers.parseEther("5");
-const RESTART_AMOUNT = ethers.parseEther("7");
+const ENGINE_RELOAD_AMOUNT = ethers.parseEther("7");
 const MINIMUM_POOL_LIQUIDITY = ethers.parseEther("100000");
+const waitForTx = createTransactionWaiter({
+  timeoutMs: TX_TIMEOUT_MS,
+  timeoutMessage: ({ label, hash }) => `${label} timed out; tx=${hash}`,
+  failureMessage: ({ label, hash }) => `${label} failed; tx=${hash}`,
+});
 
 defaultBesuRuntimeEnv();
 
 let attestorCluster;
+let activeRelay;
 let report = {
-  version: "institutional-integration-report-v1",
+  version: "institutional-integration-report-v3",
   status: "running",
   startedAt: new Date().toISOString(),
   tests: {},
 };
+const liveClientProofCollector = createLiveClientProofCollector();
 
 async function main() {
   const manifest = await readJson(DEPLOYMENT_PATH);
@@ -80,17 +100,24 @@ async function main() {
     chainB: await chainSnapshot(providers.B, manifest.chains.B),
     checkpointModel: manifest.securityProfile.checkpointModel,
     finalityDepth: manifest.securityProfile.finalityDepth,
-    ...(await validatorEvidence()),
+    ...(await collectValidatorAvailabilityEvidence()),
   };
 
   attestorCluster = await startAttestorCluster({ manifest, secrets, providers, runDirectory });
-  let relay = await createRelayRuntime({ manifest, relaySigners, endpoints: attestorCluster.endpoints, runDirectory });
+  let relay = await createRelayRuntime({
+    manifest,
+    relaySigners,
+    endpoints: attestorCluster.endpoints,
+    runDirectory,
+    proofObserver: liveClientProofCollector.observeAcceptedProof,
+  });
+  activeRelay = relay;
 
   await ensureAllowance(
     contracts.canonicalTokenA,
     await contracts.escrowVaultA.getAddress(),
     await users.A.getAddress(),
-    BRIDGE_AMOUNT + BigInt(BENCHMARK_MESSAGES) * BENCHMARK_AMOUNT + CHAOS_AMOUNT + RESTART_AMOUNT,
+    BRIDGE_AMOUNT + BigInt(BENCHMARK_MESSAGES) * BENCHMARK_AMOUNT + CHAOS_AMOUNT + ENGINE_RELOAD_AMOUNT,
   );
   await ensurePoolLiquidity(contracts, owners.B);
 
@@ -127,7 +154,10 @@ async function main() {
     sourceTransaction: primaryMessage.sourceTransaction,
     voucherDelta: primaryMessage.destinationBalanceDelta,
   };
-  report.benchmark = summarizeBenchmark(benchmarkSamples);
+  report.benchmark = summarizeBenchmark(benchmarkSamples, {
+    requiredSamples: BENCHMARK_REQUIRED_SAMPLES,
+    targetP95Ms: BENCHMARK_TARGET_P95_MS,
+  });
 
   report.tests.lending = await executeLending({ contracts, user: users.B });
 
@@ -167,7 +197,7 @@ async function main() {
     cluster: attestorCluster,
   });
 
-  const restartResult = await testRelayerRestart({
+  const reloadResult = await testEngineReloadRecovery({
     manifest,
     contracts,
     users,
@@ -175,22 +205,28 @@ async function main() {
     relaySigners,
     endpoints: attestorCluster.endpoints,
     runDirectory,
+    proofObserver: liveClientProofCollector.observeAcceptedProof,
   });
-  relay = restartResult.relay;
-  report.tests.relayerRestart = restartResult.result;
+  relay = reloadResult.relay;
+  activeRelay = relay;
+  report.tests.engineReloadRecovery = reloadResult.result;
 
   if (ENFORCE_BENCHMARK && report.benchmark.status !== "passed") {
     throw new Error(
       `Benchmark acceptance failed: status=${report.benchmark.status}, ` +
       `samples=${report.benchmark.sampleCount}/${report.benchmark.requiredSamples}, ` +
-      `proof-and-acknowledgement p95=${report.benchmark.postSourceFinality.p95Ms}ms/${report.benchmark.targetP95Ms}ms`,
+      `post-inclusion-to-completion p95=${report.benchmark.postSourceInclusionToCompletion.p95Ms}ms/${report.benchmark.targetP95Ms}ms`,
     );
   }
 
-  report.status = "passed";
-  report.finishedAt = new Date().toISOString();
   report.environment.chainAAfter = await chainSnapshot(providers.A, manifest.chains.A);
   report.environment.chainBAfter = await chainSnapshot(providers.B, manifest.chains.B);
+  report.liveClientProofValidation = liveClientProofCollector.build([
+    report.environment.chainAAfter,
+    report.environment.chainBAfter,
+  ]);
+  report.status = "passed";
+  report.finishedAt = new Date().toISOString();
   await writeJsonAtomic(REPORT_PATH, report);
   console.log(`[institutional:integration] PASS report=${REPORT_PATH}`);
 }
@@ -230,14 +266,27 @@ async function startAttestorCluster({ manifest, secrets, providers, runDirectory
     [manifest.chains.A.chainId]: { provider: providers.A, finalityDepth },
     [manifest.chains.B.chainId]: { provider: providers.B, finalityDepth },
   };
+  const allowedDomains = allowedCheckpointDomains(manifest);
   const nodes = [];
-  for (const entry of secrets.attestors) {
-    const journal = await AttestorJournal.open(resolve(runDirectory, `attestor-${entry.address}.json`));
-    const attestor = new CheckpointAttestor({ wallet: new ethers.Wallet(entry.privateKey), sources, journal });
-    const server = createAttestorHttpServer({ attestor, token, logger: quietLogger });
-    await listen(server, 0);
-    const port = server.address().port;
-    nodes.push({ server, port, running: true, signer: attestor.signerAddress });
+  try {
+    for (const entry of secrets.attestors) {
+      const journal = await AttestorJournal.open(resolve(runDirectory, `attestor-${entry.address}.json`));
+      const attestor = new CheckpointAttestor({
+        wallet: new ethers.Wallet(entry.privateKey),
+        sources,
+        journal,
+        allowedDomains,
+      });
+      const server = createAttestorHttpServer({ attestor, token, logger: quietLogger });
+      const node = { server, journal, port: null, running: false, signer: attestor.signerAddress };
+      nodes.push(node);
+      await listen(server, 0);
+      node.port = server.address().port;
+      node.running = true;
+    }
+  } catch (error) {
+    await closeAttestorNodes(nodes);
+    throw error;
   }
   const endpoints = nodes.map((node) => ({ url: `http://127.0.0.1:${node.port}`, token }));
   console.log(`[institutional:integration] started ${nodes.length} local attestors`);
@@ -259,13 +308,28 @@ async function startAttestorCluster({ manifest, secrets, providers, runDirectory
       }
     },
     async close() {
-      await Promise.all(nodes.filter((node) => node.running).map((node) => close(node.server)));
-      for (const node of nodes) node.running = false;
+      await closeAttestorNodes(nodes);
     },
   };
 }
 
-async function createRelayRuntime({ manifest, relaySigners, endpoints, runDirectory, journalPath }) {
+async function closeAttestorNodes(nodes) {
+  const results = await Promise.allSettled(nodes.flatMap((node) => [
+    ...(node.running ? [close(node.server).finally(() => { node.running = false; })] : []),
+    ...(typeof node.journal?.close === "function" ? [node.journal.close()] : []),
+  ]));
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure) throw failure.reason;
+}
+
+async function createRelayRuntime({
+  manifest,
+  relaySigners,
+  endpoints,
+  runDirectory,
+  journalPath,
+  proofObserver,
+}) {
   const finalityDepth = Number(manifest.securityProfile.finalityDepth);
   const laneConfig = (sourceKey, destinationKey) => ({
     source: endpointConfig(manifest, sourceKey, finalityDepth),
@@ -276,6 +340,7 @@ async function createRelayRuntime({ manifest, relaySigners, endpoints, runDirect
     pollIntervalMs: 500,
     scanRange: 500,
     gasLimit: "5000000",
+    proofObserver,
   });
   const workflowAB = await createEthersLaneWorkflow(laneConfig("A", "B"), {
     sourceSigner: relaySigners.A,
@@ -287,17 +352,31 @@ async function createRelayRuntime({ manifest, relaySigners, endpoints, runDirect
   });
   const path = journalPath || resolve(runDirectory, "relay-journal.json");
   const journal = await RelayJournal.open(path);
-  const engine = new InstitutionalRelayEngine({
-    journal,
-    lanes: [
-      { id: "A-to-B", startBlock: Number(manifest.chains.A.deploymentBlock), workflow: workflowAB },
-      { id: "B-to-A", startBlock: Number(manifest.chains.B.deploymentBlock), workflow: workflowBA },
-    ],
-    leaseMs: 15_000,
-    batchSize: 20,
-    retry: { initialMs: 250, maximumMs: 1_000, jitterRatio: 0 },
-  });
-  return { engine, journal, journalPath: path };
+  try {
+    const engine = new InstitutionalRelayEngine({
+      journal,
+      lanes: [
+        { id: "A-to-B", startBlock: Number(manifest.chains.A.deploymentBlock), workflow: workflowAB },
+        { id: "B-to-A", startBlock: Number(manifest.chains.B.deploymentBlock), workflow: workflowBA },
+      ],
+      leaseMs: 15_000,
+      batchSize: 20,
+      retry: { baseMs: 250, maxMs: 1_000, jitterRatio: 0 },
+    });
+    let closePromise = null;
+    return {
+      engine,
+      journal,
+      journalPath: path,
+      close() {
+        closePromise ||= journal.close();
+        return closePromise;
+      },
+    };
+  } catch (error) {
+    await journal.close();
+    throw error;
+  }
 }
 
 function endpointConfig(manifest, key, finalityDepth) {
@@ -309,6 +388,13 @@ function endpointConfig(manifest, key, finalityDepth) {
     deploymentBlock: chain.deploymentBlock,
     finalityDepth,
   };
+}
+
+function allowedCheckpointDomains(manifest) {
+  return ["A", "B"].map((key) => ({
+    destinationChainId: manifest.chains[key].chainId,
+    checkpointClient: manifest.chains[key].contracts.checkpointClient.address,
+  }));
 }
 
 async function executeBridge({
@@ -324,13 +410,13 @@ async function executeBridge({
   send,
 }) {
   const before = BigInt(await destinationToken.balanceOf(destinationAccount));
-  const sourceBlock = await sourceApp.runner.provider.getBlock("latest");
+  const sourceBlock = await readLatestBlock(sourceApp.runner.provider, { label: `${label} source block` });
   const timeout = BigInt(sourceBlock.timestamp) + 30n * 60n;
   const reference = ethers.keccak256(ethers.toUtf8Bytes(`${label}:${Date.now()}:${randomBytes(8).toString("hex")}`));
   const startedAt = Date.now();
   const transaction = await send(timeout, reference);
   const receipt = await waitForTx(transaction, `${label} source transaction`);
-  const sourceFinalizedAt = Date.now();
+  const sourceIncludedAt = Date.now();
   const messageId = findEventArgument(sourceApp, receipt, "CollateralMessageSent", "messageId");
   if (!messageId) throw new Error(`${label} did not emit CollateralMessageSent`);
   await runUntil(relay, () => sourceGateway.messageCompleted(messageId), `${label} acknowledgement`);
@@ -339,8 +425,8 @@ async function executeBridge({
   if (delta !== amount) throw new Error(`${label} destination balance delta ${delta} does not equal ${amount}`);
   const job = relay.journal.snapshot().jobs[messageId];
   const completedAt = Date.now();
-  const sourceInclusionMs = sourceFinalizedAt - startedAt;
-  const postSourceFinalityMs = completedAt - sourceFinalizedAt;
+  const sourceInclusionMs = sourceIncludedAt - startedAt;
+  const postSourceInclusionToCompletionMs = completedAt - sourceIncludedAt;
   const endToEndMs = completedAt - startedAt;
   console.log(`[institutional:integration] ${direction} ${label} completed in ${endToEndMs}ms`);
   return {
@@ -352,7 +438,8 @@ async function executeBridge({
     sourceBlock: receipt.blockNumber,
     destinationBalanceDelta: delta.toString(),
     sourceInclusionMs,
-    postSourceFinalityMs,
+    sourceIncludedAt: new Date(sourceIncludedAt).toISOString(),
+    postSourceInclusionToCompletionMs,
     endToEndMs,
     relayTransactions: job?.transactions || {},
     relayHistory: job?.history || [],
@@ -368,7 +455,7 @@ async function executeLending({ contracts, user }) {
   const deposit = await contracts.lendingPoolBUser.depositCollateral(COLLATERAL_AMOUNT, txOptions());
   const depositReceipt = await waitForTx(deposit, "deposit voucher collateral");
   const borrow = await contracts.lendingPoolBUser.borrow(BORROW_AMOUNT, txOptions());
-  const borrowReceipt = await waitForTx(borrow, "borrow Bank B credit");
+  const borrowReceipt = await waitForTx(borrow, "borrow bCASH from Bank B");
   const collateralAfter = BigInt(await contracts.lendingPoolBUser.collateralBalance(userAddress));
   const debtBalanceAfter = BigInt(await contracts.debtTokenBUser.balanceOf(userAddress));
   if (collateralAfter - collateralBefore !== COLLATERAL_AMOUNT) throw new Error("Collateral accounting delta is incorrect");
@@ -398,7 +485,9 @@ async function testQuorumOutage({ manifest, contracts, users, relay, cluster }) 
   await cluster.stop([2, 3]);
   const userB = await users.B.getAddress();
   const before = BigInt(await contracts.voucherTokenB.balanceOf(userB));
-  const sourceBlock = await contracts.collateralAppA.runner.provider.getBlock("latest");
+  const sourceBlock = await readLatestBlock(contracts.collateralAppA.runner.provider, {
+    label: "quorum outage source block",
+  });
   const timeout = BigInt(sourceBlock.timestamp) + 30n * 60n;
   const transaction = await contracts.collateralAppA.lockAndMint(
     manifest.chains.B.chainId,
@@ -423,7 +512,7 @@ async function testQuorumOutage({ manifest, contracts, users, relay, cluster }) 
   await cluster.start([2]);
   await runUntil(relay, () => contracts.gatewayA.messageCompleted(messageId), "quorum recovery acknowledgement");
   const after = BigInt(await contracts.voucherTokenB.balanceOf(userB));
-  if (after - before !== CHAOS_AMOUNT) throw new Error("Recovered quorum did not mint exactly once");
+  if (after - before !== CHAOS_AMOUNT) throw new Error("Recovered quorum did not preserve one expected mint effect");
   await cluster.start([3]);
   return {
     status: "passed",
@@ -435,7 +524,7 @@ async function testQuorumOutage({ manifest, contracts, users, relay, cluster }) 
   };
 }
 
-async function testRelayerRestart({
+async function testEngineReloadRecovery({
   manifest,
   contracts,
   users,
@@ -443,45 +532,50 @@ async function testRelayerRestart({
   relaySigners,
   endpoints,
   runDirectory,
+  proofObserver,
 }) {
   const userB = await users.B.getAddress();
   const before = BigInt(await contracts.voucherTokenB.balanceOf(userB));
-  const block = await contracts.collateralAppA.runner.provider.getBlock("latest");
+  const block = await readLatestBlock(contracts.collateralAppA.runner.provider, {
+    label: "relay engine reload source block",
+  });
   const transaction = await contracts.collateralAppA.lockAndMint(
     manifest.chains.B.chainId,
     userB,
-    RESTART_AMOUNT,
+    ENGINE_RELOAD_AMOUNT,
     BigInt(block.timestamp) + 30n * 60n,
-    ethers.keccak256(ethers.toUtf8Bytes(`relayer-restart:${Date.now()}`)),
+    ethers.keccak256(ethers.toUtf8Bytes(`relay-engine-reload:${Date.now()}`)),
     txOptions(),
   );
-  const receipt = await waitForTx(transaction, "relayer restart source transaction");
+  const receipt = await waitForTx(transaction, "relay engine reload source transaction");
   const messageId = findEventArgument(contracts.collateralAppA, receipt, "CollateralMessageSent", "messageId");
   await runUntil(
     relay,
     async () => relay.journal.snapshot().jobs[messageId]?.state === "source_checkpointed",
-    "source checkpoint before relayer restart",
+    "source checkpoint before relay engine reload",
   );
-  const restarted = await createRelayRuntime({
+  await relay.close();
+  const reloaded = await createRelayRuntime({
     manifest,
     relaySigners,
     endpoints,
     runDirectory,
     journalPath: relay.journalPath,
+    proofObserver,
   });
-  await runUntil(restarted, () => contracts.gatewayA.messageCompleted(messageId), "relayer restart recovery");
+  await runUntil(reloaded, () => contracts.gatewayA.messageCompleted(messageId), "relay engine reload recovery");
   const after = BigInt(await contracts.voucherTokenB.balanceOf(userB));
-  if (after - before !== RESTART_AMOUNT) throw new Error("Restarted relayer did not mint exactly once");
-  await restarted.engine.tick();
-  await restarted.engine.tick();
+  if (after - before !== ENGINE_RELOAD_AMOUNT) throw new Error("Reloaded relay engine did not preserve one expected mint effect");
+  await reloaded.engine.tick();
+  await reloaded.engine.tick();
   const afterReplay = BigInt(await contracts.voucherTokenB.balanceOf(userB));
   if (afterReplay !== after) throw new Error("Repeated relay ticks duplicated destination execution");
   return {
-    relay: restarted,
+    relay: reloaded,
     result: {
       status: "passed",
       messageId,
-      restartState: "source_checkpointed",
+      reloadState: "source_checkpointed",
       destinationDelta: (after - before).toString(),
       duplicateDeltaAfterRepeatedTicks: (afterReplay - after).toString(),
     },
@@ -503,47 +597,16 @@ async function runUntil(relay, predicate, label) {
   throw new Error(`${label} did not complete within ${FLOW_TIMEOUT_MS}ms`);
 }
 
-function summarizeBenchmark(samples) {
-  const endToEnd = samples.map((sample) => sample.endToEndMs).sort((a, b) => a - b);
-  const sourceInclusion = samples.map((sample) => sample.sourceInclusionMs).sort((a, b) => a - b);
-  const postSourceFinality = samples.map((sample) => sample.postSourceFinalityMs).sort((a, b) => a - b);
-  const enoughSamples = samples.length >= BENCHMARK_REQUIRED_SAMPLES;
-  const meetsLatency = percentile(postSourceFinality, 0.95) <= BENCHMARK_TARGET_P95_MS;
-  return {
-    status: !enoughSamples ? "insufficient-samples" : meetsLatency ? "passed" : "target-not-met",
-    definition: "Full proof-and-acknowledgement cycle after source transaction inclusion",
-    acceptanceProfile:
-      "Local Docker QBFT profile: 2s block period, finality depth 2, source checkpoint, destination proof execution, destination checkpoint, and source acknowledgement.",
-    sampleCount: endToEnd.length,
-    requiredSamples: BENCHMARK_REQUIRED_SAMPLES,
-    targetP95Ms: BENCHMARK_TARGET_P95_MS,
-    samples,
-    sourceInclusion: summarizeDurations(sourceInclusion),
-    postSourceFinality: summarizeDurations(postSourceFinality),
-    endToEnd: summarizeDurations(endToEnd),
-  };
-}
-
-function summarizeDurations(values) {
-  return {
-    minMs: values[0],
-    maxMs: values.at(-1),
-    meanMs: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length),
-    p50Ms: percentile(values, 0.5),
-    p95Ms: percentile(values, 0.95),
-  };
-}
-
-function percentile(sorted, quantile) {
-  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * quantile) - 1)];
-}
-
 async function chainSnapshot(provider, chain) {
-  const network = await provider.getNetwork();
+  const [network, clientVersion] = await Promise.all([
+    provider.getNetwork(),
+    provider.send("web3_clientVersion", []),
+  ]);
   return {
     chainId: network.chainId.toString(),
     blockNumber: await provider.getBlockNumber(),
     rpc: chain.rpc,
+    clientVersion,
   };
 }
 
@@ -559,28 +622,12 @@ function findEventArgument(contract, receipt, eventName, argument) {
   return null;
 }
 
-async function waitForTx(transaction, label) {
-  let timer;
-  try {
-    const receipt = await Promise.race([
-      transaction.wait(),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out; tx=${transaction.hash}`)), TX_TIMEOUT_MS);
-      }),
-    ]);
-    if (!receipt || receipt.status !== 1) throw new Error(`${label} failed; tx=${transaction.hash}`);
-    return receipt;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function txOptions() {
   return { gasLimit: 5_000_000n };
 }
 
 function validateInputs(manifest, secrets) {
-  if (manifest.version !== "institutional-deployment-v1" || manifest.status !== "ready") {
+  if (manifest.version !== "institutional-deployment-v2" || manifest.status !== "ready") {
     throw new Error(`Run npm run institutional:deploy before integration tests`);
   }
   if (secrets.version !== "institutional-attestor-secrets-v1" || secrets.attestors?.length !== 4) {
@@ -613,58 +660,6 @@ function sleep(milliseconds) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
 
-async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
-async function validatorEvidence() {
-  const networkRoot = resolve(process.cwd(), process.env.BESU_NETWORK_ROOT || "networks/besu");
-  const faultReportPath = resolve(
-    process.cwd(),
-    process.env.BESU_QBFT_FAULT_REPORT_PATH || ".runtime/besu-qbft-fault-report.json",
-  );
-  const scaffold = await readJsonIfExists(resolve(networkRoot, "scaffold.json"));
-  const faultReport = await readJsonIfExists(faultReportPath);
-  const validatorCount = Number(scaffold?.validatorCount || 1);
-  return {
-    validatorTopology: {
-      validatorCountPerChain: validatorCount,
-      toleratedFaults: Number(scaffold?.byzantineFaultTolerance || 0),
-      dockerImage: scaffold?.dockerImage || "unknown",
-    },
-    validatorFaultTest: faultReport?.status === "passed"
-      ? {
-          status: "passed",
-          report: faultReportPath,
-          faultedValidators: faultReport.faults,
-          duringFault: faultReport.duringFault,
-          afterRecovery: faultReport.afterRecovery,
-        }
-      : {
-          status: "not-run",
-          reason: validatorCount < 4
-            ? "The active profile has fewer than four validators and cannot evidence QBFT fault tolerance."
-            : "Run the QBFT fault test and provide BESU_QBFT_FAULT_REPORT_PATH before claiming validator-fault evidence.",
-        },
-  };
-}
-
-async function readJsonIfExists(path) {
-  try {
-    return await readJson(path);
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-async function writeJsonAtomic(path, value) {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(temporary, path);
-}
-
 const quietLogger = { info() {}, error() {} };
 
 main()
@@ -677,5 +672,15 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await attestorCluster?.close().catch(() => {});
+    const cleanupResults = await Promise.allSettled([
+      activeRelay?.close(),
+      attestorCluster?.close(),
+    ]);
+    const cleanupFailures = cleanupResults
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    if (cleanupFailures.length > 0) {
+      console.error(`[institutional:integration] cleanup failed: ${cleanupFailures.map((error) => error?.message || error).join("; ")}`);
+      process.exitCode = 1;
+    }
   });

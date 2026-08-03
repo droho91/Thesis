@@ -1,49 +1,43 @@
-const LENDING_MODES = Object.freeze({
-  deposit: {
-    label: "Voucher amount",
-    unit: "vA",
-    limitLabel: "Available voucher",
-    limit: (status) => amount(status?.balances?.voucherAvailable),
-    button: "Activate collateral",
-    icon: "archive",
-  },
-  borrow: {
-    label: "Credit amount",
-    unit: "bCASH",
-    limitLabel: "Available credit",
-    limit: (status) => amount(status?.risk?.availableBorrow),
-    button: "Borrow from Bank B",
-    icon: "banknote",
-  },
-  repay: {
-    label: "Repayment amount",
-    unit: "bCASH",
-    limitLabel: "Repayable from wallet",
-    limit: (status) => Math.min(amount(status?.balances?.outstandingDebt), amount(status?.balances?.creditAvailable)),
-    button: "Repay credit",
-    icon: "hand-coins",
-  },
-  withdraw: {
-    label: "Collateral amount",
-    unit: "vA",
-    limitLabel: "Withdrawable collateral",
-    limit: (status) => amount(status?.balances?.outstandingDebt) > 0 ? 0 : amount(status?.balances?.activeCollateral),
-    button: "Withdraw collateral",
-    icon: "download",
-  },
-});
+import {
+  createActionRequestStore,
+  requestOutcomeUncertain,
+} from "./action-request.js";
+import {
+  LENDING_MODES,
+  healthPresentation,
+  isSmallBalance,
+  lendingSubmissionAction,
+  tokenUnits,
+  validateAction,
+} from "./lending-domain.js";
+import {
+  compactAmount,
+  evidenceAppliesToCurrentSource,
+  evidenceReportPassed,
+  evidenceSourceStateLabel,
+  evidenceStepLabel,
+  formatBps,
+  formatDurationMs,
+  formatInteger,
+  formatTimestamp,
+  shortHash,
+  titleCase,
+} from "./ui-presentation.js";
+import {
+  ACTION_TAB,
+  STAGE_ORDER,
+  actionIcon,
+  actionStage,
+  operationName,
+  operationProgressCopy,
+  recommendationFor,
+} from "./workflow-presentation.js";
+import {
+  minTokenAmount,
+  normalizeTokenAmount,
+} from "./token-amount.js";
+import { nextTabIndex } from "./tab-keyboard.js";
 
-const SMALL_BALANCE_THRESHOLD = 0.01;
-const STAGE_ORDER = ["prepare", "transfer", "lend", "manage", "return", "review"];
-const ACTION_TAB = Object.freeze({
-  bridge: "transfer",
-  deposit: "lending",
-  borrow: "lending",
-  repay: "lending",
-  repayAll: "lending",
-  withdraw: "lending",
-  return: "return",
-});
 const LINKY_IMAGES = Object.freeze({
   guide: "/assets/linky/generated/states/linky-guide.png",
   processing: "/assets/linky/generated/states/linky-processing.png",
@@ -52,11 +46,33 @@ const LINKY_IMAGES = Object.freeze({
   neutral: "/assets/linky/generated/states/linky-neutral.png",
 });
 
+const RUNTIME_STATUS_FIELDS = Object.freeze([
+  "identityAStatus",
+  "identityBStatus",
+  "identityGovernance",
+  "identityQuorum",
+]);
+const STATUS_TONE_CLASSES = Object.freeze([
+  "is-verified",
+  "is-review",
+  "is-warning",
+  "is-error",
+  "is-ready",
+]);
+
 let currentStatus = null;
-let currentTab = "transfer";
+let currentEvidence = null;
+let currentTab = "identity";
 let lendingMode = "deposit";
 let busyAction = null;
 let refreshTimer = null;
+let csrfToken = null;
+let csrfBootstrapPromise = null;
+const disclosureHideTimers = new WeakMap();
+const actionRequests = createActionRequestStore({
+  getStorage: () => window.sessionStorage,
+  randomId: () => window.crypto?.randomUUID?.() || `request-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+});
 
 initialize();
 
@@ -65,28 +81,78 @@ async function initialize() {
   bindNavigation();
   bindForms();
   bindControls();
-  openTab(new URLSearchParams(window.location.search).get("tab") || "transfer");
-  await refreshStatus({ announceError: true });
+  bindStatusControls();
+  openTab(new URLSearchParams(window.location.search).get("tab") || "identity");
+  await Promise.all([
+    refreshStatus({ announceError: true }),
+    refreshFormalEvidence(),
+    csrfTokenForAction().catch((error) => {
+      toast(`Action security unavailable: ${error.message}`, "error");
+      return null;
+    }),
+  ]);
   scheduleRefresh();
 }
 
 function bindNavigation() {
+  const workflowTablist = document.querySelector(".journey[role='tablist']");
+  bindRovingTablist(workflowTablist, ".journey-step[role='tab']", activateWorkflowTab);
+  const lendingTablist = document.querySelector(".segmented-control[role='tablist']");
+  bindRovingTablist(lendingTablist, "[data-lending-mode][role='tab']", activateLendingTab);
+
   document.querySelectorAll("[data-tab]").forEach((button) => {
-    button.addEventListener("click", () => openTab(button.dataset.tab));
+    button.addEventListener("click", () => openTab(button.dataset.tab, { focusTab: true }));
   });
-  document.querySelectorAll("[data-tab-target]").forEach((button) => {
-    button.addEventListener("click", () => openTab(button.dataset.tabTarget));
+  document.querySelectorAll("[data-tab-target]:not([role='tab'])").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.lendingModeTarget) {
+        setLendingMode(button.dataset.lendingModeTarget, { primeAmount: true });
+      }
+      openTab(button.dataset.tabTarget, { focusTab: true });
+    });
   });
-  document.querySelectorAll("[data-lending-mode]").forEach((button) => {
-    button.addEventListener("click", () => setLendingMode(button.dataset.lendingMode, { primeAmount: true }));
+}
+
+function bindRovingTablist(tablist, tabSelector, activate) {
+  if (!tablist) return;
+  tablist.querySelectorAll(tabSelector).forEach((tab) => {
+    tab.addEventListener("click", () => activate(tab));
   });
+  tablist.addEventListener("keydown", (event) => {
+    const current = event.target.closest?.(tabSelector);
+    if (!current || !tablist.contains(current)) return;
+    const tabs = [...tablist.querySelectorAll(tabSelector)].filter((tab) => !tab.disabled);
+    const currentIndex = tabs.indexOf(current);
+    if (currentIndex < 0) return;
+    const targetIndex = nextTabIndex(event.key, currentIndex, tabs.length);
+    if (targetIndex == null) return;
+    event.preventDefault();
+    activate(tabs[targetIndex], { focus: true });
+  });
+}
+
+function activateWorkflowTab(tab, { focus = false } = {}) {
+  if (tab.disabled) return;
+  if (tab.dataset.lendingModeTarget) {
+    setLendingMode(tab.dataset.lendingModeTarget, { primeAmount: true });
+  }
+  openTab(tab.dataset.tabTarget);
+  if (focus) tab.focus({ preventScroll: true });
+}
+
+function activateLendingTab(tab, { focus = false } = {}) {
+  if (tab.disabled) return;
+  setLendingMode(tab.dataset.lendingMode, { primeAmount: true });
+  if (focus) tab.focus({ preventScroll: true });
 }
 
 function bindForms() {
   document.querySelectorAll("[data-operation-form]").forEach((form) => {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const action = form === element("lendingForm") ? lendingSubmissionAction() : form.dataset.operationForm;
+      const action = form === element("lendingForm")
+        ? lendingSubmissionAction(lendingMode, currentStatus)
+        : form.dataset.operationForm;
       const input = form.querySelector("input[name='amount']");
       await submitAction(action, input?.value, form);
     });
@@ -94,13 +160,19 @@ function bindForms() {
   document.querySelectorAll(".amount-input input").forEach((input) => {
     input.addEventListener("input", () => {
       input.dataset.dirty = "true";
+      if (input.getAttribute("aria-invalid") === "true") {
+        setFormMessage(input.closest("form"), "");
+      }
       renderAvailability();
     });
   });
 }
 
 function bindControls() {
-  element("refreshButton").addEventListener("click", () => refreshStatus({ announceError: true }));
+  element("refreshButton").addEventListener("click", () => Promise.all([
+    refreshStatus({ announceError: true }),
+    refreshFormalEvidence({ announceError: true }),
+  ]));
   element("lendingMaxButton").addEventListener("click", () => {
     setInputAmount(element("lendingAmount"), LENDING_MODES[lendingMode].limit(currentStatus), true);
     renderAvailability();
@@ -108,7 +180,7 @@ function bindControls() {
   document.querySelectorAll("[data-fill]").forEach((button) => {
     button.addEventListener("click", () => {
       const input = element(button.dataset.input);
-      setInputAmount(input, amount(currentStatus?.balances?.[button.dataset.fill]), true);
+      setInputAmount(input, currentStatus?.balances?.[button.dataset.fill] || "0", true);
       renderAvailability();
     });
   });
@@ -119,18 +191,111 @@ function bindControls() {
   element("copyEvidenceButton").addEventListener("click", copyLatestEvidence);
 }
 
+function bindStatusControls() {
+  const runtimeButton = element("runtimeStatus");
+  const runtimeControl = runtimeButton.closest(".runtime-status-control");
+  runtimeButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const open = !runtimeControl.classList.contains("is-open");
+    setRuntimePopoverOpen(open, { focus: open });
+  });
+  document.querySelectorAll("[data-status-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const card = button.closest(".readiness-card");
+      const open = !card.classList.contains("is-status-open");
+      closeStatusDetails({ except: open ? button : null });
+      setStatusDetailOpen(button, open);
+    });
+  });
+  document.addEventListener("click", (event) => {
+    if (!runtimeControl.contains(event.target)) {
+      setRuntimePopoverOpen(false);
+    }
+    if (!event.target.closest?.(".readiness-card")) closeStatusDetails();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const focusedDisclosure = document.activeElement?.matches?.("[aria-expanded='true']")
+      ? document.activeElement
+      : null;
+    const expandedStatus = document.querySelector("[data-status-toggle][aria-expanded='true']");
+    const runtimeWasOpen = runtimeButton.getAttribute("aria-expanded") === "true";
+    setRuntimePopoverOpen(false);
+    closeStatusDetails();
+    const restoreTarget = focusedDisclosure || expandedStatus || (runtimeWasOpen ? runtimeButton : null);
+    restoreTarget?.focus({ preventScroll: true });
+  });
+}
+
+function setRuntimePopoverOpen(open, { focus = false } = {}) {
+  const button = element("runtimeStatus");
+  const control = button.closest(".runtime-status-control");
+  const popover = element("runtimePopover");
+  button.setAttribute("aria-expanded", String(open));
+  setDisclosureVisibility(popover, open, 250);
+  control.classList.toggle("is-open", open);
+  if (open && focus) popover.focus({ preventScroll: true });
+}
+
+function setStatusDetailOpen(button, open) {
+  const card = button.closest(".readiness-card");
+  const detail = element(button.getAttribute("aria-controls"));
+  button.setAttribute("aria-expanded", String(open));
+  setDisclosureVisibility(detail, open, 320);
+  card.classList.toggle("is-status-open", open);
+}
+
+function closeStatusDetails({ except = null } = {}) {
+  document.querySelectorAll("[data-status-toggle][aria-expanded='true']").forEach((button) => {
+    if (button !== except) setStatusDetailOpen(button, false);
+  });
+}
+
+function setDisclosureVisibility(disclosure, visible, transitionMs) {
+  if (!disclosure) return;
+  const pendingHide = disclosureHideTimers.get(disclosure);
+  if (pendingHide) clearTimeout(pendingHide);
+  disclosureHideTimers.delete(disclosure);
+  disclosure.toggleAttribute("inert", !visible);
+  if (visible) {
+    disclosure.hidden = false;
+    return;
+  }
+  const timer = setTimeout(() => {
+    disclosure.hidden = true;
+    disclosureHideTimers.delete(disclosure);
+  }, transitionMs);
+  disclosureHideTimers.set(disclosure, timer);
+}
+
 async function refreshStatus({ announceError = false } = {}) {
   const refreshButton = element("refreshButton");
   refreshButton.classList.add("is-spinning");
+  refreshButton.setAttribute("aria-busy", "true");
+  setSemanticDisabled(refreshButton, true);
   try {
     const status = await requestJson("/api/status", { timeoutMs: 15_000 });
     currentStatus = status;
     renderStatus(status);
   } catch (error) {
+    currentStatus = null;
     renderRuntimeFailure(error.message);
     if (announceError) toast(error.message, "error");
   } finally {
     refreshButton.classList.remove("is-spinning");
+    refreshButton.setAttribute("aria-busy", "false");
+    setSemanticDisabled(refreshButton, false);
+  }
+}
+
+async function refreshFormalEvidence({ announceError = false } = {}) {
+  try {
+    currentEvidence = await requestJson("/api/evidence", { timeoutMs: 10_000 });
+    renderFormalEvidence(currentEvidence);
+  } catch (error) {
+    currentEvidence = { available: false, status: "unavailable", message: error.message };
+    renderFormalEvidence(currentEvidence);
+    if (announceError) toast(`Evidence report: ${error.message}`, "error");
   }
 }
 
@@ -146,28 +311,34 @@ async function submitAction(action, requestedAmount, form) {
   if (busyAction || currentStatus?.controller?.busy) {
     return setFormMessage(form, "Another institutional operation is still settling.", "error");
   }
-  const validation = validateAction(action, requestedAmount);
+  const validation = validateAction(action, requestedAmount, currentStatus);
   if (!validation.ok) return setFormMessage(form, validation.message, "error");
 
+  let request;
+  try {
+    request = actionRequests.get(action, validation.value);
+  } catch (error) {
+    return setFormMessage(form, error.message, "error");
+  }
+
   busyAction = action;
+  let focusTabAfterCompletion = false;
   setBusy(true, action);
   setFormMessage(form, operationProgressCopy(action));
   renderLinkyProcessing(action);
-  const requestId = actionRequestId(action);
   try {
-    const payload = await requestJson("/api/action", {
-      method: "POST",
-      body: JSON.stringify({ action, amount: validation.value, requestId }),
-      timeoutMs: 240_000,
-    });
-    clearActionRequestId(action);
+    const payload = await requestActionJson(request);
+    clearActionRequest(action);
     currentStatus = payload.status;
     setFormMessage(form, `${operationName(action)} completed on-chain.`, "success");
     toast(`${operationName(action)} completed`, "success");
     renderStatus(currentStatus);
-    if (["bridge", "return"].includes(action)) openTab(action === "bridge" ? "lending" : "evidence");
+    if (["bridge", "return"].includes(action)) {
+      openTab(action === "bridge" ? "lending" : "evidence");
+      focusTabAfterCompletion = true;
+    }
   } catch (error) {
-    if (!requestOutcomeUncertain(error)) clearActionRequestId(action);
+    if (!requestOutcomeUncertain(error)) clearActionRequest(action);
     setFormMessage(form, error.message, "error");
     toast(error.message, "error");
     await refreshStatus();
@@ -175,22 +346,25 @@ async function submitAction(action, requestedAmount, form) {
     busyAction = null;
     setBusy(false);
     renderAvailability();
+    if (focusTabAfterCompletion) syncWorkflowTabState()?.focus({ preventScroll: true });
     scheduleRefresh();
   }
 }
 
 function renderStatus(status) {
   renderRuntime(status);
-  if (!status?.ready) {
+  if (!status?.runtimeReadable) {
     renderUnavailable(status);
     return;
   }
   renderOverview(status);
+  renderIdentity(status);
   renderRoute(status);
   renderLending(status);
   renderSettlement(status);
   renderEvidence(status);
   renderJourney(status);
+  renderOperationProgress(status);
   renderLinky(status);
   renderAvailability();
   primeEmptyInputs(status);
@@ -198,26 +372,50 @@ function renderStatus(status) {
 
 function renderRuntime(status) {
   const runtime = element("runtimeStatus");
-  runtime.classList.toggle("is-ready", Boolean(status?.ready));
-  runtime.classList.toggle("is-error", !status?.ready);
-  runtime.lastChild.textContent = status?.ready ? " Operational" : " Runtime unavailable";
+  runtime.classList.toggle("is-ready", Boolean(status?.laneReady));
+  runtime.classList.toggle("is-error", !status?.runtimeReadable);
+  setText("runtimeStatusLabel", status?.laneReady ? "Lane ready" : status?.runtimeReadable ? "Lane review" : "Runtime unavailable");
+  setText("runtimePopoverState", status?.runtimeReadable ? "Runtime snapshot available" : "Attention required");
+  setText(
+    "runtimeChainState",
+    status?.runtimeReadable
+      ? `${status.chainsProgressing ? "Progressing" : "Progress check pending"} · A #${formatInteger(status.chains?.A?.blockNumber)} · B #${formatInteger(status.chains?.B?.blockNumber)}`
+      : "Runtime is not readable",
+  );
+  setText(
+    "runtimeQuorumState",
+    status?.runtimeReadable
+      ? `${status.attestorQuorumReady ? "Quorum ready" : "Quorum unavailable"} · ${status.relay?.activeAttestors || 0}/${status.topology?.configuredAttestors || "-"} attestors · relay ${status.relayerHealthy ? "healthy" : "review"}`
+      : "Checkpoint services unavailable",
+  );
+  setText("runtimeGeneratedAt", status?.generatedAt ? formatTimestamp(status.generatedAt) : "Waiting");
 }
 
 function renderUnavailable(status) {
+  clearRuntimeSnapshot();
   setText("overviewCopy", status?.message || "Institutional runtime is not available.");
+  const readiness = element("readinessVerdict");
+  readiness?.classList.add("is-review");
+  setText("readinessTitle", "Institutional runtime needs attention");
+  setText("readinessCopy", status?.message || "Run the preparation command before opening operations.");
   element("linkyAction").hidden = true;
   renderLinkyState({
     image: "caution",
     title: "Institutional runtime needs attention",
     copy: status?.message || "Run the preparation command before opening operations.",
   });
-  document.querySelectorAll("form .primary-button").forEach((button) => { button.disabled = true; });
+  document.querySelectorAll("form .primary-button").forEach((button) => setSemanticDisabled(button, true));
+  renderAvailability();
 }
 
 function renderRuntimeFailure(message) {
-  renderRuntime({ ready: false });
+  const unavailable = { ready: false, laneReady: false, runtimeReadable: false, message };
+  renderRuntime(unavailable);
+  clearRuntimeSnapshot();
   setText("overviewCopy", message);
   renderLinkyState({ image: "caution", title: "Connection interrupted", copy: message });
+  document.querySelectorAll("form .primary-button").forEach((button) => setSemanticDisabled(button, true));
+  renderAvailability();
 }
 
 function renderOverview(status) {
@@ -233,13 +431,110 @@ function renderOverview(status) {
   );
 }
 
+function renderIdentity(status) {
+  const identityA = status.participants?.identity?.A;
+  const identityB = status.participants?.identity?.B;
+  const identitiesReady = Boolean(status.identitiesEligible);
+  const governanceReady = Boolean(status.governanceEnforced);
+  const quorumReady = Boolean(status.attestorQuorumReady);
+  const ready = Boolean(status.laneReady);
+  const readiness = element("readinessVerdict");
+  readiness.classList.toggle("is-review", !ready);
+  const pill = element("readinessPill");
+  pill.classList.toggle("is-warning", !ready);
+  pill.lastChild.textContent = ready ? " Current checks passed" : " Review required";
+  setText("readinessTitle", ready ? "Readiness checks passed" : "One or more checks require review");
+  setText(
+    "readinessCopy",
+    ready
+      ? "Both customers are eligible, governance is timelock-enforced, both chains are progressing, and relay plus attestor quorum signals are current."
+      : "Confirm chain progression, customer eligibility, governance enforcement, attestor quorum and relay heartbeat before transferring collateral.",
+  );
+  setText("identityAStatus", identityA?.active ? "Active credential" : titleCase(identityA?.label || "review"));
+  setText("identityBStatus", identityB?.active ? "Active credential" : titleCase(identityB?.label || "review"));
+  setStatusTone("identityAStatus", identityA?.active);
+  setStatusTone("identityBStatus", identityB?.active);
+  setText("identityAAccount", shortHash(status.participants?.sourceCustomer || "-"));
+  setText("identityBAccount", shortHash(status.participants?.destinationCustomer || "-"));
+  setText("identityGovernance", titleCase(status.governance?.mode));
+  setStatusTone("identityGovernance", governanceReady);
+  setText(
+    "identityGovernanceDelay",
+    `${status.governance?.delaySeconds?.A || "-"}s Bank A · ${status.governance?.delaySeconds?.B || "-"}s Bank B`,
+  );
+  setText(
+    "identityQuorum",
+    `${status.relay?.activeAttestors || 0} listening · ${status.topology?.attestorThreshold || "-"}-of-${status.topology?.configuredAttestors || "-"} required`,
+  );
+  setStatusTone("identityQuorum", quorumReady);
+  setText(
+    "identityValidatorTopology",
+    `${status.topology?.validatorsPerChain || "-"} validators per chain · ${status.topology?.toleratedFaultsPerChain || 0} unavailable-validator tolerance`,
+  );
+}
+
+function setStatusTone(id, verified) {
+  const button = element(id)?.closest(".status-button");
+  if (!button) return;
+  button.classList.remove(...STATUS_TONE_CLASSES);
+  button.classList.add(verified ? "is-verified" : "is-review");
+}
+
 function renderRoute(status) {
   setText("routeCanonical", `${compactAmount(status.balances.canonicalAvailable)} aBANK`);
   setText("routeVoucher", `${compactAmount(status.balances.voucherAvailable)} vA`);
   setText("bridgeAvailable", `${compactAmount(status.balances.canonicalAvailable)} aBANK`);
-  setText("relayRouteStatus", status.relay.online ? `${status.relay.activeAttestors} attestors online` : "Relay offline");
-  setText("finalityDepth", `${status.topology?.finalityDepth || 2} blocks`);
+  setText(
+    "relayRouteStatus",
+    status.relayerHealthy && status.attestorQuorumReady
+      ? `Relay healthy · ${status.relay.activeAttestors} attestors listening`
+      : "Relay or attestor quorum requires review",
+  );
+  setText("finalityDepth", `${status.topology?.finalityDepth || 2} blocks after inclusion`);
   setText("attestorQuorum", `${status.topology.attestorThreshold} of ${status.topology.configuredAttestors}`);
+}
+
+function renderOperationProgress(status) {
+  const pipeline = element("transferPipeline");
+  if (!pipeline) return;
+  const steps = [...pipeline.querySelectorAll("[data-proof-step]")];
+  steps.forEach((step) => step.classList.remove("is-active", "is-complete"));
+
+  const active = status.controller?.activeOperation;
+  const latest = status.activity?.latest;
+  const latestJob = status.relay?.latestJob;
+  if (!active || active.action !== "bridge") {
+    pipeline.classList.remove("is-processing");
+    if (latest?.action === "bridge" && latest.status === "completed") {
+      steps.forEach((step) => step.classList.add("is-complete"));
+      pipeline.setAttribute("aria-label", "Transfer proof pipeline completed");
+    } else {
+      pipeline.setAttribute("aria-label", "Transfer proof pipeline idle");
+    }
+    return;
+  }
+
+  pipeline.classList.add("is-processing");
+  const relayState = latestJob?.messageId === active.messageId ? latestJob.state : null;
+  let activeIndex = active.sourceTransaction ? 1 : 0;
+  if (relayState === "source_checkpointed") activeIndex = 2;
+  if (["received", "destination_checkpointed"].includes(relayState)) activeIndex = 3;
+  if (relayState === "completed") activeIndex = steps.length;
+  steps.forEach((step, index) => {
+    step.classList.toggle("is-complete", index < activeIndex || activeIndex === steps.length);
+    step.classList.toggle("is-active", index === activeIndex && activeIndex < steps.length);
+  });
+  const progressCopy = {
+    preflight: "Running institutional preflight",
+    prepared: "Preparing governed transfer",
+    "source-confirmation": "Confirming Bank A source transaction",
+    "attestor-quorum": relayState ? `Relay state: ${titleCase(relayState)}` : "Collecting checkpoint quorum",
+    "reconciling-transaction": "Reconciling source transaction",
+    "reconciling-relay": relayState ? `Relay state: ${titleCase(relayState)}` : "Reconciling relay result",
+  };
+  const progress = progressCopy[active.stage] || titleCase(active.stage);
+  setText("relayRouteStatus", progress);
+  pipeline.setAttribute("aria-label", `Transfer proof pipeline: ${progress}`);
 }
 
 function renderLending(status) {
@@ -252,24 +547,35 @@ function renderLending(status) {
   setText("liquidationValue", `${compactAmount(risk.liquidationThresholdValue)} bCASH`);
   setText("collateralFactor", `${formatBps(risk.collateralFactorBps)}%`);
   setText("poolLiquidity", `${compactAmount(status.balances.poolLiquidity)} bCASH`);
+  setText("originationPrincipal", `${compactAmount(risk.originationPrincipalDebt)} bCASH`);
+  setText(
+    "accrualState",
+    risk.accrualCatchUpRequired ? `Catch-up required (${risk.accrualBatchesRequired} batches)` : "Current for actions",
+  );
+  setText("creditStatus", risk.accountDefaulted ? "Defaulted — borrowing frozen" : "Eligible");
 
   const health = healthPresentation(status);
   setText("riskHealthLabel", health.longLabel);
   const fill = element("riskMeterFill");
   fill.style.width = `${100 - health.meter}%`;
+  const meter = fill.closest(".meter-track");
+  meter.style.setProperty("--health-position", `${Math.min(99, Math.max(1, health.meter))}%`);
+  meter.dataset.tone = health.tone;
 }
 
 function renderSettlement(status) {
   setText("returnVoucherBalance", `${compactAmount(status.balances.voucherAvailable)} vA`);
   setText("returnCanonicalBalance", `${compactAmount(status.balances.canonicalAvailable)} aBANK`);
   setText("returnAvailable", `${compactAmount(status.balances.voucherAvailable)} vA`);
-  const debt = amount(status.balances.outstandingDebt);
-  const collateral = amount(status.balances.activeCollateral);
+  const debt = tokenUnits(status.balances.outstandingDebt);
+  const collateral = tokenUnits(status.balances.activeCollateral);
+  const guard = element("settlementGuardTitle")?.closest(".settlement-guard");
+  guard?.classList.toggle("is-ready", debt === 0n && collateral === 0n);
   if (debt > 0) {
-    setText("settlementGuardTitle", "Outstanding credit remains");
+    setText("settlementGuardTitle", "Outstanding debt remains");
     setText(
       "settlementGuardCopy",
-      isDustDebt(status) ? "Settle the small remaining balance before withdrawing and returning collateral." : "Repay Bank B credit before withdrawing and returning collateral.",
+      isSmallBalance(status) ? "Settle the small remaining balance before withdrawing and returning collateral." : "Repay Bank B debt before withdrawing and returning collateral.",
     );
   } else if (collateral > 0) {
     setText("settlementGuardTitle", "Collateral is still active");
@@ -283,9 +589,14 @@ function renderSettlement(status) {
 function renderEvidence(status) {
   const topology = status.topology;
   setText("validatorEvidence", `${topology.validatorsPerChain || "-"} validators per chain`);
-  setText("faultEvidence", topology.toleratedFaultsPerChain > 0 ? `${topology.toleratedFaultsPerChain} crash fault tolerated` : "Fault tolerance not evidenced");
+  setText(
+    "faultEvidence",
+    topology.toleratedFaultsPerChain > 0
+      ? `Configured for ${topology.toleratedFaultsPerChain} unavailable validator`
+      : "No validator-unavailability tolerance configured",
+  );
   setText("quorumEvidence", `${topology.attestorThreshold}-of-${topology.configuredAttestors}`);
-  setText("attestorEvidence", `${status.relay.activeAttestors} local attestor services online`);
+  setText("attestorEvidence", `${status.relay.activeAttestors} local attestor endpoints listening`);
   setText("governanceEvidence", titleCase(status.governance.mode));
   setText("governanceDelay", `${status.governance.delaySeconds.A}s minimum delay`);
   setText("relayEvidence", `${status.relay.completedMessages} completed`);
@@ -296,7 +607,131 @@ function renderEvidence(status) {
   setText("chainBId", status.chains.B.chainId);
   setText("chainBBlock", formatInteger(status.chains.B.blockNumber));
   setText("trustedAHeight", formatInteger(status.chains.B.trustedRemoteHeight));
+  renderFormalEvidence(currentEvidence);
   renderActivity(status.activity?.history || []);
+}
+
+function renderFormalEvidence(evidence) {
+  const verdict = element("evidenceVerdict");
+  verdict.classList.remove("is-warning", "is-error");
+  if (!evidence?.available) {
+    verdict.classList.add("is-warning");
+    setText("evidenceVerdictLabel", "VALIDATION EVIDENCE NOT AVAILABLE");
+    setText("evidenceVerdictTitle", "Generate an isolated evidence run");
+    setText("evidenceVerdictCopy", evidence?.message || "Run npm run institutional:evidence before the defense.");
+    setText("evidenceSourceState", "No recorded source");
+    setText("evidenceCommit", "-");
+    setText("evidenceGeneratedAt", "-");
+    setText("benchmarkSamples", "-");
+    setText("proofAckP95", "-");
+    setText("proofAckTarget", "target -");
+    setText("endToEndP95", "-");
+    setText("securityControlCount", "-");
+    setText("integrationEvidenceCount", "Not available");
+    setText("securityEvidenceCount", "Not available");
+    renderEvidenceEntries("integrationEvidenceList", [], "No integration evidence is available.");
+    renderEvidenceEntries("securityEvidenceList", [], "No security evidence is available.");
+    setText("evidenceStepStatus", "Missing");
+    return;
+  }
+
+  const reportPassed = evidenceReportPassed(evidence);
+  const applicableToCurrentSource = evidenceAppliesToCurrentSource(evidence);
+  const currentPass = reportPassed && applicableToCurrentSource;
+  if (!reportPassed) verdict.classList.add("is-error");
+  else if (!applicableToCurrentSource) verdict.classList.add("is-warning");
+  setText(
+    "evidenceVerdictLabel",
+    !reportPassed
+      ? "VALIDATION GATES FAILED"
+      : applicableToCurrentSource
+        ? "REPRODUCIBLE VALIDATION PASSED"
+        : "RECORDED VALIDATION — CURRENT SOURCE NOT VERIFIED",
+  );
+  setText(
+    "evidenceVerdictTitle",
+    reportPassed
+      ? applicableToCurrentSource
+        ? "Evidence matches the current reviewed source"
+        : "Evidence passed only for the recorded source"
+      : "One or more evidence gates require attention",
+  );
+  setText(
+    "evidenceVerdictCopy",
+    currentPass
+      ? "An isolated two-chain run tested quorum behavior, recovery and lending invariants, and measured settlement latency."
+      : reportPassed
+        ? "The recorded run passed, but it is not a current pass for this source. Refresh validation evidence after reviewing and committing the source."
+        : "Review the recorded validation reports before using this build for a defense.",
+  );
+  setText("evidenceSourceState", evidenceSourceStateLabel(evidence));
+  setText("evidenceCommit", evidence.provenance?.recordedCommitShort || "-");
+  setText("evidenceGeneratedAt", evidence.generatedAt ? formatTimestamp(evidence.generatedAt) : "-");
+
+  const benchmark = evidence.benchmark || {};
+  setText("benchmarkSamples", formatInteger(benchmark.sampleCount));
+  setText("proofAckP95", formatDurationMs(benchmark.postSourceInclusionToCompletionP95Ms));
+  setText("proofAckTarget", `target < ${formatDurationMs(benchmark.targetP95Ms)}`);
+  setText("endToEndP95", formatDurationMs(benchmark.endToEndP95Ms));
+  setText("securityControlCount", `${evidence.security?.passed || 0}/${evidence.security?.total || 0}`);
+  setText("integrationEvidenceCount", `${evidence.integration?.passed || 0}/${evidence.integration?.total || 0} passed`);
+  setText("securityEvidenceCount", `${evidence.security?.passed || 0}/${evidence.security?.total || 0} passed`);
+  renderIntegrationEvidence(evidence.integration?.tests || []);
+  renderSecurityEvidence(evidence.security?.scenarios || []);
+  setText("evidenceStepStatus", currentPass ? "Current pass" : reportPassed ? "Recorded" : "Review");
+}
+
+function renderIntegrationEvidence(tests) {
+  const list = element("integrationEvidenceList");
+  list.replaceChildren();
+  if (!tests.length) return renderEvidenceEntries("integrationEvidenceList", [], "No integration evidence is available.");
+  tests.forEach((test) => {
+    const item = document.createElement("div");
+    item.className = `integration-evidence-item${test.status === "passed" ? " is-passed" : " is-failed"}`;
+    const icon = document.createElement("i");
+    icon.dataset.lucide = test.status === "passed" ? "circle-check" : "circle-alert";
+    const copy = document.createElement("div");
+    const title = document.createElement("b");
+    title.textContent = test.title;
+    const detail = document.createElement("small");
+    detail.textContent = test.status === "passed" ? "Recorded as passed in isolated runtime" : "Requires review";
+    copy.append(title, detail);
+    item.append(icon, copy);
+    list.append(item);
+  });
+  window.lucide?.createIcons();
+}
+
+function renderSecurityEvidence(scenarios) {
+  const list = element("securityEvidenceList");
+  list.replaceChildren();
+  if (!scenarios.length) return renderEvidenceEntries("securityEvidenceList", [], "No security evidence is available.");
+  scenarios.forEach((scenario) => {
+    const item = document.createElement("article");
+    item.className = `security-evidence-item${scenario.status === "passed" ? " is-passed" : " is-failed"}`;
+    const heading = document.createElement("div");
+    const id = document.createElement("span");
+    id.textContent = scenario.id;
+    const title = document.createElement("b");
+    title.textContent = scenario.title;
+    const state = document.createElement("strong");
+    state.textContent = scenario.status === "passed" ? "Passed" : "Review";
+    heading.append(id, title, state);
+    const control = document.createElement("p");
+    control.textContent = scenario.control;
+    item.append(heading, control);
+    list.append(item);
+  });
+}
+
+function renderEvidenceEntries(id, entries, emptyCopy) {
+  const list = element(id);
+  list.replaceChildren();
+  if (entries.length) return;
+  const empty = document.createElement("div");
+  empty.className = "empty-state";
+  empty.textContent = emptyCopy;
+  list.append(empty);
 }
 
 function renderActivity(history) {
@@ -340,21 +775,26 @@ function renderJourney(status) {
   const stage = status.workflow?.stage === "processing"
     ? actionStage(status.controller?.activeOperation?.action || busyAction)
     : status.workflow?.stage || "prepare";
-  const activeIndex = Math.max(0, STAGE_ORDER.indexOf(stage));
+  const recommendedIndex = Math.max(0, STAGE_ORDER.indexOf(stage));
   const history = status.activity?.history || [];
   const hasAction = (action) => history.some((entry) => entry.action === action && entry.status === "completed");
-  const transferObserved = hasAction("bridge") || amount(status.balances.escrowed) > 0 || amount(status.balances.voucherAvailable) > 0 || amount(status.balances.activeCollateral) > 0;
-  const lendingObserved = hasAction("deposit") || amount(status.balances.activeCollateral) > 0 || amount(status.balances.outstandingDebt) > 0;
-  setText("identityStepStatus", status.participants.identity.A.active && status.participants.identity.B.active ? "Verified" : "Review");
+  const transferObserved = hasAction("bridge") || tokenUnits(status.balances.escrowed) > 0n || tokenUnits(status.balances.voucherAvailable) > 0n || tokenUnits(status.balances.activeCollateral) > 0n;
+  const lendingObserved = hasAction("deposit") || tokenUnits(status.balances.activeCollateral) > 0n || tokenUnits(status.balances.outstandingDebt) > 0n;
+  setText("identityStepStatus", status.participants.identity.A.active && status.participants.identity.B.active ? "Active" : "Review");
   setText("transferStepStatus", transferObserved ? "Settled" : stage === "transfer" ? "Ready" : "Waiting");
   setText("lendingStepStatus", lendingObserved ? "Active" : stage === "lend" ? "Ready" : "Waiting");
-  setText("positionStepStatus", amount(status.balances.outstandingDebt) > 0 ? "Open" : hasAction("borrow") ? "Repaid" : "Waiting");
+  setText("positionStepStatus", tokenUnits(status.balances.outstandingDebt) > 0n ? "Open" : hasAction("borrow") ? "Repaid" : "Waiting");
   setText("returnStepStatus", hasAction("return") ? "Settled" : stage === "return" ? "Ready" : "Waiting");
-  setText("evidenceStepStatus", "Live");
+  setText("evidenceStepStatus", evidenceStepLabel(currentEvidence));
 
+  const viewingStage = stageForCurrentView();
   document.querySelectorAll(".journey-step").forEach((step, index) => {
-    step.classList.toggle("is-active", index === activeIndex);
-    step.classList.toggle("is-complete", index < activeIndex || (index === 0 && status.participants.identity.A.active && status.participants.identity.B.active));
+    const active = step.dataset.stage === viewingStage;
+    step.classList.toggle("is-active", active);
+    step.classList.toggle("is-recommended", index === recommendedIndex);
+    step.classList.toggle("is-complete", index < recommendedIndex || (index === 0 && status.participants.identity.A.active && status.participants.identity.B.active));
+    if (active) step.setAttribute("aria-current", "step");
+    else step.removeAttribute("aria-current");
   });
 }
 
@@ -362,8 +802,8 @@ function renderLinky(status) {
   if (busyAction || status.controller?.activeOperation) return renderLinkyProcessing(busyAction || status.controller.activeOperation.action);
   const recommendation = recommendationFor(status);
   renderLinkyState(recommendation);
-  setText("linkyIdentity", status.participants.identity.A.active && status.participants.identity.B.active ? "Verified" : "Review");
-  setText("linkyRelay", status.relay.online ? `${status.relay.activeAttestors} online` : "Offline");
+  setText("linkyIdentity", status.participants.identity.A.active && status.participants.identity.B.active ? "Active" : "Review");
+  setText("linkyRelay", status.relayerHealthy ? "Healthy" : "Review");
   setText("linkyGovernance", titleCase(status.governance.mode));
   const actionButton = element("linkyAction");
   if (recommendation.action) {
@@ -374,21 +814,6 @@ function renderLinky(status) {
     actionButton.hidden = true;
     delete actionButton.dataset.action;
   }
-}
-
-function recommendationFor(status) {
-  const next = status.workflow?.nextAction;
-  const recommendations = {
-    bridge: { image: "guide", title: "Transfer collateral to Bank B", copy: "Canonical aBANK is available for governed cross-chain custody.", action: "bridge", button: "Open transfer" },
-    deposit: { image: "guide", title: "Activate received collateral", copy: "Verified voucher is available on Bank B and can enter the lending position.", action: "deposit", button: "Open lending" },
-    borrow: { image: "guide", title: "Credit capacity is available", copy: `${compactAmount(status.risk.availableBorrow)} bCASH remains within policy and liquidity limits.`, action: "borrow", button: "Open borrowing" },
-    repay: canRepaySmallBalance(status)
-      ? { image: "caution", title: "Repay exact remaining balance", copy: "A small accrued bCASH balance remains and will be collected in full.", action: "repayAll", button: "Repay full balance" }
-      : { image: "caution", title: "Manage outstanding credit", copy: `${compactAmount(status.balances.outstandingDebt)} bCASH remains outstanding on Bank B.`, action: "repay", button: "Open repayment" },
-    withdraw: { image: "guide", title: "Release active collateral", copy: "The credit position is clear and collateral can leave the lending pool.", action: "withdraw", button: "Open withdrawal" },
-    return: { image: "success", title: "Settle collateral on Bank A", copy: "Free voucher can now be burned for canonical custody release.", action: "return", button: "Open settlement" },
-  };
-  return recommendations[next] || { image: "neutral", title: "Institutional state is synchronized", copy: "Review runtime evidence and recent transaction identifiers.", action: "evidence", button: "Open evidence" };
 }
 
 function renderLinkyProcessing(action) {
@@ -408,66 +833,77 @@ function renderLinkyState({ image, title, copy }) {
 }
 
 function renderAvailability() {
-  if (!currentStatus?.ready) return;
-  const bridge = validateAction("bridge", element("bridgeAmount").value);
-  const settlement = validateAction("return", element("returnAmount").value);
-  const lending = validateAction(lendingSubmissionAction(), element("lendingAmount").value);
+  const laneReady = Boolean(currentStatus?.laneReady);
+  setSemanticDisabled(element("lendingMaxButton"), !laneReady || Boolean(busyAction));
+  document.querySelectorAll("[data-fill]").forEach((button) => {
+    setSemanticDisabled(button, !laneReady || Boolean(busyAction));
+  });
+  if (!laneReady) {
+    const blocked = validateAction("bridge", "", currentStatus);
+    updateSubmit(document.querySelector("[data-operation-form='bridge'] .primary-button"), blocked);
+    updateSubmit(document.querySelector("[data-operation-form='return'] .primary-button"), blocked);
+    updateSubmit(element("lendingSubmit"), blocked);
+    return;
+  }
+  const bridge = validateAction("bridge", element("bridgeAmount").value, currentStatus);
+  const settlement = validateAction("return", element("returnAmount").value, currentStatus);
+  const lending = validateAction(
+    lendingSubmissionAction(lendingMode, currentStatus),
+    element("lendingAmount").value,
+    currentStatus,
+  );
   updateSubmit(document.querySelector("[data-operation-form='bridge'] .primary-button"), bridge);
   updateSubmit(document.querySelector("[data-operation-form='return'] .primary-button"), settlement);
   updateSubmit(element("lendingSubmit"), lending);
 }
 
-function updateSubmit(button, validation) {
-  if (!button) return;
-  button.disabled = Boolean(busyAction || currentStatus?.controller?.busy || !validation.ok);
-  button.title = validation.ok ? "" : validation.message;
+function clearRuntimeSnapshot() {
+  const snapshotFields = [
+    "canonicalBalance", "collateralBalance", "debtBalance", "healthFactor", "healthLabel",
+    "identityAAccount", "identityBAccount", "identityGovernanceDelay", "identityValidatorTopology",
+    "routeCanonical", "routeVoucher", "bridgeAvailable", "relayRouteStatus", "finalityDepth",
+    "attestorQuorum", "voucherBalance", "activeCollateral", "creditBalance", "availableBorrow",
+    "collateralValue", "liquidationValue", "poolLiquidity", "collateralFactor", "originationPrincipal",
+    "creditStatus", "returnVoucherBalance", "returnCanonicalBalance", "returnAvailable",
+    "chainAId", "chainBId", "chainABlock", "chainBBlock", "trustedAHeight", "trustedBHeight",
+    "relayEvidence", "pendingEvidence", "activityCount", "attestorEvidence", "quorumEvidence",
+    "governanceEvidence", "governanceDelay", "validatorEvidence", "faultEvidence",
+  ];
+  snapshotFields.forEach((id) => setText(id, "-"));
+  RUNTIME_STATUS_FIELDS.forEach((id) => {
+    setText(id, "Unavailable");
+    setStatusTone(id, false);
+  });
+  element("readinessVerdict")?.classList.add("is-review");
+  element("readinessPill")?.classList.add("is-warning");
 }
 
-function validateAction(action, rawValue) {
-  if (!currentStatus?.ready) return invalid("Institutional runtime is not ready.");
-  if (action === "repayAll") {
-    if (!isSmallBalance(currentStatus)) return invalid("The remaining credit is above the exact small-balance repayment threshold.");
-    if (!canRepaySmallBalance(currentStatus)) return invalid("Wallet bCASH balance is insufficient to repay the complete debt.");
-    return { ok: true, value: currentStatus.balances.outstandingDebt, message: "" };
-  }
-  const value = amount(rawValue);
-  if (!(value > 0)) return invalid("Enter an amount greater than zero.");
-  const debt = amount(currentStatus.balances.outstandingDebt);
-  const collateral = amount(currentStatus.balances.activeCollateral);
-  const limits = {
-    bridge: amount(currentStatus.balances.canonicalAvailable),
-    deposit: amount(currentStatus.balances.voucherAvailable),
-    borrow: amount(currentStatus.risk.availableBorrow),
-    repay: Math.min(debt, amount(currentStatus.balances.creditAvailable)),
-    withdraw: debt > 0 ? 0 : collateral,
-    return: debt > 0 || collateral > 0 ? 0 : amount(currentStatus.balances.voucherAvailable),
-  };
-  if (action === "withdraw" && debt > 0) {
-    return invalid(isSmallBalance(currentStatus) ? "Repay the small remaining balance before withdrawing collateral." : "Repay outstanding credit before withdrawing collateral.");
-  }
-  if (action === "return" && debt > 0) {
-    return invalid(isSmallBalance(currentStatus) ? "Repay the small remaining balance before settlement." : "Repay outstanding credit before settlement.");
-  }
-  if (action === "return" && collateral > 0) return invalid("Withdraw lending collateral before settlement.");
-  if (value > (limits[action] || 0) + 0.0000001) return invalid("Amount exceeds the available on-chain limit.");
-  return { ok: true, value: normalizeDecimal(rawValue), message: "" };
+function updateSubmit(button, validation) {
+  if (!button) return;
+  setSemanticDisabled(button, Boolean(busyAction || currentStatus?.controller?.busy || !validation.ok));
+  button.title = validation.ok ? "" : validation.message;
 }
 
 function setLendingMode(mode, { primeAmount = false } = {}) {
   if (!LENDING_MODES[mode]) return;
   lendingMode = mode;
   const config = LENDING_MODES[mode];
-  const submitAction = mode === "repay" && canRepaySmallBalance(currentStatus) ? "repayAll" : mode;
+  const submitAction = lendingSubmissionAction(mode, currentStatus);
   document.querySelectorAll("[data-lending-mode]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.lendingMode === mode);
+    const active = button.dataset.lendingMode === mode;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
   });
+  const activeModeTab = document.querySelector(`[data-lending-mode='${mode}']`);
+  element("lendingOperationPanel").setAttribute("aria-labelledby", activeModeTab.id);
   element("lendingForm").dataset.operationForm = mode;
   setText("lendingAmountLabel", config.label);
   setText("lendingUnit", config.unit);
   setText("lendingLimitLabel", submitAction === "repayAll" ? "Exact outstanding balance" : config.limitLabel);
   setText(
     "lendingLimit",
-    `${submitAction === "repayAll" ? compactAmount(currentStatus?.balances?.outstandingDebt) : compactNumber(config.limit(currentStatus))} ${config.unit}`,
+    `${compactAmount(submitAction === "repayAll" ? currentStatus?.balances?.outstandingDebt : config.limit(currentStatus))} ${config.unit}`,
   );
   const submit = element("lendingSubmit");
   submit.dataset.action = submitAction;
@@ -476,34 +912,23 @@ function setLendingMode(mode, { primeAmount = false } = {}) {
   setFormMessage(element("lendingForm"), "");
   window.lucide?.createIcons();
   renderAvailability();
+  syncWorkflowTabState();
+  if (currentStatus?.runtimeReadable) renderJourney(currentStatus);
 }
 
 function primeEmptyInputs(status) {
   const defaults = {
-    bridgeAmount: Math.min(1000, amount(status.balances.canonicalAvailable)),
-    returnAmount: amount(status.balances.voucherAvailable),
+    bridgeAmount: minTokenAmount("1000", status.balances.canonicalAvailable),
+    returnAmount: status.balances.voucherAvailable,
     lendingAmount: LENDING_MODES[lendingMode].limit(status),
   };
   Object.entries(defaults).forEach(([id, value]) => {
     const input = element(id);
-    if (input.dataset.dirty !== "true" && (!(amount(input.value) > 0) || id === "lendingAmount")) {
+    if (input.dataset.dirty !== "true" && (!(tokenUnits(input.value) > 0n) || id === "lendingAmount")) {
       setInputAmount(input, value, false);
     }
   });
   setLendingMode(lendingMode);
-}
-
-function lendingSubmissionAction() {
-  return lendingMode === "repay" && canRepaySmallBalance(currentStatus) ? "repayAll" : lendingMode;
-}
-
-function isSmallBalance(status) {
-  const debt = amount(status?.balances?.outstandingDebt);
-  return debt > 0 && debt < SMALL_BALANCE_THRESHOLD;
-}
-
-function canRepaySmallBalance(status) {
-  return isSmallBalance(status) && amount(status?.balances?.creditAvailable) >= amount(status?.balances?.outstandingDebt);
 }
 
 function selectAction(action) {
@@ -515,25 +940,60 @@ function selectAction(action) {
   input?.focus();
 }
 
-function openTab(tab) {
-  if (!["transfer", "lending", "return", "evidence"].includes(tab)) return;
+function openTab(tab, { focusTab = false } = {}) {
+  if (!["identity", "transfer", "lending", "return", "evidence"].includes(tab)) return;
   currentTab = tab;
-  document.querySelectorAll("[data-tab]").forEach((button) => {
-    const active = button.dataset.tab === tab;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-selected", String(active));
-  });
+  document.body.dataset.view = tab;
   document.querySelectorAll("[data-panel]").forEach((panel) => {
     const active = panel.dataset.panel === tab;
     panel.classList.toggle("is-active", active);
     panel.hidden = !active;
+    panel.toggleAttribute("inert", !active);
   });
+  if (tab !== "identity") closeStatusDetails();
+  const selectedTab = syncWorkflowTabState();
+  if (focusTab) selectedTab?.focus({ preventScroll: true });
+  if (currentStatus?.runtimeReadable) renderJourney(currentStatus);
+}
+
+function syncWorkflowTabState() {
+  const activeStage = stageForCurrentView();
+  let selectedTab = null;
+  document.querySelectorAll(".journey-step[role='tab']").forEach((tab) => {
+    const active = tab.dataset.stage === activeStage;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+    if (active) {
+      tab.setAttribute("aria-current", "step");
+      selectedTab = tab;
+    } else {
+      tab.removeAttribute("aria-current");
+    }
+  });
+  const activePanel = document.querySelector(`[data-panel='${currentTab}']`);
+  if (activePanel && selectedTab) activePanel.setAttribute("aria-labelledby", selectedTab.id);
+  return selectedTab;
+}
+
+function stageForCurrentView() {
+  if (currentTab === "identity") return "prepare";
+  if (currentTab === "transfer") return "transfer";
+  if (currentTab === "lending") return ["repay", "withdraw"].includes(lendingMode) ? "manage" : "lend";
+  if (currentTab === "return") return "return";
+  return "review";
 }
 
 function setBusy(busy, action = null) {
   document.body.classList.toggle("is-busy", busy);
+  document.querySelectorAll("[data-operation-form]").forEach((form) => {
+    form.setAttribute("aria-busy", String(busy));
+  });
+  document.querySelectorAll(".journey-step, .segment, .text-button, .linky-action, .amount-input input").forEach((control) => {
+    setSemanticDisabled(control, busy);
+  });
   document.querySelectorAll("form .primary-button").forEach((button) => {
-    button.disabled = busy || button.disabled;
+    if (busy) setSemanticDisabled(button, true);
     button.classList.toggle("is-busy", busy && button.dataset.action === action);
   });
 }
@@ -550,49 +1010,25 @@ async function copyLatestEvidence() {
   }
 }
 
-function healthPresentation(status) {
-  const debt = amount(status?.balances?.outstandingDebt);
-  if (debt <= 0) return { value: "∞", label: "No debt", longLabel: "No active debt", meter: 100 };
-  const factor = amount(status?.risk?.healthFactor);
-  if (factor < 1) return { value: factor.toFixed(2), label: "Liquidatable", longLabel: "Below threshold", meter: 18 };
-  if (factor < 1.25) return { value: factor.toFixed(2), label: "Watch", longLabel: "Close to threshold", meter: 38 };
-  return { value: factor.toFixed(2), label: "Healthy", longLabel: "Healthy position", meter: Math.min(100, 52 + (factor - 1) * 28) };
-}
-
-function actionStage(action) {
-  if (action === "bridge") return "transfer";
-  if (["deposit", "borrow"].includes(action)) return "lend";
-  if (["repay", "repayAll", "withdraw"].includes(action)) return "manage";
-  if (action === "return") return "return";
-  return "review";
-}
-
-function actionIcon(action) {
-  return ({ bridge: "arrow-right", deposit: "archive", borrow: "banknote", repay: "hand-coins", repayAll: "circle-dollar-sign", withdraw: "download", return: "rotate-ccw" })[action] || "circle-check";
-}
-
-function operationName(action) {
-  return ({ bridge: "Collateral transfer", deposit: "Collateral activation", borrow: "Credit draw", repay: "Credit repayment", repayAll: "Complete balance repayment", withdraw: "Collateral withdrawal", return: "Collateral settlement" })[action] || "Institutional operation";
-}
-
-function operationProgressCopy(action) {
-  return ["bridge", "return"].includes(action)
-    ? "Waiting for source finality, attestor quorum and cross-chain acknowledgement."
-    : "Submitting the policy-checked Bank B transaction.";
-}
-
 function setFormMessage(form, message, tone = "") {
   const key = form === element("lendingForm") ? "lending" : form?.dataset?.operationForm;
   const output = document.querySelector(`[data-message='${key}']`);
   if (!output) return;
+  const input = form?.querySelector("input[name='amount']");
+  output.setAttribute("role", tone === "error" ? "alert" : "status");
+  output.setAttribute("aria-live", tone === "error" ? "assertive" : "polite");
   output.textContent = message || "";
   output.classList.toggle("is-error", tone === "error");
   output.classList.toggle("is-success", tone === "success");
+  input?.setAttribute("aria-invalid", String(tone === "error"));
 }
 
 function toast(message, tone = "success") {
   const item = document.createElement("div");
   item.className = `toast${tone === "error" ? " is-error" : ""}`;
+  item.setAttribute("role", tone === "error" ? "alert" : "status");
+  item.setAttribute("aria-live", tone === "error" ? "assertive" : "polite");
+  item.setAttribute("aria-atomic", "true");
   const icon = document.createElement("i");
   icon.dataset.lucide = tone === "error" ? "circle-alert" : "circle-check";
   const copy = document.createElement("span");
@@ -612,15 +1048,21 @@ async function requestJson(path, { timeoutMs = 15_000, ...options } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const headers = { ...(options.headers || {}) };
+    if (options.body != null && !Object.keys(headers).some((name) => name.toLowerCase() === "content-type")) {
+      headers["content-type"] = "application/json";
+    }
     const response = await fetch(path, {
       ...options,
-      headers: { "content-type": "application/json", ...(options.headers || {}) },
+      credentials: "same-origin",
+      headers,
       signal: controller.signal,
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(payload.error || `Request failed with HTTP ${response.status}`);
       error.statusCode = response.status;
+      error.code = payload.code;
       error.payload = payload;
       throw error;
     }
@@ -633,94 +1075,73 @@ async function requestJson(path, { timeoutMs = 15_000, ...options } = {}) {
   }
 }
 
-function actionRequestId(action) {
-  const key = `institutional-request:${action}`;
+async function requestActionJson(body, retryExpiredSession = true) {
+  const token = await csrfTokenForAction();
+  let payload;
   try {
-    const existing = window.sessionStorage.getItem(key);
-    if (existing) return existing;
-    const requestId = window.crypto?.randomUUID?.() || `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    window.sessionStorage.setItem(key, requestId);
-    return requestId;
-  } catch {
-    return window.crypto?.randomUUID?.() || `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    payload = await requestJson("/api/action", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "x-institutional-csrf-token": token },
+      timeoutMs: 240_000,
+    });
+  } catch (error) {
+    if (!retryExpiredSession || error.code !== "CSRF_SESSION_INVALID") throw error;
+    const refreshedToken = await csrfTokenForAction({ force: true });
+    payload = await requestJson("/api/action", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "x-institutional-csrf-token": refreshedToken },
+      timeoutMs: 240_000,
+    });
   }
+  if (payload?.ok !== true || !payload.operation || !payload.status) {
+    const error = new Error("The UI server returned an incomplete action result; retry with the same request identifier.");
+    error.outcomeUncertain = true;
+    throw error;
+  }
+  return payload;
 }
 
-function clearActionRequestId(action) {
-  try {
-    window.sessionStorage.removeItem(`institutional-request:${action}`);
-  } catch {
-    // Storage can be disabled without preventing on-chain execution.
+async function csrfTokenForAction({ force = false } = {}) {
+  if (force) csrfToken = null;
+  if (csrfToken) return csrfToken;
+  if (!csrfBootstrapPromise) {
+    csrfBootstrapPromise = requestJson("/api/session", { timeoutMs: 10_000 })
+      .then((payload) => {
+        if (typeof payload.csrfToken !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(payload.csrfToken)) {
+          throw new Error("UI server returned an invalid action-security token");
+        }
+        csrfToken = payload.csrfToken;
+        return csrfToken;
+      })
+      .finally(() => {
+        csrfBootstrapPromise = null;
+      });
   }
+  return csrfBootstrapPromise;
 }
 
-function requestOutcomeUncertain(error) {
-  if (error?.statusCode === 409) {
-    const status = error?.payload?.operation?.status;
-    return status !== "failed" && status !== "completed";
-  }
-  return /timed out|already submitted|already uncertain/i.test(error?.message || "");
+function clearActionRequest(action) {
+  actionRequests.clear(action);
 }
 
 function setInputAmount(input, value, dirty) {
   if (!input) return;
-  input.value = normalizeDecimal(value);
+  input.value = normalizeTokenAmount(value);
   input.dataset.dirty = dirty ? "true" : "false";
 }
 
-function normalizeDecimal(value) {
-  const numeric = amount(value);
-  if (!Number.isFinite(numeric)) return "0";
-  return numeric.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 8 });
-}
-
-function amount(value) {
-  const numeric = Number(value || 0);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
-function compactAmount(value) {
-  return compactNumber(amount(value));
-}
-
-function compactNumber(value) {
-  if (!Number.isFinite(value)) return "-";
-  if (value > 0 && value < 0.01) return "<0.01";
-  return value.toLocaleString("en-US", { maximumFractionDigits: value >= 100 ? 2 : 4 });
-}
-
-function formatInteger(value) {
-  const numeric = Number(value || 0);
-  return Number.isFinite(numeric) ? numeric.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "-";
-}
-
-function formatBps(value) {
-  return (amount(value) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 });
-}
-
-function formatTimestamp(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("en-GB", { hour12: false });
-}
-
-function shortHash(value) {
-  return typeof value === "string" && value.length > 18 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value;
-}
-
-function titleCase(value) {
-  return String(value || "-")
-    .replaceAll("-", " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function invalid(message) {
-  return { ok: false, value: null, message };
+function setSemanticDisabled(control, disabled) {
+  if (!control) return;
+  control.disabled = Boolean(disabled);
+  control.setAttribute("aria-disabled", String(Boolean(disabled)));
 }
 
 function setText(id, value) {
   const node = element(id);
-  if (node) node.textContent = value == null ? "-" : String(value);
+  const nextValue = value == null ? "-" : String(value);
+  if (node && node.textContent !== nextValue) node.textContent = nextValue;
 }
 
 function element(id) {

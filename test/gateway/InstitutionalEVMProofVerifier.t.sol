@@ -11,6 +11,7 @@ import {StorageProofBuilder} from "../../contracts/test/StorageProofBuilder.sol"
 contract MockInstitutionalCheckpointClient is IInstitutionalCheckpointClient {
     mapping(uint256 => mapping(uint256 => bytes32)) internal roots;
     mapping(uint256 => InstitutionalCheckpointTypes.ClientStatus) internal statuses;
+    mapping(uint256 => uint256) public override checkpointAuthorizationFloor;
 
     function setCheckpoint(uint256 sourceChainId, uint256 height, bytes32 root) external {
         roots[sourceChainId][height] = root;
@@ -68,6 +69,19 @@ contract InstitutionalEVMProofVerifierTest is Test {
         client.setCheckpoint(SOURCE_CHAIN_ID, CHECKPOINT_HEIGHT, root);
 
         assertTrue(verifier.verifyStorageMembership(proof));
+    }
+
+    function testVerifiesStorageAbsenceUnderCheckpointedRoot() public {
+        (EVMProofTypes.StorageProof memory proof, bytes32 root) = _proof(STORAGE_WORD);
+        client.setCheckpoint(SOURCE_CHAIN_ID, CHECKPOINT_HEIGHT, root);
+
+        // The supplied leaf proves a different hashed slot under the same authenticated
+        // storage root, which is the canonical divergent-leaf absence witness.
+        proof.storageKey = keccak256("institutional.gateway.absent-message");
+        proof.expectedValue = "";
+
+        assertTrue(verifier.verifyStorageAbsence(proof));
+        assertFalse(verifier.verifyStorageMembership(proof));
     }
 
     function testRejectsUncheckpointedOrMismatchedRoot() public {

@@ -28,8 +28,12 @@ npm run besu:up
 npm run demo:prepare
 npm run demo:ui
 npm test
+npm run test:browser:preflight
+npm run defense:preflight
 npm run institutional:evidence
 ```
+
+Phase 9 verification entrypoints are fail-closed: browser preflight verifies executable/link/launch prerequisites; defense preflight reports clean-source, browser, Docker and existing-evidence blockers; live integration report v3 records pinned Besu identity and four bounded proof observations only after production-gateway acceptance. Neither preflight report is evidence-eligible.
 
 `ops/besu/start.mjs` starts and proves one four-validator bank chain before starting the other, which avoids simultaneous genesis initialization across eight JVMs.
 

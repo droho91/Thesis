@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
+import { writeJsonAtomic } from "../../services/shared/json-file.mjs";
 import { loadScaffold, rpcByNetworkKey, rpcCall, waitForProgress } from "../ops/besu/health.mjs";
 
 const execute = promisify(execFile);
@@ -13,17 +13,18 @@ const STOP_TIMEOUT_MS = Number(process.env.BESU_FAULT_STOP_TIMEOUT_MS || 60_000)
 
 async function main() {
   const scaffold = await loadScaffold();
-  const faulted = scaffold.networks.map((network) => {
+  const unavailable = scaffold.networks.map((network) => {
     const validator = network.validators.at(-1);
     return { network, validator, rpc: rpcByNetworkKey(network.key) };
   });
   const report = {
-    version: "besu-qbft-fault-report-v1",
+    version: "besu-qbft-validator-availability-report-v2",
     status: "running",
     startedAt: new Date().toISOString(),
     validatorCount: scaffold.validatorCount,
     toleratedFaults: scaffold.byzantineFaultTolerance,
-    faults: faulted.map(({ network, validator }) => ({
+    testModel: "single-validator crash/unavailability; no Byzantine behavior is injected",
+    validatorUnavailable: unavailable.map(({ network, validator }) => ({
       network: network.key,
       container: validator.containerName,
       validator: validator.address,
@@ -33,16 +34,16 @@ async function main() {
   let stopped = false;
   try {
     const starts = await Promise.all(
-      faulted.map(async ({ rpc }) => BigInt(await rpcCall(rpc, "eth_blockNumber"))),
+      unavailable.map(async ({ rpc }) => BigInt(await rpcCall(rpc, "eth_blockNumber"))),
     );
-    console.log(`[qbft:fault] stopping ${faulted.map(({ validator }) => validator.containerName).join(", ")}`);
+    console.log(`[qbft:availability] stopping ${unavailable.map(({ validator }) => validator.containerName).join(", ")}`);
     await Promise.all(
-      faulted.map(({ validator }) => docker("stop", "--time", "20", validator.containerName)),
+      unavailable.map(({ validator }) => docker("stop", "--time", "20", validator.containerName)),
     );
     stopped = true;
 
-    const duringFault = await Promise.all(
-      faulted.map(({ network, rpc }, index) =>
+    const duringUnavailability = await Promise.all(
+      unavailable.map(({ network, rpc }, index) =>
         waitForProgress(network, rpc, {
           startHeight: starts[index],
           blocks: 3,
@@ -51,21 +52,21 @@ async function main() {
         }),
       ),
     );
-    report.duringFault = duringFault;
-    console.log("[qbft:fault] both chains continued with one of four validators unavailable");
+    report.duringUnavailability = duringUnavailability;
+    console.log("[qbft:availability] both chains continued with one of four validators unavailable");
 
-    await Promise.all(faulted.map(({ validator }) => docker("start", validator.containerName)));
+    await Promise.all(unavailable.map(({ validator }) => docker("start", validator.containerName)));
     stopped = false;
     const afterRecovery = await Promise.all(
-      faulted.map(({ network, rpc }, index) =>
-        waitForPeerRecovery(network, rpc, BigInt(duringFault[index].blockNumber)),
+      unavailable.map(({ network, rpc }, index) =>
+        waitForPeerRecovery(network, rpc, BigInt(duringUnavailability[index].blockNumber)),
       ),
     );
     report.afterRecovery = afterRecovery;
     report.status = "passed";
     report.finishedAt = new Date().toISOString();
     await writeJsonAtomic(REPORT_PATH, report);
-    console.log(`[qbft:fault] PASS report=${REPORT_PATH}`);
+    console.log(`[qbft:availability] PASS report=${REPORT_PATH}`);
   } catch (error) {
     report.status = "failed";
     report.finishedAt = new Date().toISOString();
@@ -74,7 +75,7 @@ async function main() {
     throw error;
   } finally {
     if (stopped) {
-      await Promise.allSettled(faulted.map(({ validator }) => docker("start", validator.containerName)));
+      await Promise.allSettled(unavailable.map(({ validator }) => docker("start", validator.containerName)));
     }
   }
 }
@@ -100,13 +101,6 @@ async function waitForPeerRecovery(network, rpc, startHeight) {
 
 async function docker(...args) {
   await execute("docker", args, { timeout: STOP_TIMEOUT_MS });
-}
-
-async function writeJsonAtomic(path, value) {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(temporary, path);
 }
 
 function sleep(milliseconds) {

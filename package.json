@@ -1,12 +1,26 @@
 {
   "name": "thesis",
   "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "compile": "hardhat compile",
     "test": "npm run test:contracts && npm run test:services && npm run test:ui",
     "test:contracts": "hardhat test solidity",
     "test:services": "node --test test/services/*.test.mjs",
     "test:ui": "node scripts/verification/check-ui.mjs",
+    "test:browser:preflight": "node scripts/verification/browser-runtime-preflight.mjs",
+    "test:browser": "npm run test:browser:preflight && playwright test",
+    "test:visual:update": "npm run test:browser:preflight && playwright test --update-snapshots",
+    "test:invariants": "hardhat test solidity test/apps/PolicyControlledLendingPoolInvariant.t.sol",
+    "test:coverage": "node scripts/verification/solidity-coverage-gate.mjs",
+    "test:coverage:check": "node scripts/verification/solidity-coverage-gate.mjs --check-only",
+    "test:mutation": "node scripts/verification/mutation-smoke.mjs",
+    "test:verification-depth": "npm run mpt:corpus:verify && npm run test:coverage && npm run test:mutation && npm run security:test",
+    "mpt:corpus:generate": "node scripts/verification/generate-mpt-proof-corpus.mjs",
+    "mpt:corpus:verify": "node scripts/verification/verify-mpt-proof-corpus.mjs",
     "test:read-model": "npm run test:ui",
     "check:besu-config": "node scripts/ops/besu/validate-config.mjs",
     "besu:generate": "node scripts/ops/besu/generate.mjs",
@@ -14,17 +28,21 @@
     "besu:up": "node scripts/ops/besu/generate.mjs --if-missing && node scripts/ops/besu/validate-config.mjs && node scripts/ops/besu/ensure-docker.mjs && node scripts/ops/besu/start.mjs",
     "besu:down": "docker compose -f networks/besu/docker-compose.yml down -v && node scripts/ops/besu/clean-data.mjs",
     "besu:health": "node scripts/ops/besu/health.mjs",
-    "besu:fault-test": "node scripts/verification/qbft-fault-tolerance.mjs",
+    "besu:availability-test": "node scripts/verification/qbft-fault-tolerance.mjs",
+    "besu:fault-test": "npm run besu:availability-test",
     "demo:prepare": "npm run besu:up && npm run institutional:deploy && npm run institutional:governance",
     "demo:start": "npm run demo:prepare && npm run demo:ui",
     "demo:fresh": "npm run besu:down && npm run besu:generate && npm run demo:prepare && npm run demo:ui",
     "demo:reset": "npm run besu:down && npm run besu:generate && npm run demo:prepare",
     "demo:ui": "node scripts/ui/serve.mjs",
-    "institutional:deploy": "node scripts/ops/besu/health.mjs --quick && npm run compile && node scripts/ops/deployment/deploy-stack.mjs",
-    "institutional:integration": "node scripts/ops/besu/health.mjs --quick && node scripts/verification/institutional-integration.mjs",
-    "institutional:governance": "node scripts/ops/besu/health.mjs --quick && node scripts/ops/deployment/finalize-governance.mjs",
+    "demo:doctor": "node scripts/ops/demo/doctor.mjs",
+    "defense:preflight": "node scripts/verification/defense-preflight.mjs",
+    "institutional:deploy": "node scripts/ops/besu/health.mjs && npm run compile && node scripts/ops/deployment/deploy-stack.mjs",
+    "institutional:integration": "node scripts/ops/besu/health.mjs && node scripts/verification/institutional-integration.mjs",
+    "institutional:governance": "node scripts/ops/besu/health.mjs && node scripts/ops/deployment/finalize-governance.mjs",
     "institutional:test": "npm run institutional:deploy && npm run institutional:governance && npm run institutional:integration",
     "institutional:evidence": "node scripts/verification/institutional-evidence.mjs",
+    "institutional:evidence:verify": "node scripts/verification/verify-evidence.mjs",
     "security:test": "node scripts/verification/security-scenarios.mjs",
     "attestor:start": "node services/run-checkpoint-attestor.mjs",
     "relay:start": "node services/run-institutional-relayer.mjs"
@@ -34,21 +52,16 @@
   "license": "ISC",
   "description": "Institutional cross-chain collateral and lending system for two permissioned Besu bank networks.",
   "devDependencies": {
-    "@types/chai": "^4.3.20",
-    "@types/chai-as-promised": "^8.0.2",
-    "@types/mocha": "^10.0.10",
-    "@types/node": "^22.19.11",
-    "chai": "^4.3.7",
-    "ethers": "^6.16.0",
+    "@axe-core/playwright": "4.12.1",
+    "@ethereumjs/trie": "6.2.1",
+    "@playwright/test": "1.62.1",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
-    "hardhat": "^3.1.8",
-    "mocha": "^11.7.5",
-    "ts-node": "^10.9.2",
-    "typescript": "~5.8.0"
+    "hardhat": "3.12.0"
   },
   "type": "module",
   "dependencies": {
-    "@openzeppelin/contracts": "^5.4.0"
+    "@openzeppelin/contracts": "^5.4.0",
+    "ethers": "^6.16.0"
   },
   "directories": {
     "test": "test"

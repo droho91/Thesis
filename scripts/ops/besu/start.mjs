@@ -9,6 +9,8 @@ const COMPOSE_FILE = resolve(
 );
 const COMPOSE_PROJECT_NAME = process.env.BESU_COMPOSE_PROJECT_NAME;
 const STARTUP_TIMEOUT_MS = Number(process.env.RPC_WAIT_TIMEOUT_MS || 300_000);
+const INITIAL_PROGRESS_TIMEOUT_MS = Number(process.env.BESU_START_PROGRESS_TIMEOUT_MS || 60_000);
+const AUTO_RECOVER_STALLED_CONSENSUS = process.env.BESU_START_AUTO_RECOVER?.toLowerCase() !== "false";
 
 async function run(command, args) {
   await new Promise((resolveRun, rejectRun) => {
@@ -31,9 +33,34 @@ async function startNetwork(network) {
   console.log(`[besu:start] Starting ${network.key} validators as one consensus group.`);
   await run("docker", ["compose", ...projectArgs, "-f", COMPOSE_FILE, "up", "-d", ...services]);
 
-  const snapshot = await waitForProgress(network, rpcByNetworkKey(network.key), {
-    timeoutMs: STARTUP_TIMEOUT_MS,
-  });
+  const rpc = rpcByNetworkKey(network.key);
+  let snapshot;
+  try {
+    snapshot = await waitForProgress(network, rpc, {
+      timeoutMs: INITIAL_PROGRESS_TIMEOUT_MS,
+      readinessTimeoutMs: STARTUP_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (!AUTO_RECOVER_STALLED_CONSENSUS) throw error;
+
+    try {
+      await inspectChain(network, rpc);
+    } catch {
+      // Restarting cannot repair an unavailable RPC, invalid validator set, or incomplete peer topology.
+      throw error;
+    }
+
+    console.warn(
+      `[besu:start] ${network.key} RPC topology is ready but consensus is not progressing; ` +
+        "restarting this chain's validators once.",
+    );
+    await run("docker", ["compose", ...projectArgs, "-f", COMPOSE_FILE, "restart", ...services]);
+    snapshot = await waitForProgress(network, rpc, {
+      timeoutMs: INITIAL_PROGRESS_TIMEOUT_MS,
+      readinessTimeoutMs: STARTUP_TIMEOUT_MS,
+    });
+    console.log(`[besu:start] ${network.key} consensus recovered without deleting chain data.`);
+  }
   console.log(
     `[besu:start] ${network.key} ready: validators=${snapshot.validatorCount} ` +
       `peers=${snapshot.peerCount} blocks=${snapshot.startBlock}->${snapshot.blockNumber}`,

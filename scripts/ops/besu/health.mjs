@@ -70,10 +70,13 @@ export async function waitForProgress(network, rpc, {
   startHeight,
   blocks = PROGRESS_BLOCKS,
   timeoutMs = PROGRESS_TIMEOUT_MS,
+  readinessTimeoutMs = timeoutMs,
   minimumPeers = network.validators.length - 1,
   pollIntervalMs = 1_000,
 } = {}) {
-  const initial = startHeight == null ? await waitForInitialHeight(network, rpc, timeoutMs) : BigInt(startHeight);
+  const initial = startHeight == null
+    ? await waitForInitialHeight(network, rpc, readinessTimeoutMs, pollIntervalMs)
+    : BigInt(startHeight);
   const target = initial + BigInt(blocks);
   const startedAt = Date.now();
   let latest = initial;
@@ -103,7 +106,7 @@ export async function waitForProgress(network, rpc, {
   throw new Error(`${network.key} did not become healthy from block ${initial} to ${target}; latest=${latest}.${detail}`);
 }
 
-async function waitForInitialHeight(network, rpc, timeoutMs) {
+async function waitForInitialHeight(network, rpc, timeoutMs, pollIntervalMs) {
   const startedAt = Date.now();
   let lastError;
   while (Date.now() - startedAt < timeoutMs) {
@@ -111,10 +114,13 @@ async function waitForInitialHeight(network, rpc, timeoutMs) {
       return BigInt(await rpcCall(rpc, "eth_blockNumber"));
     } catch (error) {
       lastError = error;
-      await sleep(1_000);
+      await sleep(pollIntervalMs);
     }
   }
-  throw new Error(`${network.key} RPC did not become ready: ${lastError?.message || "timeout"}`);
+  throw new Error(
+    `${network.key} RPC did not become ready within ${Math.ceil(timeoutMs / 1_000)}s: ` +
+      `${lastError?.message || "timeout"}`,
+  );
 }
 
 export async function rpcCall(rpc, method, params = []) {

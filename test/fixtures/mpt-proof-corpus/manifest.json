@@ -1,0 +1,16 @@
+{
+  "schema": "institutional-mpt-proof-corpus-manifest/v1",
+  "corpus": "corpus.json",
+  "corpusSha256": "0254c81fad14d9e0a60bacbe1b9e6a1af9ee82aca44cfc4a349bbd5c00cc231a",
+  "solidityAdapter": "../../../contracts/test/PinnedMPTProofCorpus.sol",
+  "solidityAdapterSha256": "8a265940108f350fde1e3cf173c4cf31def9a7872b5793075230df1f5c4d60e1",
+  "source": {
+    "kind": "deterministic-offline-generation",
+    "tool": "@ethereumjs/trie",
+    "version": "6.2.1",
+    "packageIntegrity": "sha512-MguABMVi/dPtgagK+SuY57rpXFP+Ghr2x+pBDy+e3VmMqUY+WGzFu1QWjBb5/iJ7lINk4CI2Uwsih07Nu9sTSg==",
+    "repository": "https://github.com/ethereumjs/ethereumjs-monorepo.git"
+  },
+  "classification": "deterministic-test-assurance-fixture",
+  "evidenceEligible": false
+}

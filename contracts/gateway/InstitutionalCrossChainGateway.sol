@@ -66,6 +66,7 @@ contract InstitutionalCrossChainGateway is AccessControl, Pausable, ReentrancyGu
         InstitutionalEVMProofBoundary(checkpointClient_)
     {
         require(localChainId_ != 0, "LOCAL_CHAIN_ZERO");
+        require(localChainId_ == block.chainid, "LOCAL_CHAIN_ID_MISMATCH");
         require(admin != address(0), "ADMIN_ZERO");
         localChainId = localChainId_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);

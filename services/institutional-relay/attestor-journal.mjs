@@ -32,6 +32,10 @@ export class AttestorJournal {
     return this.#store.snapshot();
   }
 
+  close() {
+    return this.#store.close();
+  }
+
   async record(checkpoint, domain, attestation) {
     const canonicalHash = canonicalSourceCheckpointHash(checkpoint);
     const key = `${checkpoint.sourceChainId}:${checkpoint.blockNumber}`;

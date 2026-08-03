@@ -4,17 +4,104 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Verify pinned MPT assurance corpus
+        run: npm run mpt:corpus:verify
       - run: npm run compile
       - run: npm test
-      - run: npm run besu:generate
-      - run: npm run check:besu-config
+      - name: Enforce Solidity line-coverage thresholds
+        timeout-minutes: 20
+        run: npm run test:coverage
+      - name: Kill bounded security mutants
+        timeout-minutes: 25
+        run: npm run test:mutation
+      - run: npm run security:test
+      - name: Generate isolated Besu config
+        env:
+          BESU_NETWORK_ROOT: .runtime/besu-ci-config
+          BESU_CONTAINER_PREFIX: thesis-ci-config
+        run: npm run besu:generate
+      - name: Validate isolated Besu config
+        env:
+          BESU_NETWORK_ROOT: .runtime/besu-ci-config
+        run: npm run check:besu-config
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - name: Upload verification-depth reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verification-depth-${{ github.run_id }}
+          path: |
+            coverage/lcov.info
+            .runtime/verification/mutation-smoke.json
+            .runtime/verification/browser-runtime-preflight.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  live-besu-evidence:
+    name: Live Besu evidence
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify Docker and Compose runtime
+        run: |
+          timeout --signal=TERM --kill-after=5s 30s docker version
+          timeout --signal=TERM --kill-after=5s 30s docker compose version
+      - name: Run isolated Besu evidence workflow
+        run: >-
+          timeout --signal=TERM --kill-after=30s 45m
+          npm run institutional:evidence
+      - name: Verify evidence against the current clean source
+        run: npm run institutional:evidence:verify
+      - name: Show bounded Besu diagnostics on failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          compose_file=".runtime/besu-qbft-evidence/docker-compose.yml"
+          if [[ -f "$compose_file" ]]; then
+            timeout --signal=TERM --kill-after=15s 2m \
+              docker compose \
+              -p thesis-qbft-evidence \
+              -f "$compose_file" \
+              logs --no-color --tail=200
+          fi
+      - name: Stop isolated Besu runtime
+        if: always()
+        run: |
+          compose_file=".runtime/besu-qbft-evidence/docker-compose.yml"
+          if [[ -f "$compose_file" ]]; then
+            timeout --signal=TERM --kill-after=15s 3m \
+              docker compose \
+              -p thesis-qbft-evidence \
+              -f "$compose_file" \
+              down --volumes --remove-orphans --timeout 30
+          fi
+      - name: Upload public evidence reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: besu-evidence-${{ github.run_id }}
+          path: .runtime/evidence/*.json
+          if-no-files-found: ignore
+          retention-days: 14

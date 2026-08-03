@@ -1,4 +1,5 @@
 import { ethers } from "ethers";
+import { waitForSuccessfulTransaction } from "../shared/transaction-receipt.mjs";
 import { loadArtifact } from "../../scripts/ops/besu/runtime.mjs";
 import { collectCheckpointQuorum } from "./attestor-collector.mjs";
 import { PermanentRelayError, RelayDeferredError } from "./retry.mjs";
@@ -27,6 +28,9 @@ export class EthersInstitutionalLaneWorkflow {
   #destination;
 
   constructor({ config, source, destination }) {
+    if (config?.proofObserver != null && typeof config.proofObserver !== "function") {
+      throw new Error("Lane proofObserver must be a function when configured");
+    }
     this.#config = config;
     this.#source = source;
     this.#destination = destination;
@@ -118,6 +122,12 @@ export class EthersInstitutionalLaneWorkflow {
     const receipt = await waitForTransaction(transaction, this.#config.transactionTimeoutMs);
     const event = parseGatewayEvent(this.#destination.gateway, receipt, "MessageReceived", job.messageId);
     if (!event) throw new Error("Destination receipt did not contain MessageReceived");
+    await this.#observeAcceptedProof(
+      "message-commitment-membership",
+      proof,
+      receipt,
+      this.#destination.chainId,
+    );
     return {
       state: "received",
       patch: {
@@ -148,6 +158,12 @@ export class EthersInstitutionalLaneWorkflow {
       txOptions(this.#config),
     );
     const receipt = await waitForTransaction(transaction, this.#config.transactionTimeoutMs);
+    await this.#observeAcceptedProof(
+      "acknowledgement-membership",
+      proof,
+      receipt,
+      this.#source.chainId,
+    );
     return { state: "completed", patch: { transactions: { ...job.transactions, acknowledge: receipt.hash } } };
   }
 
@@ -166,7 +182,20 @@ export class EthersInstitutionalLaneWorkflow {
       txOptions(this.#config),
     );
     const receipt = await waitForTransaction(transaction, this.#config.transactionTimeoutMs);
+    await this.#observeAcceptedProof("receipt-absence", proof, receipt, this.#source.chainId);
     return { state: "timed_out", patch: { transactions: { ...job.transactions, timeout: receipt.hash } } };
+  }
+
+  async #observeAcceptedProof(kind, proof, receipt, acceptedOnChainId) {
+    if (!this.#config.proofObserver) return;
+    await this.#config.proofObserver({
+      kind,
+      proof,
+      sourceChainId: proof.sourceChainId,
+      destinationChainId: acceptedOnChainId,
+      acceptedTransactionHash: receipt.hash,
+      acceptedBlockNumber: receipt.blockNumber,
+    });
   }
 
   async #timeoutAnchorIfReady(job) {
@@ -375,19 +404,11 @@ function txOptions(config) {
 }
 
 async function waitForTransaction(transaction, timeoutMs = 120_000) {
-  let timeout;
-  try {
-    const receipt = await Promise.race([
-      transaction.wait(),
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(`Transaction ${transaction.hash} confirmation timed out`)), timeoutMs);
-      }),
-    ]);
-    if (!receipt || receipt.status !== 1) throw new Error(`Transaction ${transaction.hash} failed`);
-    return receipt;
-  } finally {
-    clearTimeout(timeout);
-  }
+  return waitForSuccessfulTransaction(transaction, {
+    timeoutMs,
+    timeoutMessage: ({ hash }) => `Transaction ${hash} confirmation timed out`,
+    failureMessage: ({ hash }) => `Transaction ${hash} failed`,
+  });
 }
 
 function parseGatewayEvent(contract, receipt, eventName, messageId) {

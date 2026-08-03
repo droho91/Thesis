@@ -20,7 +20,7 @@ contract InstitutionalIdentityRegistryTest is Test {
         registry.grantRole(registry.GUARDIAN_ROLE(), GUARDIAN);
     }
 
-    function testIssuerCreatesPrivacyMinimizedCredential() public {
+    function testIssuerCreatesDataMinimizedCredential() public {
         _issue(CUSTOMER, uint64(block.timestamp + 365 days), 2);
 
         (InstitutionalIdentityRegistry.Credential memory credential, InstitutionalIdentityRegistry.CredentialStatus status) =
@@ -71,6 +71,7 @@ contract InstitutionalIdentityRegistryTest is Test {
         _issue(CUSTOMER, uint64(block.timestamp + 365 days), 2);
         vm.prank(COMPLIANCE);
         registry.setCredentialStatus(CUSTOMER, InstitutionalIdentityRegistry.CredentialStatus.Revoked);
+        assertTrue(registry.isRevoked(CUSTOMER));
         assertFalse(registry.isEligible(CUSTOMER));
 
         vm.prank(COMPLIANCE);

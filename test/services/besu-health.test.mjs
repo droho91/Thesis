@@ -13,6 +13,8 @@ const network = { key: "chainA", chainId: 41001, validators };
 let server;
 let rpc;
 let peerChecks;
+let blockMode;
+let blockChecks;
 
 before(async () => {
   server = createServer(async (request, response) => {
@@ -21,7 +23,13 @@ before(async () => {
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     let result;
     if (body.method === "eth_chainId") result = ethers.toQuantity(network.chainId);
-    if (body.method === "eth_blockNumber") result = "0x2";
+    let error;
+    if (body.method === "eth_blockNumber") {
+      blockChecks += 1;
+      if (blockMode === "delayed" && blockChecks <= 2) error = { message: "RPC warming up" };
+      else if (blockMode === "delayed") result = blockChecks === 3 ? "0x2" : "0x3";
+      else result = "0x2";
+    }
     if (body.method === "eth_getCode") result = "0x";
     if (body.method === "qbft_getValidatorsByBlockNumber") {
       result = validators.map((validator) => validator.address);
@@ -31,7 +39,7 @@ before(async () => {
       result = peerChecks === 1 ? "0x1" : "0x3";
     }
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
+    response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, ...(error ? { error } : { result }) }));
   });
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const address = server.address();
@@ -45,6 +53,8 @@ after(async () => {
 });
 
 test("health waits for peer convergence after the target block is reached", async () => {
+  blockMode = "static";
+  blockChecks = 0;
   peerChecks = 0;
   const snapshot = await waitForProgress(network, rpc, {
     startHeight: 1,
@@ -57,4 +67,34 @@ test("health waits for peer convergence after the target block is reached", asyn
   assert.equal(snapshot.peerCount, 3);
   assert.equal(snapshot.validatorCount, 4);
   assert.equal(peerChecks, 2);
+});
+
+test("health rejects a responsive topology when consensus does not produce a block", async () => {
+  blockMode = "static";
+  blockChecks = 0;
+  await assert.rejects(
+    waitForProgress(network, rpc, {
+      startHeight: 2,
+      blocks: 1,
+      timeoutMs: 40,
+      pollIntervalMs: 5,
+    }),
+    /chainA did not become healthy from block 2 to 3; latest=2/,
+  );
+});
+
+test("RPC readiness can take longer than the consensus progress window", async () => {
+  blockMode = "delayed";
+  blockChecks = 0;
+  peerChecks = 1;
+
+  const snapshot = await waitForProgress(network, rpc, {
+    blocks: 1,
+    timeoutMs: 40,
+    readinessTimeoutMs: 200,
+    pollIntervalMs: 10,
+  });
+
+  assert.equal(snapshot.startBlock, 2);
+  assert.equal(snapshot.blockNumber, 3);
 });

@@ -2,13 +2,16 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {EVMProofTypes} from "../../contracts/gateway/EVMProofTypes.sol";
 import {InstitutionalCheckpointClient} from "../../contracts/gateway/InstitutionalCheckpointClient.sol";
 import {InstitutionalCheckpointTypes} from "../../contracts/gateway/InstitutionalCheckpointTypes.sol";
+import {InstitutionalEVMProofVerifier} from "../../contracts/gateway/InstitutionalEVMProofVerifier.sol";
+import {StorageProofBuilder} from "../../contracts/test/StorageProofBuilder.sol";
 
 contract InstitutionalCheckpointClientTest is Test {
     uint256 internal constant SOURCE_CHAIN_ID = 41001;
     uint256 internal constant DESTINATION_CHAIN_ID = 41002;
-    uint256 internal constant TRUSTING_PERIOD = 7 days;
+    uint256 internal constant MAX_CHECKPOINT_SUBMISSION_AGE = 7 days;
     uint256 internal constant MAX_CLOCK_DRIFT = 30 seconds;
 
     InstitutionalCheckpointClient internal client;
@@ -18,7 +21,7 @@ contract InstitutionalCheckpointClientTest is Test {
     function setUp() public {
         vm.chainId(DESTINATION_CHAIN_ID);
         vm.warp(1_800_000_000);
-        client = new InstitutionalCheckpointClient(address(this), TRUSTING_PERIOD, MAX_CLOCK_DRIFT);
+        client = new InstitutionalCheckpointClient(address(this), MAX_CHECKPOINT_SUBMISSION_AGE, MAX_CLOCK_DRIFT);
         _setSortedAttestors(_keys(101, 102, 103, 104));
         client.configureSource(SOURCE_CHAIN_ID, attestors, 3);
     }
@@ -101,18 +104,70 @@ contract InstitutionalCheckpointClientTest is Test {
         client.submitCheckpoint(checkpoint, signatures);
     }
 
-    function testRejectsExpiredAndFutureCheckpoint() public {
-        InstitutionalCheckpointTypes.Checkpoint memory expired = _checkpoint(100, 1, "block-100", "root-100");
-        expired.timestamp = block.timestamp - TRUSTING_PERIOD - 1;
-        bytes[] memory expiredSignatures = _sign(expired, attestorKeys, 3);
-        vm.expectRevert(bytes("CHECKPOINT_EXPIRED"));
-        client.submitCheckpoint(expired, expiredSignatures);
+    function testRejectsCheckpointOlderThanMaximumSubmissionAgeAndFutureCheckpoint() public {
+        InstitutionalCheckpointTypes.Checkpoint memory tooOld = _checkpoint(100, 1, "block-100", "root-100");
+        tooOld.timestamp = block.timestamp - MAX_CHECKPOINT_SUBMISSION_AGE - 1;
+        bytes[] memory tooOldSignatures = _sign(tooOld, attestorKeys, 3);
+        vm.expectRevert(bytes("CHECKPOINT_SUBMISSION_TOO_OLD"));
+        client.submitCheckpoint(tooOld, tooOldSignatures);
 
         InstitutionalCheckpointTypes.Checkpoint memory future = _checkpoint(100, 1, "block-100", "root-100");
         future.timestamp = block.timestamp + MAX_CLOCK_DRIFT + 1;
         bytes[] memory futureSignatures = _sign(future, attestorKeys, 3);
         vm.expectRevert(bytes("CHECKPOINT_FROM_FUTURE"));
         client.submitCheckpoint(future, futureSignatures);
+    }
+
+    function testAcceptedCheckpointDoesNotExpireAfterSubmissionWindow() public {
+        InstitutionalCheckpointTypes.Checkpoint memory checkpoint = _checkpoint(100, 1, "block-100", "root-100");
+        client.submitCheckpoint(checkpoint, _sign(checkpoint, attestorKeys, 3));
+
+        vm.warp(block.timestamp + MAX_CHECKPOINT_SUBMISSION_AGE + 1);
+
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 100), checkpoint.stateRoot);
+        assertEq(client.maxCheckpointSubmissionAge(), MAX_CHECKPOINT_SUBMISSION_AGE);
+    }
+
+    function testTooOldHistoricalConflictCannotFreezeClient() public {
+        InstitutionalCheckpointTypes.Checkpoint memory trusted = _checkpoint(100, 1, "block-100", "root-100");
+        client.submitCheckpoint(trusted, _sign(trusted, attestorKeys, 3));
+        vm.warp(block.timestamp + MAX_CHECKPOINT_SUBMISSION_AGE + 1);
+
+        InstitutionalCheckpointTypes.Checkpoint memory historicalConflict = trusted;
+        historicalConflict.blockHash = keccak256("block-100-conflict");
+        historicalConflict.stateRoot = keccak256("root-100-conflict");
+        bytes[] memory conflictSignatures = _sign(historicalConflict, attestorKeys, 3);
+        vm.expectRevert(bytes("CHECKPOINT_SUBMISSION_TOO_OLD"));
+        client.submitCheckpoint(historicalConflict, conflictSignatures);
+
+        assertEq(uint256(client.status(SOURCE_CHAIN_ID)), uint256(InstitutionalCheckpointTypes.ClientStatus.Active));
+    }
+
+    function testEpochOlderThanPreviousCannotSubmitHistoricalConflict() public {
+        InstitutionalCheckpointTypes.Checkpoint memory first = _checkpoint(100, 1, "block-100", "root-100");
+        client.submitCheckpoint(first, _sign(first, attestorKeys, 3));
+
+        (uint256[] memory epochTwoKeys, address[] memory epochTwoAttestors) =
+            _sorted(_keys(201, 202, 203, 204), 4);
+        client.rotateAttestors(SOURCE_CHAIN_ID, epochTwoAttestors, 3, 150);
+        InstitutionalCheckpointTypes.Checkpoint memory second = _checkpoint(150, 2, "block-150", "root-150");
+        client.submitCheckpoint(second, _sign(second, epochTwoKeys, 3));
+
+        (uint256[] memory epochThreeKeys, address[] memory epochThreeAttestors) =
+            _sorted(_keys(301, 302, 303, 304), 4);
+        client.rotateAttestors(SOURCE_CHAIN_ID, epochThreeAttestors, 3, 200);
+        InstitutionalCheckpointTypes.Checkpoint memory third = _checkpoint(200, 3, "block-200", "root-200");
+        client.submitCheckpoint(third, _sign(third, epochThreeKeys, 3));
+
+        InstitutionalCheckpointTypes.Checkpoint memory historicalConflict = first;
+        historicalConflict.blockHash = keccak256("block-100-conflict");
+        historicalConflict.stateRoot = keccak256("root-100-conflict");
+        historicalConflict.timestamp = block.timestamp;
+        bytes[] memory conflictSignatures = _sign(historicalConflict, attestorKeys, 3);
+        vm.expectRevert(bytes("ATTESTOR_EPOCH_NOT_VALID"));
+        client.submitCheckpoint(historicalConflict, conflictSignatures);
+
+        assertEq(uint256(client.status(SOURCE_CHAIN_ID)), uint256(InstitutionalCheckpointTypes.ClientStatus.Active));
     }
 
     function testRotationSupportsOldSetBeforeActivationAndNewSetAtActivation() public {
@@ -169,9 +224,34 @@ contract InstitutionalCheckpointClientTest is Test {
         assertEq(client.currentAttestorEpoch(SOURCE_CHAIN_ID), 2);
     }
 
+    function testRecoveryRejectsOldProofButAcceptsRecoveryProofAndPreservesAuditData() public {
+        StorageProofBuilder builder = new StorageProofBuilder();
+        InstitutionalEVMProofVerifier verifier = new InstitutionalEVMProofVerifier(address(client));
+        (EVMProofTypes.StorageProof memory oldProof, bytes32 oldRoot) =
+            _storageProof(builder, 100, keccak256("old-slot"), keccak256("old-value"));
+        InstitutionalCheckpointTypes.Checkpoint memory trusted = _checkpoint(100, 1, "block-100", "unused");
+        trusted.stateRoot = oldRoot;
+        client.submitCheckpoint(trusted, _sign(trusted, attestorKeys, 3));
+
+        InstitutionalCheckpointTypes.Checkpoint memory conflict = _checkpoint(100, 1, "block-100b", "conflict");
+        client.submitCheckpoint(conflict, _sign(conflict, attestorKeys, 3));
+
+        (EVMProofTypes.StorageProof memory recoveryProof, bytes32 recoveryRoot) =
+            _storageProof(builder, 200, keccak256("recovery-slot"), keccak256("recovery-value"));
+        (, address[] memory recoveryAttestors) = _sorted(_keys(301, 302, 303, 304), 4);
+        InstitutionalCheckpointTypes.Checkpoint memory recovery = _checkpoint(200, 2, "block-200", "unused");
+        recovery.stateRoot = recoveryRoot;
+        client.recoverSource(recovery, recoveryAttestors, 3);
+
+        assertEq(client.checkpointAuthorizationFloor(SOURCE_CHAIN_ID), 200);
+        assertEq(client.trustedStateRoot(SOURCE_CHAIN_ID, 100), oldRoot, "historical root must remain auditable");
+        assertFalse(verifier.verifyStorageMembership(oldProof), "pre-recovery root must not authorize proofs");
+        assertTrue(verifier.verifyStorageMembership(recoveryProof), "recovery root must authorize proofs");
+    }
+
     function testConfigurationRequiresBftSupermajorityAndSortedUniqueAttestors() public {
         InstitutionalCheckpointClient another =
-            new InstitutionalCheckpointClient(address(this), TRUSTING_PERIOD, MAX_CLOCK_DRIFT);
+            new InstitutionalCheckpointClient(address(this), MAX_CHECKPOINT_SUBMISSION_AGE, MAX_CLOCK_DRIFT);
 
         vm.expectRevert(bytes("BAD_THRESHOLD"));
         another.configureSource(SOURCE_CHAIN_ID, attestors, 2);
@@ -213,6 +293,27 @@ contract InstitutionalCheckpointClientTest is Test {
             stateRoot: keccak256(bytes(rootLabel)),
             timestamp: block.timestamp,
             attestorEpoch: epoch
+        });
+    }
+
+    function _storageProof(StorageProofBuilder builder, uint256 height, bytes32 storageKey, bytes32 storageWord)
+        internal
+        pure
+        returns (EVMProofTypes.StorageProof memory proof, bytes32 stateRoot)
+    {
+        address account = address(0xA11CE);
+        StorageProofBuilder.BuiltSingleStorageProof memory built =
+            builder.buildSingleStorageProof(account, storageKey, storageWord);
+        stateRoot = built.stateRoot;
+        proof = EVMProofTypes.StorageProof({
+            sourceChainId: SOURCE_CHAIN_ID,
+            checkpointHeight: height,
+            stateRoot: stateRoot,
+            account: account,
+            storageKey: storageKey,
+            expectedValue: built.expectedTrieValue,
+            accountProof: built.accountProof,
+            storageProof: built.storageProof
         });
     }
 
