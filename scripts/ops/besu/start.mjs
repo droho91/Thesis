@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { inspectChain, loadScaffold, rpcByNetworkKey, waitForProgress } from "./health.mjs";
 
 const NETWORK_ROOT = process.env.BESU_NETWORK_ROOT || "networks/besu";
@@ -14,13 +15,36 @@ const AUTO_RECOVER_STALLED_CONSENSUS = process.env.BESU_START_AUTO_RECOVER?.toLo
 
 async function run(command, args) {
   await new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, { stdio: "inherit", shell: false });
+    const child = spawn(command, args, { stdio: ["inherit", "pipe", "pipe"], shell: false });
+    let output = "";
+    const record = (stream, chunk) => {
+      stream.write(chunk);
+      output = `${output}${chunk}`.slice(-8_192);
+    };
+    child.stdout?.on("data", (chunk) => record(process.stdout, chunk));
+    child.stderr?.on("data", (chunk) => record(process.stderr, chunk));
     child.once("error", rejectRun);
     child.once("exit", (code, signal) => {
       if (code === 0) return resolveRun();
-      rejectRun(new Error(`${command} exited with ${signal || `code ${code}`}`));
+      const error = new Error(`${command} exited with ${signal || `code ${code}`}`);
+      error.output = output;
+      rejectRun(error);
     });
   });
+}
+
+export function isTransientComposeWorkingDirectoryError(error) {
+  return /getwd:\s*no such file or directory/i.test(error?.output || "");
+}
+
+export async function runComposeWithCwdRetry(args, { runCommand = run } = {}) {
+  try {
+    await runCommand("docker", ["compose", ...args]);
+  } catch (error) {
+    if (!isTransientComposeWorkingDirectoryError(error)) throw error;
+    console.warn("[besu:start] Docker Desktop WSL cwd proxy was temporarily unavailable; retrying once.");
+    await runCommand("docker", ["compose", ...args]);
+  }
 }
 
 function composeServiceName(validator) {
@@ -31,7 +55,14 @@ async function startNetwork(network) {
   const services = network.validators.map(composeServiceName);
   const projectArgs = COMPOSE_PROJECT_NAME ? ["-p", COMPOSE_PROJECT_NAME] : [];
   console.log(`[besu:start] Starting ${network.key} validators as one consensus group.`);
-  await run("docker", ["compose", ...projectArgs, "-f", COMPOSE_FILE, "up", "-d", ...services]);
+  await runComposeWithCwdRetry([
+    ...projectArgs,
+    "-f",
+    COMPOSE_FILE,
+    "up",
+    "-d",
+    ...services,
+  ]);
 
   const rpc = rpcByNetworkKey(network.key);
   let snapshot;
@@ -54,7 +85,13 @@ async function startNetwork(network) {
       `[besu:start] ${network.key} RPC topology is ready but consensus is not progressing; ` +
         "restarting this chain's validators once.",
     );
-    await run("docker", ["compose", ...projectArgs, "-f", COMPOSE_FILE, "restart", ...services]);
+    await runComposeWithCwdRetry([
+      ...projectArgs,
+      "-f",
+      COMPOSE_FILE,
+      "restart",
+      ...services,
+    ]);
     snapshot = await waitForProgress(network, rpc, {
       timeoutMs: INITIAL_PROGRESS_TIMEOUT_MS,
       readinessTimeoutMs: STARTUP_TIMEOUT_MS,
@@ -85,7 +122,9 @@ async function main() {
   console.log("[besu:start] both QBFT bank chains are ready.");
 }
 
-main().catch((error) => {
-  console.error(`[besu:start] ${error?.message || error}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(`[besu:start] ${error?.message || error}`);
+    process.exitCode = 1;
+  });
+}
