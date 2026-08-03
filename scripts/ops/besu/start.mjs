@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspectChain, loadScaffold, rpcByNetworkKey, waitForProgress } from "./health.mjs";
@@ -15,7 +16,14 @@ const AUTO_RECOVER_STALLED_CONSENSUS = process.env.BESU_START_AUTO_RECOVER?.toLo
 
 async function run(command, args) {
   await new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, { stdio: ["inherit", "pipe", "pipe"], shell: false });
+    const child = spawn(command, args, {
+      // Docker Desktop's WSL proxy can lose an old cwd handle on /mnt/c while
+      // consensus readiness is being polled. All Compose file arguments are
+      // absolute, so use the native temporary directory as a stable cwd.
+      cwd: tmpdir(),
+      stdio: ["inherit", "pipe", "pipe"],
+      shell: false,
+    });
     let output = "";
     const record = (stream, chunk) => {
       stream.write(chunk);

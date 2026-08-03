@@ -162,7 +162,7 @@ Phase 9 hoàn tất repository implementation và targeted negative tests cho đ
 | Live Besu integration | Không chạy trong audit này | Cần prepared Docker runtime; report lịch sử không được dùng thay kết quả mới |
 | Evidence acceptance run | Chưa chạy lại có chủ đích | Evidence-eligible run yêu cầu clean reviewed commit; offline verifier hiện từ chối đúng bundle legacy/stale và secret artifact cũ thay vì tái sử dụng pass lịch sử |
 
-Lượt chốt Phase 9 của `npm test` pass toàn bộ với 139 Solidity tests, 227 service tests và institutional UI source/read-model check. Sau khi cài Chromium dependencies, browser suite pass 21/21 và visual baseline ổn định ở cả ba viewport. Docker Desktop WSL integration cũng pass với Engine `29.6.1` và Compose `5.3.0`; một transient Compose `getwd` failure được giới hạn đúng một retry và mọi lỗi Compose khác vẫn fail ngay. Tại snapshot trước clean evidence run, live integration/evidence vẫn chưa được tính là pass mới.
+Lượt chốt Phase 9 của `npm test` pass toàn bộ với 139 Solidity tests, 227 service tests và institutional UI source/read-model check. Sau khi cài Chromium dependencies, browser suite pass 21/21 và visual baseline ổn định ở cả ba viewport. Docker Desktop WSL integration cũng pass với Engine `29.6.1` và Compose `5.3.0`; Compose subprocess dùng native temporary cwd để tránh WSL proxy làm mất long-lived `/mnt/c` cwd handle, còn exact `getwd` diagnostic chỉ được retry đúng một lần. Diagnostic runtime xác nhận cả hai chain đạt 4 validators, 3 peers và block progress; kết quả này không thay clean evidence run.
 
 ## 4. Những điểm đang làm tốt
 
