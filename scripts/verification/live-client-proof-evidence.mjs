@@ -130,8 +130,7 @@ export function validateLiveClientProofEvidence(
   for (const client of evidence.clients) {
     if (client.clientFamily !== "Besu") throw new Error("Live proof client family is not Besu");
     const version = nonEmptyString(client.clientVersion, "client version");
-    const escapedVersion = expectedBesuVersion.replaceAll(".", "\\.");
-    if (!new RegExp(`^besu/v${escapedVersion}(?:/|$)`, "i").test(version)) {
+    if (!matchesPinnedBesuVersion(version, expectedBesuVersion)) {
       throw new Error(`Live Besu client version does not match pinned ${expectedBesuVersion}`);
     }
   }
@@ -216,6 +215,23 @@ function clientFamily(version) {
   const value = nonEmptyString(version, "client version");
   if (/^besu\//i.test(value)) return "Besu";
   throw new Error(`Unsupported live execution client '${value}'`);
+}
+
+function matchesPinnedBesuVersion(clientVersion, expectedVersion) {
+  const segments = clientVersion.split("/");
+  if (segments[0]?.toLowerCase() !== "besu" || segments.some((segment) => segment.length === 0)) return false;
+
+  const semanticVersionIndexes = [];
+  for (let index = 1; index < segments.length; index += 1) {
+    if (/^v\d+\.\d+\.\d+(?:[-+][0-9a-z.-]+)?$/i.test(segments[index])) {
+      semanticVersionIndexes.push(index);
+    }
+  }
+
+  if (semanticVersionIndexes.length !== 1) return false;
+  const [versionIndex] = semanticVersionIndexes;
+  if (versionIndex !== 1 && versionIndex !== 2) return false;
+  return segments[versionIndex].toLowerCase() === `v${expectedVersion}`.toLowerCase();
 }
 
 function decimalString(value, label) {

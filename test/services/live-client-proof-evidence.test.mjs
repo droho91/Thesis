@@ -11,6 +11,7 @@ import {
 const CHAIN_A = "41001";
 const CHAIN_B = "41002";
 const CLIENT_VERSION = "besu/v24.10.0/linux-x86_64/openjdk-java-21";
+const IDENTIFIED_CLIENT_VERSION = "besu/chainA-bank-a-validator-1/v24.10.0/linux-x86_64/openjdk-java-21";
 
 test("live proof evidence binds both Besu chains and four production-accepted membership proofs", () => {
   const evidence = passingEvidence();
@@ -51,6 +52,26 @@ test("live proof collector retains one bounded observation per kind and source c
   }
   const evidence = collector.build(chainSnapshots());
   assert.equal(evidence.proofObservations.length, 4);
+});
+
+test("live proof validation accepts Besu node identity without weakening the pinned version", () => {
+  const evidence = passingEvidence();
+  evidence.clients[0].clientVersion = IDENTIFIED_CLIENT_VERSION;
+  assert.equal(validateLiveClientProofEvidence(evidence), evidence);
+
+  for (const clientVersion of [
+    "besu/chainA-bank-a-validator-1/v24.10.1/linux-x86_64/openjdk-java-21",
+    "besu/chainA-bank-a-validator-1/v24.10.0-rc1/linux-x86_64/openjdk-java-21",
+    "besu/v24.10.0/v25.1.0/openjdk-java-21",
+    "besu/chainA-bank-a-validator-1/extra/v24.10.0/linux-x86_64/openjdk-java-21",
+  ]) {
+    const changed = structuredClone(evidence);
+    changed.clients[0].clientVersion = clientVersion;
+    assert.throws(
+      () => validateLiveClientProofEvidence(changed),
+      /Live Besu client version does not match pinned 24\.10\.0/,
+    );
+  }
 });
 
 test("live proof validation fails closed on missing coverage, drift, wrong clients and duplicate acceptance", () => {
