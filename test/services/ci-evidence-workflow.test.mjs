@@ -12,6 +12,8 @@ test("hosted Besu job runs clean evidence, verifies it and retains bounded clean
   assert.match(job, /npm run institutional:evidence(?:\s|$)/);
   assert.doesNotMatch(job, /institutional:evidence\s+--\s+--allow-dirty/);
   assert.match(job, /npm run institutional:evidence:verify/);
+  assert.match(job, /timeout-minutes: 100/);
+  assert.match(job, /timeout --signal=TERM --kill-after=30s 85m\s+npm run institutional:evidence/);
   assert.match(job, /if: always\(\)[\s\S]*down --volumes --remove-orphans/);
   assert.match(job, /path: \.runtime\/evidence\/\*\.json/);
 });

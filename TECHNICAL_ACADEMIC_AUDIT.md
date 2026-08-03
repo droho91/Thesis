@@ -155,14 +155,14 @@ Phase 9 hoàn tất repository implementation và targeted negative tests cho đ
 | Kiểm tra | Kết quả | Ghi chú |
 | --- | --- | --- |
 | Solidity tests | 139/139 pass | Phase 8 bổ sung pinned-corpus adapter regressions và 4 stateful invariant properties; toàn bộ checkpoint, gateway, MPT, financial invariant và fuzz regression vẫn pass |
-| Service tests | 228/228 pass | Phase 9 bổ sung regression cho live-client proof coverage/digest/gateway binding, exact Besu version parsing với node identity, summary/integration schema, browser/defense preflight, Git provenance environment, clean hosted-evidence workflow và bounded Docker Desktop WSL cwd retry trên nền Phase 8 |
+| Service tests | 228/228 pass | Phase 9 bổ sung regression cho live-client proof coverage/digest/gateway binding, exact Besu version parsing với node identity, summary/integration schema, browser/defense preflight, Git provenance environment, bounded hosted-evidence workflow và Docker Desktop WSL cwd retry trên nền Phase 8 |
 | UI source/read-model checks | Pass | `npm run test:ui` là static gate cho semantic readiness, stale-state action lock, BigInt source usage, summary v4/integration v3, pass/fail/stale, component completeness, bytecode, lock, secret contamination, live-client proof và source applicability; browser behavior được kiểm riêng ở hàng kế tiếp |
 | Browser interaction/a11y/visual | 21/21 pass | Fresh Phase 9 run xác nhận keyboard, axe/overflow/typography, motion regressions và 10 reviewed Linux/Chromium images tại 1366, 1600 và 1920 pixel |
 | Security scenario regression | 14/14 pass | Hardhat `3.12.0` được pin chính xác; mỗi scenario chạy bằng exact full Solidity signature và structured `passed/failed/skipped/todo` counts; fuzz repayment chạy 128 lượt |
 | Live Besu integration | Không chạy trong audit này | Cần prepared Docker runtime; report lịch sử không được dùng thay kết quả mới |
 | Evidence acceptance run | Chưa chạy lại có chủ đích | Evidence-eligible run yêu cầu clean reviewed commit; offline verifier hiện từ chối đúng bundle legacy/stale và secret artifact cũ thay vì tái sử dụng pass lịch sử |
 
-Lượt chốt Phase 9 của `npm test` pass toàn bộ với 139 Solidity tests, 228 service tests và institutional UI source/read-model check. Sau khi cài Chromium dependencies, browser suite pass 21/21 và visual baseline ổn định ở cả ba viewport. Docker Desktop WSL integration cũng pass với Engine `29.6.1` và Compose `5.3.0`; Compose subprocess dùng native temporary cwd để tránh WSL proxy làm mất long-lived `/mnt/c` cwd handle, còn exact `getwd` diagnostic chỉ được retry đúng một lần. Diagnostic runtime xác nhận cả hai chain đạt 4 validators, 3 peers và block progress; kết quả này không thay clean evidence run.
+Lượt chốt Phase 9 của local test pass toàn bộ với 139 Solidity tests, 228 service tests và institutional UI source/read-model check. Sau khi cài Chromium dependencies, browser suite pass 21/21 và visual baseline ổn định ở cả ba viewport. Docker Desktop WSL integration cũng pass với Engine `29.6.1` và Compose `5.3.0`; Compose subprocess dùng native temporary cwd để tránh WSL proxy làm mất long-lived `/mnt/c` cwd handle, còn exact `getwd` diagnostic chỉ được retry đúng một lần. Diagnostic runtime xác nhận cả hai chain đạt 4 validators, 3 peers và block progress; kết quả này không thay clean evidence run.
 
 ## 4. Những điểm đang làm tốt
 

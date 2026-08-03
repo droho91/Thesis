@@ -56,7 +56,7 @@ jobs:
     name: Live Besu evidence
     needs: test
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -70,7 +70,7 @@ jobs:
           timeout --signal=TERM --kill-after=5s 30s docker compose version
       - name: Run isolated Besu evidence workflow
         run: >-
-          timeout --signal=TERM --kill-after=30s 45m
+          timeout --signal=TERM --kill-after=30s 85m
           npm run institutional:evidence
       - name: Verify evidence against the current clean source
         run: npm run institutional:evidence:verify

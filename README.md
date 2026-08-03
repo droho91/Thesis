@@ -141,7 +141,7 @@ Chỉ dùng evidence khi verifier pass và `demo:doctor` trả `READY FOR DEFENS
 
 Evidence đủ điều kiện trình bày yêu cầu một Git commit sạch, đã review và khớp source provenance. `--allow-dirty` chỉ tạo `calibration-passed`, không evidence-eligible. Các checksum cung cấp kiểm tra tính nhất quán dưới giả định host và toolchain đáng tin cậy; chúng không phải chữ ký độc lập, formal verification, external audit hoặc production SLA.
 
-GitHub Actions định nghĩa thêm một clean hosted Besu evidence job trên Ubuntu 24.04, có Docker preflight, timeout hữu hạn, diagnostics giới hạn, offline verifier và cleanup `always()`. Workflow không dùng `--allow-dirty`; tuy vậy, việc job được định nghĩa hoặc upload được JSON vẫn không chứng minh nó đã pass. Chỉ sử dụng artifact khi exact Actions run xanh, summary v4 có status `passed`, verifier pass và commit khớp source đã review.
+GitHub Actions định nghĩa thêm một clean hosted Besu evidence job trên Ubuntu 24.04, có Docker preflight, command budget 85 phút trong job budget 100 phút, diagnostics giới hạn, offline verifier và cleanup `always()`. Khoảng cách 15 phút giữ thời gian cho verifier, diagnostics và cleanup sau command. Workflow không dùng `--allow-dirty`; tuy vậy, việc job được định nghĩa hoặc upload được JSON vẫn không chứng minh nó đã pass. Chỉ sử dụng artifact khi exact Actions run xanh, summary v4 có status `passed`, verifier pass và commit khớp source đã review.
 
 ## Tắt runtime
 
