@@ -52,7 +52,7 @@ export function createPassingEvidenceReports(profile) {
   const sourceInclusion = samples.map((sample) => sample.sourceInclusionMs);
   const postSourceInclusionToCompletion = samples.map((sample) => sample.postSourceInclusionToCompletionMs);
   const endToEnd = samples.map((sample) => sample.endToEndMs);
-  const clientVersion = "besu/v24.10.0/linux-x86_64/openjdk-java-21";
+  const clientVersion = "besu/test-validator/v24.10.0/linux-x86_64/openjdk-java-21";
   const liveClientProofValidation = buildLiveClientProofValidation({
     chainSnapshots: [
       { chainId: String(effective.besu.chainIds.A), clientVersion },

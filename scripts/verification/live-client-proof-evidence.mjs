@@ -130,7 +130,7 @@ export function validateLiveClientProofEvidence(
   for (const client of evidence.clients) {
     if (client.clientFamily !== "Besu") throw new Error("Live proof client family is not Besu");
     const version = nonEmptyString(client.clientVersion, "client version");
-    if (!matchesPinnedBesuVersion(version, expectedBesuVersion)) {
+    if (!matchesPinnedBesuClientVersion(version, expectedBesuVersion)) {
       throw new Error(`Live Besu client version does not match pinned ${expectedBesuVersion}`);
     }
   }
@@ -217,7 +217,8 @@ function clientFamily(version) {
   throw new Error(`Unsupported live execution client '${value}'`);
 }
 
-function matchesPinnedBesuVersion(clientVersion, expectedVersion) {
+export function matchesPinnedBesuClientVersion(clientVersion, expectedVersion = "24.10.0") {
+  if (typeof clientVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(expectedVersion)) return false;
   const segments = clientVersion.split("/");
   if (segments[0]?.toLowerCase() !== "besu" || segments.some((segment) => segment.length === 0)) return false;
 

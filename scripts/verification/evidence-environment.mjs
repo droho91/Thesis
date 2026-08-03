@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { ethers } from "ethers";
-import { validateLiveClientProofEvidence } from "./live-client-proof-evidence.mjs";
+import {
+  matchesPinnedBesuClientVersion,
+  validateLiveClientProofEvidence,
+} from "./live-client-proof-evidence.mjs";
 
 export const EVIDENCE_SECURITY_PROFILE_SCHEMA = "institutional-evidence-security-profile-v1";
 
@@ -773,7 +776,7 @@ function assertIntegrationEnvironment(environment, effective) {
 }
 
 function assertBesuClientVersion(value, label) {
-  if (typeof value !== "string" || !/^besu\/v24\.10\.0(?:\/|$)/i.test(value)) {
+  if (typeof value !== "string" || !matchesPinnedBesuClientVersion(value)) {
     throw new Error(`Evidence security profile mismatch for ${label}`);
   }
 }
