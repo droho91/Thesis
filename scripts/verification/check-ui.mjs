@@ -401,11 +401,13 @@ assert.doesNotMatch(html, /finalizeForwardHeader|updateForwardClient|proveForwar
 assert.doesNotMatch(app, /deploy-seed|reset-seeded|resume-session/);
 assert.doesNotMatch(app, /settleDust/);
 assert.doesNotMatch(runtime, /settleDust/);
-assert.doesNotMatch(styles, /@media\s*\([^)]*(?:min|max)-width/i);
+assert.match(styles, /@media\s*\(min-width:\s*1080px\)\s*and\s*\(max-width:\s*1365px\)/i);
+assert.doesNotMatch(styles, /@media\s*\([^)]*max-width:\s*(?:[0-9]{1,3}|10[0-7][0-9])px/i);
 assert.match(styles, /@media\s*\(prefers-reduced-motion:\s*reduce\)/i);
 assert.match(styles, /@keyframes\s+live-ring/);
 assert.match(styles, /\.metric-card:hover/);
 assert.match(styles, /min-width:\s*1280px/);
+assert.match(styles, /min-width:\s*1080px/);
 assert.match(styles, /--canvas:\s*#f4f7fb/i);
 assert.match(styles, /Luminous Ledger desktop theme/);
 assert.match(app, /function renderIdentity/);

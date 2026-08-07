@@ -34,9 +34,14 @@ const test = base.extend({
     const unexpectedIssues = [...issues];
     const missingIssues = [];
     for (const pattern of expectedIssues) {
-      const index = unexpectedIssues.findIndex((issue) => pattern.test(issue));
-      if (index < 0) missingIssues.push(`expected issue was not observed: ${pattern}`);
-      else unexpectedIssues.splice(index, 1);
+      const matchingIndexes = unexpectedIssues.flatMap((issue, index) => (
+        pattern.test(issue) ? [index] : []
+      ));
+      if (matchingIndexes.length === 0) {
+        missingIssues.push(`expected issue was not observed: ${pattern}`);
+        continue;
+      }
+      for (const index of matchingIndexes.reverse()) unexpectedIssues.splice(index, 1);
     }
     const integrityFailures = [...unexpectedIssues, ...missingIssues];
     expect(integrityFailures, integrityFailures.join("\n")).toEqual([]);
@@ -189,6 +194,66 @@ test("projector typography remains legible", async ({ page }) => {
   expect(undersized, JSON.stringify(undersized, null, 2)).toEqual([]);
 });
 
+test("compact desktop preserves essential labels and values", async ({ page }, testInfo) => {
+  if (!testInfo.project.name.startsWith("laptop-")) return;
+  const criticalSelectors = [
+    "#canonicalBalance",
+    "#collateralBalance",
+    "#debtBalance",
+    "#healthFactor",
+    ".journey-step b",
+    ".section-heading h2",
+    ".readiness-card h3",
+    ".status-button > span",
+    ".route-bank strong",
+    ".position-strip dd",
+    ".settlement-flow b",
+    ".benchmark-strip dt",
+    ".benchmark-strip dd",
+    ".linky-runtime dd",
+  ];
+  const clipped = [];
+  for (const tabId of workflowTabs) {
+    await page.locator(`#${tabId}`).click();
+    const findings = await page.locator(criticalSelectors.join(", ")).evaluateAll((nodes) => nodes.flatMap((node) => {
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0 || style.visibility === "hidden") return [];
+      if (node.scrollWidth <= node.clientWidth + 1) return [];
+      return [{
+        selector: node.id ? `#${node.id}` : `${node.tagName.toLowerCase()}.${[...node.classList].join(".")}`,
+        clientWidth: node.clientWidth,
+        scrollWidth: node.scrollWidth,
+        text: node.textContent.trim().replace(/\s+/g, " ").slice(0, 100),
+      }];
+    }));
+    clipped.push(...findings.map((finding) => ({ tabId, ...finding })));
+  }
+  expect(clipped, JSON.stringify(clipped, null, 2)).toEqual([]);
+
+  const journeyGeometry = await page.locator(".journey").evaluate((journey) => {
+    const journeyRect = journey.getBoundingClientRect();
+    const tabs = [...journey.querySelectorAll(".journey-step")].map((tab) => {
+      const rect = tab.getBoundingClientRect();
+      return { id: tab.id, top: rect.top, bottom: rect.bottom };
+    });
+    const assuranceRect = journey.querySelector(".journey-assurance")?.getBoundingClientRect();
+    return {
+      clientHeight: journey.clientHeight,
+      scrollHeight: journey.scrollHeight,
+      top: journeyRect.top,
+      bottom: journeyRect.bottom,
+      tabs,
+      assuranceBottom: assuranceRect?.bottom ?? null,
+    };
+  });
+  expect(journeyGeometry.scrollHeight).toBeLessThanOrEqual(journeyGeometry.clientHeight + 1);
+  expect(journeyGeometry.tabs).toHaveLength(workflowTabs.length);
+  expect(journeyGeometry.tabs[0].top).toBeGreaterThanOrEqual(journeyGeometry.top);
+  expect(journeyGeometry.tabs.at(-1).bottom).toBeLessThanOrEqual(journeyGeometry.bottom);
+  expect(journeyGeometry.assuranceBottom).toBeLessThanOrEqual(journeyGeometry.bottom);
+});
+
 test("motion follows readiness state and reduced-motion preference", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const readyMotion = await page.evaluate(() => ({
@@ -270,6 +335,9 @@ test("ready status tones reset when the runtime snapshot becomes unavailable", a
       body: JSON.stringify({ error: "Fixture status endpoint is offline." }),
     });
   });
+  const unavailableConsole = page.waitForEvent("console", {
+    predicate: (message) => message.type() === "error" && /503 \(Service Unavailable\)/.test(message.text()),
+  });
   await page.locator("#refreshButton").click();
   await expect(page.locator("#runtimeStatusLabel")).toHaveText("Runtime unavailable");
   await expect(page.locator("#runtimeStatus")).toHaveClass(/\bis-error\b/);
@@ -285,6 +353,7 @@ test("ready status tones reset when the runtime snapshot becomes unavailable", a
     await expect(button).toHaveClass(/\bis-review\b/);
     await expect(button).not.toHaveClass(/\bis-verified\b/);
   }
+  await unavailableConsole;
 
   const statusMotion = await page.evaluate((buttonIds) => Object.fromEntries(buttonIds.map((buttonId) => [
     buttonId,
