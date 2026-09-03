@@ -15,8 +15,11 @@ const FUNDED_BALANCE = "0x3635C9ADC5DEA00000"; // 1000 ETH
 const QBFT_MIX_HASH = "0x63746963616c2062797a616e74696e65206661756c7420746f6c6572616e6365";
 const UNSAFE_LOCAL_DEMO = process.env.UNSAFE_LOCAL_DEMO === "true";
 const BESU_ENABLE_ADMIN_DEBUG = process.env.BESU_ENABLE_ADMIN_DEBUG === "true";
+// Keep the tag human-auditable and the OCI index digest immutable. Besu 26.8.1
+// fixes Paris-era BFT transaction selection and Bonsai state-root defects that
+// directly affect this QBFT + EIP-1186 evidence profile.
 const BESU_DOCKER_IMAGE = process.env.BESU_DOCKER_IMAGE ||
-  "hyperledger/besu:24.10.0@sha256:644f31577d06f0076375fb4a92805e30038b8dee2b25dda4dd3a843f79ccca65";
+  "hyperledger/besu:26.8.1@sha256:6f3f21ce533383fcc8db3bce02252b59d5a9e776b72b5a1c8ecd2db011600042";
 const BESU_JAVA_OPTS = process.env.BESU_JAVA_OPTS || "-Xms128m -Xmx512m -XX:ActiveProcessorCount=2";
 const BESU_VALIDATOR_COUNT = Math.min(
   7,

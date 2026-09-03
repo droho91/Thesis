@@ -47,9 +47,78 @@ test("collector validates and sorts a three-of-four quorum", async () => {
     fetchImpl,
   });
 
-  assert.equal(result.signatures.length, 4);
-  assert.deepEqual(result.signers, [...wallets.map((wallet) => wallet.address)].sort((a, b) =>
+  assert.equal(result.signatures.length, 3);
+  assert.equal(new Set(result.signers).size, 3);
+  assert.ok(result.signers.every((signer) => wallets.some((wallet) => wallet.address === signer)));
+  assert.deepEqual(result.signers, [...result.signers].sort((a, b) =>
     a.toLowerCase().localeCompare(b.toLowerCase())));
+});
+
+test("collector returns at quorum and aborts an unavailable straggler", async () => {
+  const wallets = [1, 2, 3, 4].map((value) => new ethers.Wallet(`0x${value.toString(16).padStart(64, "0")}`));
+  const domain = checkpointDomain(domainInput);
+  const digest = checkpointDigest(checkpoint, domain);
+  let stragglerAborted = false;
+  const fetchImpl = async (url, options) => {
+    const index = Number(new URL(url).hostname.split("-").at(-1));
+    if (index === 3) {
+      return new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () => {
+          stragglerAborted = true;
+          reject(options.signal.reason || new Error("aborted"));
+        }, { once: true });
+      });
+    }
+    return {
+      ok: true,
+      async json() {
+        return {
+          signer: wallets[index].address,
+          signature: await wallets[index].signTypedData(domain, CHECKPOINT_TYPES, checkpoint),
+          digest,
+        };
+      },
+    };
+  };
+
+  const result = await collectCheckpointQuorum({
+    checkpoint,
+    domain: domainInput,
+    endpoints: wallets.map((_, index) => `http://attestor-${index}`),
+    threshold: 3,
+    allowedAttestors: wallets.map((wallet) => wallet.address),
+    timeoutMs: 60_000,
+    fetchImpl,
+  });
+
+  assert.equal(result.signatures.length, 3);
+  assert.equal(stragglerAborted, true);
+});
+
+test("collector rejects thresholds that cannot be satisfied", async () => {
+  const wallet = new ethers.Wallet(`0x${"01".padStart(64, "0")}`);
+  await assert.rejects(
+    collectCheckpointQuorum({
+      checkpoint,
+      domain: domainInput,
+      endpoints: ["http://attestor-0"],
+      threshold: 2,
+      allowedAttestors: [wallet.address],
+      fetchImpl: async () => assert.fail("invalid configuration must fail before fetch"),
+    }),
+    /threshold exceeds/,
+  );
+  await assert.rejects(
+    collectCheckpointQuorum({
+      checkpoint,
+      domain: domainInput,
+      endpoints: ["file:///tmp/not-an-attestor"],
+      threshold: 1,
+      allowedAttestors: [wallet.address],
+      fetchImpl: async () => assert.fail("invalid endpoint must fail before fetch"),
+    }),
+    /must use HTTP\(S\)/,
+  );
 });
 
 test("collector rejects forged, duplicate, and non-attestor responses below quorum", async () => {

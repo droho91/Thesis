@@ -34,6 +34,10 @@ contract PolicyControlledEscrowVault is AccessControl, Pausable, ReentrancyGuard
         require(admin != address(0), "ADMIN_ZERO");
         require(asset_ != address(0), "ASSET_ZERO");
         require(policyEngine_ != address(0), "POLICY_ENGINE_ZERO");
+        // Fail at deployment instead of silently binding an EOA whose ABI calls
+        // would fail only after assets have entered the application lifecycle.
+        require(asset_.code.length > 0, "ASSET_NOT_CONTRACT");
+        require(policyEngine_.code.length > 0, "POLICY_ENGINE_NOT_CONTRACT");
         asset = IERC20(asset_);
         policyEngine = IBankPolicyEngine(policyEngine_);
         _grantRole(DEFAULT_ADMIN_ROLE, admin);

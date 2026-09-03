@@ -57,14 +57,70 @@ export function operationProgressCopy(action) {
 export function recommendationFor(status) {
   const next = status.workflow?.nextAction;
   const recommendations = {
-    bridge: { image: "guide", title: "Lock aBANK for voucher issuance", copy: "Canonical aBANK remains in governed escrow on Bank A while Bank B issues vA after proof checks.", action: "bridge", button: "Open transfer" },
-    deposit: { image: "guide", title: "Activate received collateral", copy: "Proof-issued vA is available on Bank B and can enter the lending position.", action: "deposit", button: "Open lending" },
-    borrow: { image: "guide", title: "Borrowing capacity is available", copy: `${compactAmount(status.risk.availableBorrow)} bCASH remains within policy and liquidity limits.`, action: "borrow", button: "Open borrowing" },
+    bridge: {
+      image: "guide",
+      title: "Transfer to Bank B",
+      copy: "Lock aBANK and issue proof-backed vA.",
+      explanation: "Bank A escrows aBANK. Bank B issues vA only after finality, attestor quorum and proof verification.",
+      action: "bridge",
+      button: "Open transfer",
+    },
+    deposit: {
+      image: "guide",
+      title: "Activate collateral",
+      copy: "Deposit available vA into lending.",
+      explanation: "Only proof-issued vA can enter the Bank B lending position.",
+      action: "deposit",
+      button: "Open lending",
+    },
+    borrow: {
+      image: "guide",
+      title: "Borrow bCASH",
+      copy: `${compactAmount(status.risk.availableBorrow)} bCASH available.`,
+      explanation: "The recommendation remains within collateral, credit and pool-liquidity limits.",
+      action: "borrow",
+      button: "Open borrowing",
+    },
     repay: canRepaySmallBalance(status)
-      ? { image: "caution", title: "Repay exact remaining balance", copy: "A small accrued bCASH balance remains and will be collected in full.", action: "repayAll", button: "Repay full balance" }
-      : { image: "caution", title: "Manage outstanding debt", copy: `${compactAmount(status.balances.outstandingDebt)} bCASH remains outstanding on Bank B.`, action: "repay", button: "Open repayment" },
-    withdraw: { image: "guide", title: "Release active collateral", copy: "The debt position is clear and collateral can leave the lending pool.", action: "withdraw", button: "Open withdrawal" },
-    return: { image: "success", title: "Settle collateral on Bank A", copy: "Free voucher can now be burned for canonical custody release.", action: "return", button: "Open settlement" },
+      ? {
+          image: "caution",
+          title: "Clear remaining debt",
+          copy: "Repay the exact accrued balance.",
+          explanation: "The exact accrued balance clears residual debt without leaving an unusable remainder.",
+          action: "repayAll",
+          button: "Repay full balance",
+        }
+      : {
+          image: "caution",
+          title: "Repay debt",
+          copy: `${compactAmount(status.balances.outstandingDebt)} bCASH outstanding.`,
+          explanation: "Reducing outstanding debt improves the position's health and available capacity.",
+          action: "repay",
+          button: "Open repayment",
+        },
+    withdraw: {
+      image: "guide",
+      title: "Withdraw collateral",
+      copy: "Debt is clear and collateral is available.",
+      explanation: "Withdrawal is available because no debt blocks collateral release.",
+      action: "withdraw",
+      button: "Open withdrawal",
+    },
+    return: {
+      image: "success",
+      title: "Settle on Bank A",
+      copy: "Burn vA and release aBANK.",
+      explanation: "Bank B burns vA before Bank A releases the corresponding escrowed aBANK.",
+      action: "return",
+      button: "Open settlement",
+    },
   };
-  return recommendations[next] || { image: "neutral", title: "Institutional state is synchronized", copy: "Review runtime evidence and recent transaction identifiers.", action: "evidence", button: "Open evidence" };
+  return recommendations[next] || {
+    image: "neutral",
+    title: "Review evidence",
+    copy: "Runtime state is synchronized.",
+    explanation: "The evidence view records provenance, security checks and measured settlement results.",
+    action: "evidence",
+    button: "Open evidence",
+  };
 }

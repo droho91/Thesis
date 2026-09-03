@@ -74,7 +74,12 @@ async function main() {
       await rm(managedPaths.networkRoot, { recursive: true, force: true });
       await rm(managedPaths.evidenceRoot, { recursive: true, force: true });
     },
-    { label: "institutional-evidence-bundle-reset" },
+    {
+      label: "institutional-evidence-bundle-reset",
+      // A local restart may recover only a well-formed lock whose recorded PID
+      // the OS confirms is gone; foreign or unverifiable owners still fail closed.
+      reclaimOrphaned: true,
+    },
   );
   await step("security-scenarios", process.execPath, ["scripts/verification/security-scenarios.mjs"]);
   await step("generate-qbft", process.execPath, ["scripts/ops/besu/generate.mjs"]);
@@ -313,6 +318,9 @@ async function runExclusive() {
     {
       label: "institutional-runtime-evidence",
       metadata: { summaryPath: managedPaths.summaryPath },
+      // Avoid a manual lock-file repair after an abrupt local evidence-runner
+      // exit without weakening the live/foreign-owner exclusion boundary.
+      reclaimOrphaned: true,
     },
   );
 }

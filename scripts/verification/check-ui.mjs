@@ -390,6 +390,21 @@ assert.doesNotMatch(html, /\/assets\/nexus-mark\.svg/);
 assert.match(html, /Linky Nexus/);
 assert.match(html, /data-panel="identity"/);
 assert.match(html, /id="readinessVerdict"/);
+assert.match(html, /class="technical-disclosure"/);
+assert.doesNotMatch(html, /Proof-backed liquidity across bank networks|Governed lifecycle|class="linky-runtime"/);
+assert.doesNotMatch(html, /class="linky-command-center"|id="linkyWhyButton"/);
+for (const momentId of ["linkyIdentityImage", "linkyTransferImage", "linkyLendingImage", "linkySettlementImage", "linkyEvidenceImage"]) {
+  assert.match(html, new RegExp(`id="${momentId}"[^>]+data-linky-image`));
+}
+assert.match(html, /id="linkyTransferProgress"[^>]+role="progressbar"/);
+assert.match(app, /setTransferLinkyProgress/);
+assert.match(styles, /\.linky-moment img[^{]*\{[^}]*object-fit:\s*contain/s);
+for (const semanticValueId of ["overviewChainABlock", "overviewChainBBlock", "runtimeChainA", "runtimeChainB"]) {
+  assert.match(html, new RegExp(`id="${semanticValueId}"`));
+}
+assert.match(styles, /\.ui-atomic\s*\{[^}]*white-space:\s*nowrap/s);
+assert.match(styles, /\.overview-chain-heights\s*\{[^}]*flex-wrap:\s*wrap/s);
+assert.doesNotMatch(html, /class="linky-rail"/);
 assert.match(html, /id="transferPipeline"/);
 assert.match(html, /id="runtimePopover"/);
 assert.match(html, /data-status-toggle/);
@@ -405,11 +420,13 @@ assert.match(styles, /@media\s*\(min-width:\s*1080px\)\s*and\s*\(max-width:\s*13
 assert.doesNotMatch(styles, /@media\s*\([^)]*max-width:\s*(?:[0-9]{1,3}|10[0-7][0-9])px/i);
 assert.match(styles, /@media\s*\(prefers-reduced-motion:\s*reduce\)/i);
 assert.match(styles, /@keyframes\s+live-ring/);
-assert.match(styles, /\.metric-card:hover/);
+assert.doesNotMatch(styles, /\.overview-metrics\s*>\s*\.metric-card:hover|\.metric-card:hover\s*>\s*svg/);
+assert.match(styles, /\.journey-step:hover/);
 assert.match(styles, /min-width:\s*1280px/);
 assert.match(styles, /min-width:\s*1080px/);
 assert.match(styles, /--canvas:\s*#f4f7fb/i);
-assert.match(styles, /Luminous Ledger desktop theme/);
+assert.match(styles, /Solid Color desktop theme/);
+assert.doesNotMatch(styles, /color-mix|linear-gradient|radial-gradient/i);
 assert.match(app, /function renderIdentity/);
 assert.match(app, /function renderOperationProgress/);
 assert.match(service, /InstitutionalDemoRuntime/);

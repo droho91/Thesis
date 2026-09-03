@@ -10,7 +10,7 @@ export const EVIDENCE_SECURITY_PROFILE_SCHEMA = "institutional-evidence-security
 const POLICY_ID = "institutional-evidence-environment-policy-v1";
 const POLICY_SOURCE = "scripts/verification/evidence-environment.mjs";
 const PINNED_BESU_IMAGE =
-  "hyperledger/besu:24.10.0@sha256:644f31577d06f0076375fb4a92805e30038b8dee2b25dda4dd3a843f79ccca65";
+  "hyperledger/besu:26.8.1@sha256:6f3f21ce533383fcc8db3bce02252b59d5a9e776b72b5a1c8ecd2db011600042";
 const EXPECTED_CHAIN_IDS = Object.freeze({ A: 41001, B: 41002 });
 const REQUIRED_INTEGRATION_SCENARIOS = Object.freeze([
   "lockMint",
@@ -84,9 +84,10 @@ const FIXED_MANAGED_ENVIRONMENT = Object.freeze({
   BESU_BONSAI_HISTORICAL_BLOCK_LIMIT: "100000",
   BESU_BONSAI_TRIE_LOGS_PRUNING_WINDOW_SIZE: "120000",
   BESU_JAVA_OPTS: "-Xms128m -Xmx512m -XX:ActiveProcessorCount=2",
-  BESU_HEALTH_PROGRESS_BLOCKS: "2",
+  BESU_HEALTH_PROGRESS_BLOCKS: "1",
   BESU_START_AUTO_RECOVER: "true",
   BESU_START_PROGRESS_TIMEOUT_MS: "60000",
+  BESU_START_PROGRESS_BLOCKS: "1",
   RPC_WAIT_TIMEOUT_MS: "300000",
   CHAIN_A_RPC: "http://127.0.0.1:18545",
   CHAIN_B_RPC: "http://127.0.0.1:19545",
@@ -327,7 +328,7 @@ export function validateCollectedEvidenceSecurityProfile({ deployment, fault, in
   assertIntegrationEnvironment(integration?.environment, effective);
   const liveClientProofValidation = validateLiveClientProofEvidence(integration?.liveClientProofValidation, {
     expectedChainIds: Object.values(effective.besu.chainIds).map(String),
-    expectedBesuVersion: "24.10.0",
+    expectedBesuVersion: "26.8.1",
   });
   for (const observation of liveClientProofValidation.proofObservations) {
     const chainKey = String(observation.sourceChainId) === String(effective.besu.chainIds.A) ? "A" : "B";

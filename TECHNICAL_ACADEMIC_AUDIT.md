@@ -2,11 +2,11 @@
 
 ## 1. Thông tin audit
 
-- Ngày audit gốc: 2026-07-22; snapshot cập nhật gần nhất: 2026-08-03
+- Ngày audit gốc: 2026-07-22; snapshot rà soát độc lập gần nhất: 2026-09-02
 - Phạm vi: toàn bộ source, contracts, services, scripts, UI, tests, config, CI và documentation đang có trong repository
 - Quy mô UI snapshot sau Phase 7: `demo/styles.css` 3.142 dòng, `demo/app.js` 1.149 dòng, `demo/index.html` 452 dòng; các backend monolith đã theo dõi từ Phase 6 giữ nguyên phạm vi cleanup
 - Trạng thái Git: worktree đang có thay đổi chưa commit; audit đánh giá đúng snapshot hiện tại và không xem snapshot này là evidence đủ điều kiện bảo vệ
-- Phương pháp: static review, đối chiếu contract–runtime–UI–documentation, chạy test hiện có, tái hiện riêng các nghi vấn evidence, và đối chiếu thuật ngữ với tài liệu chính thức của Besu, EIP và OpenZeppelin
+- Phương pháp: static review, đối chiếu contract–runtime–UI–documentation, chạy test hiện có, tái hiện riêng các nghi vấn evidence, và research từ specification/tài liệu/paper gốc của Ethereum, EIP, EEA QBFT, Besu, OpenZeppelin, Solidity, Compound, Aave, NIST và SLSA
 
 ### Thang mức độ
 
@@ -37,9 +37,9 @@ Snapshot hiện tại **chưa nên được mô tả là production-ready hoặc
 | Runtime resilience | Khá tốt cho local singleton | Durable transaction outbox, lease fencing, lifetime journal locks, bounded RPC/retry và lifecycle cleanup đã có regression; clustered production vẫn cần transactional database |
 | Evidence integrity | Phase 2 remediated | Structured result, hardened profile, report checksum và source applicability đều fail-closed; vẫn phụ thuộc host/toolchain và chưa phải signed attestation |
 | Financial model | Phase 4–5 remediated trong scope prototype | Financial semantics, 18-decimal market guard, asset-keyed velocity và supplier-loss epoch có regression/property test; vẫn là single-market model chưa external audit |
-| Verification depth | Phase 8 implemented trong repository scope | 4 bounded stateful properties ở 64×64, line coverage 94,03% và 4/4 hand-selected mutants bị giết; đây không phải formal proof, branch coverage hoặc full mutation analysis |
-| Live evidence readiness | Phase 9 implemented trong repository scope; clean run pending | Summary v4/integration v3 fail closed nếu thiếu pinned Besu identity, deployed-gateway binding hoặc bốn accepted proof observations. Browser 21/21 và Docker/Compose hiện pass preflight; hai gate còn lại trước clean run là commit source đã review và current live-evidence applicability |
-| UI trình chiếu | Phase 7 remediated | Light theme, state-driven motion, exact amount, fail-closed stale state và keyboard/ARIA semantics có automated gate. Axe, overflow và typography chạy trên sáu tab-state ở ba desktop viewport; visual regression khóa Identity ở cả ba viewport và bảy operation-state tại 1600×900 |
+| Verification depth | Phase 8 implemented trong repository scope | 4 bounded stateful properties ở 64×64, line coverage 94,15% và 4/4 hand-selected mutants bị giết; đây không phải formal proof, branch coverage hoặc full mutation analysis |
+| Live evidence readiness | Phase 9 implemented trong repository scope; clean run pending | Summary v4/integration v3 fail closed nếu thiếu pinned Besu identity, deployed-gateway binding hoặc bốn accepted proof observations. Browser 44/44 và Docker/Compose hiện pass preflight; hai gate còn lại trước clean run là commit source đã review và current live-evidence applicability |
+| UI trình chiếu | Phase 7 remediated, Phase 10 revalidated | Light theme, state-driven motion, exact amount, fail-closed stale state và keyboard/ARIA semantics có automated gate. Axe, overflow và typography chạy trên bốn pinned viewport từ 1100 đến 1920 px; visual regression khóa Identity ở cả bốn viewport và bảy operation-state tại 1600×900 |
 | Documentation | Khá tốt và đã khóa claim matrix | README/threat model phân biệt tested/observed/enforced, thu hẹp finality/independence/exactly-once claims; các residual production được công khai |
 
 ### Cập nhật remediation Phase 1 — 2026-07-22
@@ -60,7 +60,7 @@ Các finding bên dưới được giữ nguyên để bảo toàn audit trail. 
 | H-02 | Resolved in code | Mỗi scenario dùng exact Solidity signature và structured Hardhat task counts; report v2 kiểm tra manifest, selector, execution count và checksum nội bộ, đồng thời ghi `running`/`failed` trước khi một pass cũ có thể bị tái sử dụng |
 | H-03 | Resolved in code | Evidence runner dùng child-environment allowlist, reject unsafe/injection/provenance override trước mutation, force clean compile, ghi security profile SHA-256 trong summary v4 và tách attestor secrets khỏi public evidence root |
 | M-09 | Resolved in code | `reportStatus` được tách khỏi `applicableToCurrentSource`; commit mismatch, dirty hoặc unknown source tạo trạng thái `stale` và làm defense readiness fail |
-| Phase 2 hardening | Implemented | Global/report locks dùng exclusive create; provenance đầu/cuối phải ổn định; Git failure/index flags/symlink, malformed component report, incomplete bytecode, unexpected public file và secret trong bundle đều fail-closed; cleanup chỉ nhận đúng Docker resources qua project label. Hardhat chỉ retry có giới hạn cho exact `ENOENT` race của managed UI temp file và ghi số retry vào report; lỗi source/test khác không được retry |
+| Phase 2 hardening | Implemented | Global/report locks dùng atomic no-overwrite publication; Phase 10 cho phép restart thu hồi đúng lock cùng host/platform khi OS xác nhận PID đã chết, không dựa vào tuổi file. Provenance đầu/cuối phải ổn định; Git failure/index flags/symlink, malformed component report, incomplete bytecode, unexpected public file và secret trong bundle đều fail-closed; cleanup chỉ nhận đúng Docker resources qua project label. Hardhat chỉ retry có giới hạn cho exact `ENOENT` race của managed UI temp file và ghi số retry vào report; lỗi source/test khác không được retry |
 
 ### Cập nhật remediation Phase 3 — 2026-07-22
 
@@ -150,19 +150,41 @@ Phase 8 đạt exit gate machine-verifiable cho repository coverage/security sui
 
 Phase 9 hoàn tất repository implementation và targeted negative tests cho đường capture/validation. Chromium dependencies và Docker Desktop WSL integration đã được xác minh; exit gate evidence còn cần commit source đã review và quan sát một clean local hoặc hosted run. Khi run đó pass, claim hợp lệ chỉ là single-client Besu live proof acceptance; live cross-client equivalence vẫn là residual.
 
+### Cập nhật remediation Phase 10 — 2026-09-02
+
+Phase 10 là lượt rà soát mới trên source thực tế và nguồn sơ cấp; các dòng Phase 1–9 được giữ lại như audit trail lịch sử. Không đổi version trong report cũ để giả tạo một live observation chưa xảy ra.
+
+| Finding / tối ưu | Trạng thái | Remediation và evidence |
+| --- | --- | --- |
+| P10-01 — Besu `24.10.0` đã cũ và bỏ lỡ các BFT/Bonsai fix liên quan | Resolved in source; live evidence pending | Pin `26.8.1` cùng OCI index digest `sha256:6f3f...0042`; image thực trả `besu/v26.8.1`. Upstream release ghi fix Paris-era BFT transaction-selection timeout, QBFT round/vote, BFT withdrawals và Bonsai storage root. Isolated scaffold generation/config validation pass; evidence `24.10.0` trở thành stale theo đúng thiết kế |
+| P10-02 — Process có thể chết sau exclusive-create nhưng trước khi lock JSON hoàn chỉnh | Resolved in code | Owner record được write+sync trong private candidate trước atomic no-overwrite hard-link publication. Recovery chỉ nhận exact token-derived candidate/inode pair; concurrent, OS-process-kill và publication-window regressions pass |
+| P10-03 — Relay journal v1 chỉ validate state/fencing, có thể chấp nhận message/block/transaction/history bị hỏng | Resolved in code | Restart gate nay validate full durable envelope, protocol `messageId` binding, uint width, ISO timestamps, JSON safety, source transaction binding, lease/fencing và latest history state. Năm corruption fixtures fail closed; duplicate observation có envelope khác cũng bị từ chối |
+| P10-04 — Collector chờ cả endpoint thứ tư sau khi đã đủ quorum | Optimized | Validate HTTP(S) endpoint/fetch/threshold trước I/O; verify response theo completion order, return ngay ở 3 unique valid signers, abort straggler và submit exactly threshold signatures. Test endpoint thứ tư treo 60 giây xác nhận không cộng timeout vào checkpoint |
+| P10-05 — `RLPDecodeLib.toBytes32` có nhánh short-value shift sai nhưng caller hiện tại chỉ gọi với 32 byte | Resolved before exposure | Thu hẹp helper thành exact 32-byte account `storageRoot` conversion, bỏ dead/incorrect short-value semantics và thêm regression exact/reject-short |
+| P10-06 — Escrow/voucher chỉ check dependency khác zero | Resolved in code | Constructor fail-fast nếu local token/policy dependency không có bytecode; không áp check này lên remote canonical-asset identifier |
+| P10-07 — Static server chỉ lexical-check path và thiếu browser isolation headers | Resolved in code | `realpath` boundary chặn symlink escape; CSP, frame denial, COOP/CORP, permissions và referrer policy được gửi trên static response. API/static regressions pass |
+| P10-08 — Accessibility test bind vào thứ tự HTML attribute | Resolved in test | Assertion nay kiểm semantic `dd` ownership thay vì formatting/attribute order, giữ test nhạy với a11y contract nhưng không brittle với class refactor |
+| P10-09 — Evidence/security locks còn buộc xử lý thủ công sau local process crash | Resolved in code | Cả runner chính, bundle reset và security collector bật orphan recovery bảo thủ: chỉ record hợp lệ cùng host/platform và PID được OS xác nhận đã chết mới được thu hồi; age, live, foreign và unverifiable owner vẫn fail closed |
+
+Giới hạn còn mở sau Phase 10: live evidence phải chạy lại trên clean reviewed commit và Besu `26.8.1`; normal demo containers đang chạy `24.10.0` không bị audit tự động xóa; multi-client proof equivalence, external audit/formal verification, production oracle/HSM/mTLS/database/monitoring và organizational independence vẫn chưa có. JSON journal còn là append-retentive singleton với full-file atomic replacement, nên cần archival/transactional database trước long-running production. Root license ISC và contract SPDX MIT vẫn cần một quyết định licensing của chủ sở hữu thay vì audit tự ý đổi.
+
+Dependency review ghi nhận `npm audit` không có advisory trên dependency tree hiện tại. Hardhat `3.15.0`, OpenZeppelin Contracts `5.6.1` và Axe Playwright `4.13.0` đã có bản mới hơn pin hiện tại. Hardhat upstream nêu compile-speed improvement; OpenZeppelin `5.6.1` fix `InteroperableAddress`, component project không import. Audit không nâng toolchain/library chỉ vì version number: Hardhat version là một phần của evidence schema/structured runner, còn OpenZeppelin upgrade thay deployed bytecode. Hai migration này nên là PR riêng với full gate và regenerated clean evidence.
+
 ## 3. Baseline kiểm thử
 
 | Kiểm tra | Kết quả | Ghi chú |
 | --- | --- | --- |
-| Solidity tests | 139/139 pass | Phase 8 bổ sung pinned-corpus adapter regressions và 4 stateful invariant properties; toàn bộ checkpoint, gateway, MPT, financial invariant và fuzz regression vẫn pass |
-| Service tests | 228/228 pass | Phase 9 bổ sung regression cho live-client proof coverage/digest/gateway binding, exact Besu version parsing với node identity, summary/integration schema, browser/defense preflight, Git provenance environment, bounded hosted-evidence workflow và Docker Desktop WSL cwd retry trên nền Phase 8 |
+| Solidity tests | 140/140 pass | Bao gồm pinned corpus, 4 stateful invariant properties, exact/reject-short RLP regression và constructor guard cho dependency không có bytecode |
+| Service tests | 240/240 pass | Bao gồm full durable relay-envelope validation, lock publication/crash recovery, quorum early-return/straggler abort, static-server headers/symlink boundary và các evidence/runtime regressions trước đó |
 | UI source/read-model checks | Pass | `npm run test:ui` là static gate cho semantic readiness, stale-state action lock, BigInt source usage, summary v4/integration v3, pass/fail/stale, component completeness, bytecode, lock, secret contamination, live-client proof và source applicability; browser behavior được kiểm riêng ở hàng kế tiếp |
-| Browser interaction/a11y/visual | 21/21 pass | Fresh Phase 9 run xác nhận keyboard, axe/overflow/typography, motion regressions và 10 reviewed Linux/Chromium images tại 1366, 1600 và 1920 pixel |
+| Browser interaction/a11y/visual | 44/44 pass | Fresh Phase 10 run xác nhận keyboard, axe/overflow/typography, motion/CSP regressions và 11 reviewed Linux/Chromium images trên bốn project viewport 1100, 1366, 1600 và 1920 px |
+| Solidity line coverage | 1.560/1.657 (94,15%) | Fresh LCOV trên 21 production files; global, every-file và 11 critical-source floors đều pass; đây là line coverage, không phải branch coverage |
+| Mutation smoke | 4/4 killed | Bốn mutant được chọn trước đều bị targeted test giết; không phải full-repository mutation score |
 | Security scenario regression | 14/14 pass | Hardhat `3.12.0` được pin chính xác; mỗi scenario chạy bằng exact full Solidity signature và structured `passed/failed/skipped/todo` counts; fuzz repayment chạy 128 lượt |
 | Live Besu integration | Không chạy trong audit này | Cần prepared Docker runtime; report lịch sử không được dùng thay kết quả mới |
 | Evidence acceptance run | Chưa chạy lại có chủ đích | Evidence-eligible run yêu cầu clean reviewed commit; offline verifier hiện từ chối đúng bundle legacy/stale và secret artifact cũ thay vì tái sử dụng pass lịch sử |
 
-Lượt chốt Phase 9 của local test pass toàn bộ với 139 Solidity tests, 228 service tests và institutional UI source/read-model check. Sau khi cài Chromium dependencies, browser suite pass 21/21 và visual baseline ổn định ở cả ba viewport. Docker Desktop WSL integration cũng pass với Engine `29.6.1` và Compose `5.3.0`; Compose subprocess dùng native temporary cwd để tránh WSL proxy làm mất long-lived `/mnt/c` cwd handle, còn exact `getwd` diagnostic chỉ được retry đúng một lần. Diagnostic runtime xác nhận cả hai chain đạt 4 validators, 3 peers và block progress; kết quả này không thay clean evidence run.
+Lượt chốt Phase 10 pass toàn bộ `npm test`: 140 Solidity tests, 240 service tests và institutional UI source/read-model gate. Browser suite pass 44/44 trên bốn viewport; coverage đạt 1.560/1.657 dòng (94,15%), mutation 4/4 và security scenarios 14/14. Docker runtime quan sát hiện vẫn là scaffold Besu `24.10.0`; audit không tự xóa volumes đang chạy, nên kết quả runtime lịch sử không thay cho clean evidence run bằng pin `26.8.1`.
 
 ## 4. Những điểm đang làm tốt
 
@@ -285,7 +307,7 @@ Remediation đã thêm heartbeat theo một phần ba lease, fencing token tăng
 
 `AtomicJsonStore` chỉ serialize trong một process; hai process giữ snapshot riêng có thể ghi đè nhau. Hoặc enforce singleton bằng lock file rõ ràng, hoặc dùng SQLite/PostgreSQL với transaction/CAS. Documentation phải nói rõ shared file không phải clustered store.
 
-Remediation enforce một owner cho mỗi JSON store bằng lifetime `<journal>.lock` tạo với exclusive create. Store canonicalize parent, reject symbolic/multi-hard-link target, ghi qua crypto-random `wx` temporary file, sync file rồi rename và sync parent directory khi platform hỗ trợ. Normal close chỉ unlink sau khi kiểm tra file identity và random ownership token; process thứ hai fail-closed và regression test dùng child process thật. Stale lock không được tự reclaim theo PID/age. Clustered deployment vẫn phải dùng transactional database/CAS có fencing thay vì share JSON file.
+Remediation enforce một owner cho mỗi JSON store bằng lifetime `<journal>.lock`. Owner record được write+sync trong private candidate rồi publish bằng atomic no-overwrite hard link; store canonicalize parent, reject symbolic/multi-hard-link target, ghi state qua crypto-random `wx` temporary file, sync file rồi rename và sync parent directory khi platform hỗ trợ. Normal close chỉ unlink sau khi kiểm tra file identity và random ownership token; process thứ hai fail-closed và regression dùng child process thật. Sau crash, restart chỉ reclaim record hợp lệ cùng host/platform khi OS xác nhận PID đã chết, không bao giờ theo tuổi file. Clustered deployment vẫn phải dùng transactional database/CAS có fencing thay vì share JSON file.
 
 #### H-08 — Besu generator có thể xóa nhầm repository — Resolved in Phase 1
 
@@ -565,9 +587,23 @@ Một phase chỉ được coi là xong khi:
 
 ## 11. Nguồn lý thuyết chính
 
-- [Besu QBFT configuration](https://docs.besu-eth.org/private-networks/how-to/configure/consensus/qbft)
-- [Besu PoA consensus and finality](https://docs.besu-eth.org/private-networks/concepts/poa)
+- [Ethereum Yellow Paper](https://ethereum.github.io/yellowpaper/paper.pdf)
+- [EEA QBFT specification](https://entethalliance.github.io/client-spec/qbft_spec.html)
+- [Besu QBFT configuration](https://github.com/besu-eth/besu-docs/blob/main/docs/private-networks/how-to/configure/consensus/qbft.md)
+- [Besu 26.8.1 release notes](https://github.com/besu-eth/besu/releases/tag/26.8.1)
+- [IBFT 2.0 paper](https://arxiv.org/abs/2002.03613)
 - [EIP-712 typed structured data](https://eips.ethereum.org/EIPS/eip-712)
 - [EIP-1186 account/storage proof RPC](https://eips.ethereum.org/EIPS/eip-1186)
+- [ERC-4626 tokenized vault standard](https://eips.ethereum.org/EIPS/eip-4626)
+- [SoK: Communication Across Distributed Ledgers](https://eprint.iacr.org/2019/1128)
+- [Compound protocol whitepaper](https://compound.finance/documents/Compound.Whitepaper.v04.pdf)
+- [Compound III specification](https://github.com/compound-finance/comet/blob/main/SPEC.md)
+- [Aave health factor and liquidations](https://aave.com/help/borrowing/liquidations)
 - [Hardhat 3 Solidity invariant and coverage configuration](https://hardhat.org/docs/reference/configuration)
 - [OpenZeppelin access control and timelock](https://docs.openzeppelin.com/contracts/5.x/access-control)
+- [Solidity security considerations](https://docs.soliditylang.org/en/latest/security-considerations.html)
+- [Node.js file-system promises](https://nodejs.org/api/fs.html#promises-api)
+- [NIST Secure Software Development Framework 1.1](https://csrc.nist.gov/pubs/sp/800/218/final)
+- [SLSA provenance 1.2](https://slsa.dev/spec/v1.2/provenance)
+
+Bản giải thích có công thức, trust boundaries và câu hỏi bảo vệ được lưu tại [Defense teaching guide](docs/DEFENSE_TEACHING_GUIDE.md).

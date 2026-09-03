@@ -156,6 +156,9 @@ async function main() {
     {
       label: "institutional-security-scenarios",
       metadata: { reportPath: managedPaths.securityReportPath },
+      // Reclaim only a verified same-host dead process, never an old-looking or
+      // foreign lock. This keeps crash recovery automatic and concurrency safe.
+      reclaimOrphaned: true,
     },
   );
 }

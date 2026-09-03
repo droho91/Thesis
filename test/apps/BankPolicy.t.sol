@@ -97,6 +97,19 @@ contract BankPolicyTest is Test {
         voucher.mintWithPolicy(alice, address(canonicalAsset), SOURCE_CHAIN_A, 50 ether, PACKET_TWO);
     }
 
+    function testCustodyContractsRejectNonContractDependencies() public {
+        address eoa = address(0xE0A);
+
+        vm.expectRevert(bytes("POLICY_ENGINE_NOT_CONTRACT"));
+        new PolicyControlledVoucherToken(address(this), eoa, "Invalid", "BAD");
+
+        vm.expectRevert(bytes("ASSET_NOT_CONTRACT"));
+        new PolicyControlledEscrowVault(address(this), eoa, address(policy));
+
+        vm.expectRevert(bytes("POLICY_ENGINE_NOT_CONTRACT"));
+        new PolicyControlledEscrowVault(address(this), address(canonicalAsset), eoa);
+    }
+
     function testVoucherCannotBeTransferredOutsideApprovedInstitutionalOperator() public {
         voucher.mintWithPolicy(alice, address(canonicalAsset), SOURCE_CHAIN_A, 10 ether, PACKET_ONE);
 

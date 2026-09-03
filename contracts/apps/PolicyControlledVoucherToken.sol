@@ -30,6 +30,9 @@ contract PolicyControlledVoucherToken is ERC20, AccessControl, Pausable {
     constructor(address admin, address policyEngine_, string memory name_, string memory symbol_) ERC20(name_, symbol_) {
         require(admin != address(0), "ADMIN_ZERO");
         require(policyEngine_ != address(0), "POLICY_ENGINE_ZERO");
+        // The policy engine is a local enforcement dependency, not a remote
+        // identifier; accepting an EOA would defer a configuration fault until mint.
+        require(policyEngine_.code.length > 0, "POLICY_ENGINE_NOT_CONTRACT");
         policyEngine = IBankPolicyEngine(policyEngine_);
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(APP_ADMIN_ROLE, admin);

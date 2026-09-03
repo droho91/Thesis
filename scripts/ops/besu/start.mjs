@@ -14,6 +14,14 @@ const STARTUP_TIMEOUT_MS = Number(process.env.RPC_WAIT_TIMEOUT_MS || 300_000);
 const INITIAL_PROGRESS_TIMEOUT_MS = Number(process.env.BESU_START_PROGRESS_TIMEOUT_MS || 60_000);
 const AUTO_RECOVER_STALLED_CONSENSUS = process.env.BESU_START_AUTO_RECOVER?.toLowerCase() !== "false";
 
+export function startupProgressBlocks(raw = process.env.BESU_START_PROGRESS_BLOCKS) {
+  const blocks = Number(raw || 1);
+  if (!Number.isSafeInteger(blocks) || blocks < 1 || blocks > 100) {
+    throw new RangeError("BESU_START_PROGRESS_BLOCKS must be an integer between 1 and 100");
+  }
+  return blocks;
+}
+
 async function run(command, args) {
   await new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, {
@@ -62,6 +70,7 @@ function composeServiceName(validator) {
 async function startNetwork(network) {
   const services = network.validators.map(composeServiceName);
   const projectArgs = COMPOSE_PROJECT_NAME ? ["-p", COMPOSE_PROJECT_NAME] : [];
+  const progressBlocks = startupProgressBlocks();
   console.log(`[besu:start] Starting ${network.key} validators as one consensus group.`);
   await runComposeWithCwdRetry([
     ...projectArgs,
@@ -76,6 +85,7 @@ async function startNetwork(network) {
   let snapshot;
   try {
     snapshot = await waitForProgress(network, rpc, {
+      blocks: progressBlocks,
       timeoutMs: INITIAL_PROGRESS_TIMEOUT_MS,
       readinessTimeoutMs: STARTUP_TIMEOUT_MS,
     });
@@ -101,6 +111,7 @@ async function startNetwork(network) {
       ...services,
     ]);
     snapshot = await waitForProgress(network, rpc, {
+      blocks: progressBlocks,
       timeoutMs: INITIAL_PROGRESS_TIMEOUT_MS,
       readinessTimeoutMs: STARTUP_TIMEOUT_MS,
     });

@@ -27,6 +27,10 @@ contract MPTProofHarness {
         return RLPDecodeLib.readList(encoded);
     }
 
+    function toBytes32(bytes calldata encoded) external pure returns (bytes32) {
+        return RLPDecodeLib.toBytes32(encoded);
+    }
+
     function decodeCompact(bytes calldata compact) external pure returns (bytes memory, bool) {
         return HexPrefixLib.decodeCompact(compact);
     }

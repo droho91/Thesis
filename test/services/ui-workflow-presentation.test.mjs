@@ -42,11 +42,13 @@ test("workflow metadata maps operations to stable navigation and labels", () => 
 });
 
 test("workflow recommendations preserve contextual calls to action", () => {
-  assert.equal(recommendationFor(workflowStatus("bridge")).action, "bridge");
+  const bridge = recommendationFor(workflowStatus("bridge"));
+  assert.equal(bridge.action, "bridge");
+  assert.match(bridge.explanation, /finality, attestor quorum and proof verification/);
   assert.equal(recommendationFor(workflowStatus("deposit")).button, "Open lending");
   assert.equal(
     recommendationFor(workflowStatus("borrow")).copy,
-    "12.3456… bCASH remains within policy and liquidity limits.",
+    "12.3456… bCASH available.",
   );
   assert.equal(recommendationFor(workflowStatus("withdraw")).image, "guide");
   assert.equal(recommendationFor(workflowStatus("return")).image, "success");
@@ -56,7 +58,7 @@ test("workflow recommendations preserve contextual calls to action", () => {
     creditAvailable: "5",
   }));
   assert.equal(regularRepay.action, "repay");
-  assert.equal(regularRepay.copy, "5 bCASH remains outstanding on Bank B.");
+  assert.equal(regularRepay.copy, "5 bCASH outstanding.");
 
   const exactRepay = recommendationFor(workflowStatus("repay", {
     outstandingDebt: "0.009",
@@ -68,4 +70,5 @@ test("workflow recommendations preserve contextual calls to action", () => {
   const neutral = recommendationFor(workflowStatus(undefined));
   assert.equal(neutral.image, "neutral");
   assert.equal(neutral.action, "evidence");
+  assert.match(neutral.explanation, /provenance, security checks/);
 });

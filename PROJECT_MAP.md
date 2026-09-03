@@ -35,7 +35,8 @@ Runtime state:
 .runtime/institutional-demo-state.json
 .runtime/institutional-demo/*/relay-journal.json
 .runtime/institutional-demo/*/action-journal.json
-.runtime/institutional-demo/*/*.lock       Exclusive journal ownership; may remain after an unclean exit
+.runtime/institutional-demo/*/*.lock       Atomic-published ownership; verified dead local owners auto-recover
+.runtime/locks/*.lock                      Evidence exclusivity; verified dead local owners auto-recover
 ```
 
 Isolated defense-evidence artifacts:
@@ -90,7 +91,7 @@ test/governance/                           Timelock behavior
 test/apps/InstitutionalCollateralApp.t.sol Application accounting
 test/services/                             Runtime, relay, attestor, persistence, API security, UI domain and source-semantics regression
 test/ui/                                   Loopback synthetic fixture; keyboard, axe, typography, motion and visual gates
-test/ui/institutional-ui.spec.mjs-snapshots/  10 reviewed Linux/Chromium visual baselines
+test/ui/institutional-ui.spec.mjs-snapshots/  11 reviewed Linux/Chromium visual baselines
 playwright.config.mjs                      Three pinned desktop viewport projects
 scripts/verification/institutional-integration.mjs  Full E2E and chaos workflow
 scripts/verification/institutional-integration/     Benchmark and validator-evidence boundaries
@@ -105,6 +106,7 @@ scripts/verification/institutional-evidence.mjs     Fresh isolated defense-evide
 scripts/verification/verify-evidence.mjs            Offline report/checksum/source-applicability gate
 docs/DEFENSE_RUNBOOK.md                            Presentation and recovery checklist
 docs/DEFENSE_EVIDENCE_MATRIX.md                    Claim-to-gate-to-artifact presentation matrix
+docs/DEFENSE_TEACHING_GUIDE.md                     Theory, trust boundaries, formulas and defense Q&A
 .github/workflows/ci.yml                           Source/browser/depth gates plus clean hosted Besu evidence definition
 ```
 

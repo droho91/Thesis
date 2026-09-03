@@ -21,7 +21,7 @@ Do not use `npm run institutional:evidence -- --allow-dirty` for the presentatio
 
 Likewise, do not say the hosted Besu evidence passed merely because the CI job is defined. If it is cited, retain the exact successful Actions run URL, reviewed commit, summary v4 status and verifier result. The hosted job now runs the same clean evidence command without `--allow-dirty`, but it remains unobserved until that specific run succeeds.
 
-The evidence run is fresh and fail-closed. Its clean environment rejects unsafe/profile/process-injection overrides before Docker startup or isolated-runtime deletion. A global lock at `.runtime/locks/institutional-evidence.lock` prevents concurrent runs and `.runtime/locks/security-scenarios.lock` protects security-report generation; neither is auto-reclaimed by PID or age. Contracts and tests are force-compiled before security report v2 requires one structured Hardhat pass for each exact test signature. Summary v4 requires stable initial/completion provenance, safe Git index flags, the checksummed effective profile, all five substantive integration scenarios, both-chain validator-unavailability/recovery chronology, exact deployed-contract inventory and component report checksums. Integration v3 additionally requires pinned Besu identity on both chains and four raw commitment/acknowledgement proof observations recorded only after production-gateway acceptance.
+The evidence run is fresh and fail-closed. Its clean environment rejects unsafe/profile/process-injection overrides before Docker startup or isolated-runtime deletion. A global lock at `.runtime/locks/institutional-evidence.lock` prevents concurrent runs and `.runtime/locks/security-scenarios.lock` protects security-report generation. After a crash, a later local run reclaims only a valid same-host/same-platform lock whose PID the OS confirms is absent; it never reclaims by age or displaces a live, foreign or unverifiable owner. Contracts and tests are force-compiled before security report v2 requires one structured Hardhat pass for each exact test signature. Summary v4 requires stable initial/completion provenance, safe Git index flags, the checksummed effective profile, all five substantive integration scenarios, both-chain validator-unavailability/recovery chronology, exact deployed-contract inventory and component report checksums. Integration v3 additionally requires pinned Besu identity on both chains and four raw commitment/acknowledgement proof observations recorded only after production-gateway acceptance.
 
 ## Start the presentation runtime
 
@@ -47,7 +47,7 @@ npm run institutional:evidence:verify
 
 If the report is `stale`, do not present it as current even when its recorded tests passed. A commit mismatch, dirty current tree or unknown current source state is `NOT READY`; a dirty recorded run is ineligible rather than passed evidence.
 
-If verification reports either managed lock, treat the bundle as incomplete. Check the lock's recorded host, PID and creation time and confirm that no evidence or security runner is active before manual cleanup. Never delete or bypass a lock while ownership is uncertain; the runner intentionally does not guess whether it is stale.
+If verification reports either managed lock, treat the bundle as incomplete. First confirm that no evidence/security runner is active, then start a fresh evidence run: it will reclaim a valid same-host/same-platform lock only when the OS confirms the recorded PID is absent. If automatic recovery refuses, do not delete or bypass the lock while ownership is uncertain.
 
 ## Presentation sequence
 
@@ -97,4 +97,4 @@ npm run institutional:evidence:verify
 
 Do not try to reuse or re-aggregate old component reports. A new reviewed source revision requires a fresh evidence run.
 
-If an interrupted process leaves either `.runtime/locks/institutional-evidence.lock` or `.runtime/locks/security-scenarios.lock`, first confirm from its metadata and the host process table that the recorded owner is no longer active. Only a confirmed orphan is eligible for deliberate manual cleanup; there is no automatic stale-lock recovery.
+If an interrupted process leaves either `.runtime/locks/institutional-evidence.lock` or `.runtime/locks/security-scenarios.lock`, confirm no runner remains active and invoke the evidence command again. The acquisition path performs verified same-host dead-PID recovery automatically. Manual deletion is reserved for an independently diagnosed malformed/foreign lock and must never occur while ownership is uncertain.

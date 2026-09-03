@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -37,11 +37,34 @@ test("static server supports GET and HEAD with explicit no-store metadata", asyn
   assert.equal(get.body, "<h1>Institutional UI</h1>\n");
   assert.equal(get.headers["cache-control"], "no-store");
   assert.equal(get.headers["x-content-type-options"], "nosniff");
+  assert.match(get.headers["content-security-policy"], /frame-ancestors 'none'/);
+  assert.match(get.headers["content-security-policy"], /script-src 'self'(?:;|$)/);
+  assert.doesNotMatch(get.headers["content-security-policy"], /script-src[^;]*unsafe-inline/);
+  assert.equal(get.headers["x-frame-options"], "DENY");
 
   const head = await send({ method: "HEAD", path: "/index.html" });
   assert.equal(head.statusCode, 200);
   assert.equal(head.body, "");
   assert.equal(head.headers["content-length"], String(Buffer.byteLength(get.body)));
+});
+
+test("static server refuses a symbolic-link escape from the demo root", async (t) => {
+  const outside = join(tmpdir(), `institutional-static-outside-${process.pid}.txt`);
+  await writeFile(outside, "private runtime material\n", "utf8");
+  t.after(() => rm(outside, { force: true }));
+  try {
+    await symlink(outside, join(root, "outside.txt"));
+  } catch (error) {
+    if (["EPERM", "EACCES"].includes(error?.code)) {
+      t.skip("symbolic-link creation is not permitted on this host");
+      return;
+    }
+    throw error;
+  }
+
+  const response = await send({ method: "GET", path: "/outside.txt" });
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body, "Forbidden");
 });
 
 test("static server rejects unsupported methods and lexical traversal", async () => {

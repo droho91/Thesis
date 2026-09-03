@@ -82,6 +82,8 @@ test("evidence definition groups keep supplementary notes inside definitions", a
     "benchmarkSamples", "proofAckP95", "endToEndP95", "securityControlCount",
     "validatorEvidence", "quorumEvidence", "governanceEvidence", "relayEvidence",
   ]) {
-    assert.match(html, new RegExp(`<dd><span id="${valueId}">`));
+    // Attribute order and presentational classes may evolve; the semantic contract is
+    // that every primary value remains inside its owning definition (<dd>).
+    assert.match(html, new RegExp(`<dd>[^<]*<span[^>]*id="${valueId}"[^>]*>`));
   }
 });

@@ -31,6 +31,7 @@ export class AtomicJsonStore {
     const lock = await acquireProcessLock(`${absolutePath}.lock`, {
       label: "atomic-json-store",
       metadata: { storePath: absolutePath },
+      reclaimOrphaned: true,
     });
     try {
       await assertRegularStoreTarget(absolutePath);

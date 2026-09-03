@@ -4,7 +4,24 @@ import test from "node:test";
 import {
   isTransientComposeWorkingDirectoryError,
   runComposeWithCwdRetry,
+  startupProgressBlocks,
 } from "../../scripts/ops/besu/start.mjs";
+
+test("Besu startup accepts one newly finalized QBFT block by default", () => {
+  assert.equal(startupProgressBlocks(""), 1);
+  assert.equal(startupProgressBlocks("2"), 2);
+});
+
+test("Besu startup rejects an invalid progress threshold", () => {
+  assert.throws(
+    () => startupProgressBlocks("0"),
+    /must be an integer between 1 and 100/,
+  );
+  assert.throws(
+    () => startupProgressBlocks("1.5"),
+    /must be an integer between 1 and 100/,
+  );
+});
 
 test("Besu start retries one transient Docker Desktop WSL cwd failure", async () => {
   const calls = [];

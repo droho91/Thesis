@@ -105,7 +105,7 @@ export function buildLiveClientProofValidation({ chainSnapshots, proofObservatio
 
 export function validateLiveClientProofEvidence(
   evidence,
-  { expectedChainIds = ["41001", "41002"], expectedBesuVersion = "24.10.0" } = {},
+  { expectedChainIds = ["41001", "41002"], expectedBesuVersion = "26.8.1" } = {},
 ) {
   if (!isPlainObject(evidence)) throw new Error("Live client proof evidence is missing or malformed");
   if (evidence.schema !== LIVE_CLIENT_PROOF_SCHEMA) throw new Error("Unsupported live client proof evidence schema");
@@ -217,7 +217,7 @@ function clientFamily(version) {
   throw new Error(`Unsupported live execution client '${value}'`);
 }
 
-export function matchesPinnedBesuClientVersion(clientVersion, expectedVersion = "24.10.0") {
+export function matchesPinnedBesuClientVersion(clientVersion, expectedVersion = "26.8.1") {
   if (typeof clientVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(expectedVersion)) return false;
   const segments = clientVersion.split("/");
   if (segments[0]?.toLowerCase() !== "besu" || segments.some((segment) => segment.length === 0)) return false;

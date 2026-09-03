@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { access, link, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import {
   PROCESS_LOCK_VERSION,
@@ -36,9 +36,9 @@ test("exclusive creation permits exactly one concurrent lock owner", async (t) =
   for (const attempt of rejected) {
     assert.equal(attempt.reason instanceof ProcessLockHeldError, true);
     assert.equal(attempt.reason.code, "INSTITUTIONAL_PROCESS_LOCK_HELD");
-    if (attempt.reason.owner !== undefined) {
-      assert.equal("token" in attempt.reason.owner, false);
-    }
+    // Atomic publication guarantees competitors never observe partial JSON.
+    assert.equal(typeof attempt.reason.owner?.label, "string");
+    assert.equal("token" in attempt.reason.owner, false);
   }
 
   const winner = acquired[0].value;
@@ -55,6 +55,7 @@ test("exclusive creation permits exactly one concurrent lock owner", async (t) =
   const successor = await acquireProcessLock(lockPath, { label: "successor" });
   await successor.release();
   await assertMissing(lockPath);
+  assert.deepEqual(await readdir(dirname(lockPath)), []);
 });
 
 test("withProcessLock releases after success and after operation failure", async (t) => {
@@ -74,6 +75,136 @@ test("withProcessLock releases after success and after operation failure", async
     /operation failed/,
   );
   await assertMissing(lockPath);
+});
+
+test("withProcessLock reports both failures when operation and verified release fail", async (t) => {
+  const { lockPath } = await fixture(t);
+
+  await assert.rejects(
+    withProcessLock(lockPath, async (lock) => {
+      const owner = JSON.parse(await readFile(lockPath, "utf8"));
+      await writeFile(lockPath, `${JSON.stringify({ ...owner, token: "0".repeat(64) }, null, 2)}\n`, "utf8");
+      throw new Error("injected operation failure");
+    }),
+    (error) => error instanceof AggregateError
+      && error.errors.length === 2
+      && /Operation: Error: injected operation failure/.test(error.message)
+      && /Release: ProcessLockOwnershipError: .*ownership token does not match/.test(error.message),
+  );
+});
+
+test("opt-in recovery reclaims only a confirmed local dead owner", async (t) => {
+  const { lockPath } = await fixture(t);
+  const staleOwner = {
+    version: PROCESS_LOCK_VERSION,
+    token: "ab".repeat(32),
+    pid: 987_654_321,
+    parentPid: 987_654_320,
+    hostname: hostname(),
+    platform: process.platform,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "atomic-json-store",
+    metadata: { storePath: join(dirname(lockPath), "journal.json") },
+  };
+  await writeFile(lockPath, `${JSON.stringify(staleOwner, null, 2)}\n`, "utf8");
+
+  const reclaimed = [];
+  const successor = await acquireProcessLock(lockPath, {
+    label: "successor",
+    reclaimOrphaned: true,
+    probeProcess: async (pid) => {
+      assert.equal(pid, staleOwner.pid);
+      return false;
+    },
+    onOrphanReclaimed: (event) => reclaimed.push(event),
+  });
+  assert.equal(reclaimed.length, 1);
+  assert.equal(reclaimed[0].owner.pid, staleOwner.pid);
+  assert.equal("token" in reclaimed[0].owner, false);
+  await successor.release();
+  await assertMissing(lockPath);
+});
+
+test("recovery handles a crash between atomic publication and candidate cleanup", async (t) => {
+  const { lockPath } = await fixture(t);
+  const token = "12".repeat(32);
+  const candidatePath = `${lockPath}.${token}.candidate`;
+  const staleOwner = {
+    version: PROCESS_LOCK_VERSION,
+    token,
+    pid: 987_654_321,
+    parentPid: 987_654_320,
+    hostname: hostname(),
+    platform: process.platform,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "atomic-json-store",
+    metadata: { storePath: join(dirname(lockPath), "journal.json") },
+  };
+  await writeFile(candidatePath, `${JSON.stringify(staleOwner, null, 2)}\n`, "utf8");
+  await link(candidatePath, lockPath);
+
+  const successor = await acquireProcessLock(lockPath, {
+    reclaimOrphaned: true,
+    probeProcess: async () => false,
+    onOrphanReclaimed: () => {},
+  });
+  await assertMissing(candidatePath);
+  await successor.release();
+  await assertMissing(lockPath);
+});
+
+test("dead-owner recovery requires an explicit opt-in from each caller", async (t) => {
+  const { lockPath } = await fixture(t);
+  const staleOwner = {
+    version: PROCESS_LOCK_VERSION,
+    token: "ef".repeat(32),
+    pid: 987_654_321,
+    parentPid: 987_654_320,
+    hostname: hostname(),
+    platform: process.platform,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "institutional-evidence-runner",
+    metadata: {},
+  };
+  await writeFile(lockPath, `${JSON.stringify(staleOwner, null, 2)}\n`, "utf8");
+  await assert.rejects(acquireProcessLock(lockPath), ProcessLockHeldError);
+  assert.deepEqual(JSON.parse(await readFile(lockPath, "utf8")), staleOwner);
+});
+
+test("orphan recovery remains fail-closed for a live or foreign-platform owner", async (t) => {
+  const { lockPath } = await fixture(t);
+  const owner = {
+    version: PROCESS_LOCK_VERSION,
+    token: "cd".repeat(32),
+    pid: process.pid,
+    parentPid: process.ppid,
+    hostname: hostname(),
+    platform: process.platform,
+    createdAt: new Date().toISOString(),
+    label: "atomic-json-store",
+    metadata: { storePath: join(dirname(lockPath), "journal.json") },
+  };
+  await writeFile(lockPath, `${JSON.stringify(owner, null, 2)}\n`, "utf8");
+
+  await assert.rejects(
+    acquireProcessLock(lockPath, {
+      reclaimOrphaned: true,
+      probeProcess: async () => true,
+      onOrphanReclaimed: () => assert.fail("a live lock must not be reclaimed"),
+    }),
+    ProcessLockHeldError,
+  );
+
+  owner.platform = process.platform === "win32" ? "linux" : "win32";
+  await writeFile(lockPath, `${JSON.stringify(owner, null, 2)}\n`, "utf8");
+  await assert.rejects(
+    acquireProcessLock(lockPath, {
+      reclaimOrphaned: true,
+      probeProcess: async () => false,
+      onOrphanReclaimed: () => assert.fail("a foreign-platform lock must not be reclaimed"),
+    }),
+    ProcessLockHeldError,
+  );
 });
 
 test("release refuses a tampered ownership token and preserves the lock", async (t) => {

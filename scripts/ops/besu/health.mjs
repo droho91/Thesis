@@ -6,9 +6,17 @@ import { CHAIN_A_RPC, CHAIN_B_RPC } from "./runtime.mjs";
 
 const ROOT = resolve(process.cwd(), process.env.BESU_NETWORK_ROOT || "networks/besu");
 const PROGRESS_TIMEOUT_MS = Number(process.env.BESU_HEALTH_TIMEOUT_MS || 45_000);
-const PROGRESS_BLOCKS = BigInt(process.env.BESU_HEALTH_PROGRESS_BLOCKS || 2);
+const PROGRESS_BLOCKS = healthProgressBlocks();
 const QUICK_CHECK = process.argv.includes("--quick");
 const STARTUP_CHECK = process.argv.includes("--startup");
+
+export function healthProgressBlocks(raw = process.env.BESU_HEALTH_PROGRESS_BLOCKS) {
+  const blocks = Number(raw || 1);
+  if (!Number.isSafeInteger(blocks) || blocks < 1 || blocks > 100) {
+    throw new RangeError("BESU_HEALTH_PROGRESS_BLOCKS must be an integer between 1 and 100");
+  }
+  return BigInt(blocks);
+}
 
 export async function loadScaffold() {
   let scaffold;

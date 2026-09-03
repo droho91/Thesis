@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { after, before, test } from "node:test";
 import { ethers } from "ethers";
-import { waitForProgress } from "../../scripts/ops/besu/health.mjs";
+import { healthProgressBlocks, waitForProgress } from "../../scripts/ops/besu/health.mjs";
 
 const validators = Array.from({ length: 4 }, (_, index) => ({
   name: `validator-${index + 1}`,
@@ -15,6 +15,15 @@ let rpc;
 let peerChecks;
 let blockMode;
 let blockChecks;
+
+test("health requires one newly finalized QBFT block by default", () => {
+  assert.equal(healthProgressBlocks(""), 1n);
+  assert.equal(healthProgressBlocks("2"), 2n);
+  assert.throws(
+    () => healthProgressBlocks("0"),
+    /must be an integer between 1 and 100/,
+  );
+});
 
 before(async () => {
   server = createServer(async (request, response) => {

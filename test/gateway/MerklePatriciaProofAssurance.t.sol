@@ -63,6 +63,12 @@ contract MerklePatriciaProofAssuranceTest is Test {
 
         vm.expectRevert(bytes("RLP_SHORT_LIST_OOB"));
         harness.readList(hex"c201");
+
+        vm.expectRevert(bytes("RLP_BYTES32_LENGTH"));
+        harness.toBytes32(hex"01");
+
+        bytes32 expected = keccak256("fixed-width account storage root");
+        assertEq(harness.toBytes32(abi.encodePacked(expected)), expected);
     }
 
     function testRejectsMalformedCompactPaths() public {

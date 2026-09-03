@@ -10,8 +10,8 @@ import {
 
 const CHAIN_A = "41001";
 const CHAIN_B = "41002";
-const CLIENT_VERSION = "besu/v24.10.0/linux-x86_64/openjdk-java-21";
-const IDENTIFIED_CLIENT_VERSION = "besu/chainA-bank-a-validator-1/v24.10.0/linux-x86_64/openjdk-java-21";
+const CLIENT_VERSION = "besu/v26.8.1/linux-x86_64/openjdk-java-21";
+const IDENTIFIED_CLIENT_VERSION = "besu/chainA-bank-a-validator-1/v26.8.1/linux-x86_64/openjdk-java-21";
 
 test("live proof evidence binds both Besu chains and four production-accepted membership proofs", () => {
   const evidence = passingEvidence();
@@ -60,16 +60,16 @@ test("live proof validation accepts Besu node identity without weakening the pin
   assert.equal(validateLiveClientProofEvidence(evidence), evidence);
 
   for (const clientVersion of [
-    "besu/chainA-bank-a-validator-1/v24.10.1/linux-x86_64/openjdk-java-21",
-    "besu/chainA-bank-a-validator-1/v24.10.0-rc1/linux-x86_64/openjdk-java-21",
-    "besu/v24.10.0/v25.1.0/openjdk-java-21",
-    "besu/chainA-bank-a-validator-1/extra/v24.10.0/linux-x86_64/openjdk-java-21",
+    "besu/chainA-bank-a-validator-1/v26.8.0/linux-x86_64/openjdk-java-21",
+    "besu/chainA-bank-a-validator-1/v26.8.1-rc1/linux-x86_64/openjdk-java-21",
+    "besu/v26.8.1/v27.1.0/openjdk-java-21",
+    "besu/chainA-bank-a-validator-1/extra/v26.8.1/linux-x86_64/openjdk-java-21",
   ]) {
     const changed = structuredClone(evidence);
     changed.clients[0].clientVersion = clientVersion;
     assert.throws(
       () => validateLiveClientProofEvidence(changed),
-      /Live Besu client version does not match pinned 24\.10\.0/,
+      /Live Besu client version does not match pinned 26\.8\.1/,
     );
   }
 });

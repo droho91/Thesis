@@ -1,31 +1,36 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { InstitutionalRelayEngine } from "../../services/institutional-relay/relay-engine.mjs";
-import { RelayJournal, RelayLeaseLostError } from "../../services/institutional-relay/relay-journal.mjs";
+import {
+  RelayJournal,
+  RelayLeaseLostError,
+  institutionalMessageId,
+} from "../../services/institutional-relay/relay-journal.mjs";
 import { PermanentRelayError } from "../../services/institutional-relay/retry.mjs";
 
-const MESSAGE_ID = `0x${"12".repeat(32)}`;
+const MESSAGE = Object.freeze({
+  version: "1",
+  nonce: "1",
+  sourceChainId: "41001",
+  sourceGateway: "0x00000000000000000000000000000000000000a1",
+  sourceApplication: "0x00000000000000000000000000000000000000a2",
+  destinationChainId: "41002",
+  destinationGateway: "0x00000000000000000000000000000000000000b1",
+  destinationApplication: "0x00000000000000000000000000000000000000b2",
+  timeoutTimestamp: "1800003600",
+  payload: "0x1234",
+});
+const MESSAGE_ID = institutionalMessageId(MESSAGE);
 
 function observedEvent() {
   return {
     messageId: MESSAGE_ID,
     sourceTxHash: `0x${"34".repeat(32)}`,
     sourceBlockNumber: 10,
-    message: {
-      version: "1",
-      nonce: "1",
-      sourceChainId: "41001",
-      sourceGateway: "0x00000000000000000000000000000000000000a1",
-      sourceApplication: "0x00000000000000000000000000000000000000a2",
-      destinationChainId: "41002",
-      destinationGateway: "0x00000000000000000000000000000000000000b1",
-      destinationApplication: "0x00000000000000000000000000000000000000b2",
-      timeoutTimestamp: "1800003600",
-      payload: "0x1234",
-    },
+    message: { ...MESSAGE },
   };
 }
 
@@ -108,6 +113,10 @@ test("journal deduplicates observations and rejects conflicting source transacti
     context.journal.observe("A-to-B", { ...event, sourceTxHash: `0x${"56".repeat(32)}` }),
     /Conflicting observation/,
   );
+  await assert.rejects(
+    context.journal.observe("A-to-B", { ...event, message: { ...event.message, payload: "0xabcd" } }),
+    /Conflicting observation/,
+  );
   assert.equal(Object.keys(context.journal.snapshot().jobs).length, 1);
 });
 
@@ -122,6 +131,31 @@ test("expired leases are recovered after process restart", async (t) => {
   context.advance(5_001);
   assert.equal(reopened.runnable().length, 1);
   assert.ok(await reopened.claim(MESSAGE_ID, "replacement-worker", 5_000));
+});
+
+test("journal restart rejects corrupted durable relay fields", async (t) => {
+  const context = await fixture(t);
+  await context.journal.observe("A-to-B", observedEvent());
+  await context.journal.close();
+  const valid = JSON.parse(await readFile(context.path, "utf8"));
+  const corruptions = [
+    ["missing message", (state) => { delete state.jobs[MESSAGE_ID].message; }],
+    ["message ID mismatch", (state) => { state.jobs[MESSAGE_ID].message.nonce = "2"; }],
+    ["invalid source block", (state) => { state.jobs[MESSAGE_ID].sourceBlockNumber = -1; }],
+    ["transaction mismatch", (state) => { state.jobs[MESSAGE_ID].transactions.source = `0x${"56".repeat(32)}`; }],
+    ["history mismatch", (state) => { state.jobs[MESSAGE_ID].history.at(-1).state = "completed"; }],
+  ];
+
+  for (const [label, corrupt] of corruptions) {
+    const state = structuredClone(valid);
+    corrupt(state);
+    await writeFile(context.path, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await assert.rejects(
+      RelayJournal.open(context.path, { clock: context.clock }),
+      /Relay journal job/,
+      label,
+    );
+  }
 });
 
 test("transient failures back off and permanent failures terminate", async (t) => {

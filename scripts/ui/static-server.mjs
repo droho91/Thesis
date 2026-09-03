@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { once } from "node:events";
 import { pipeline } from "node:stream/promises";
@@ -17,7 +17,15 @@ const types = {
 const noStoreHeaders = {
   "cache-control": "no-store",
   pragma: "no-cache",
+  // Dynamic progress and health meters set numeric widths at runtime. Permit
+  // inline CSS for those values while keeping executable scripts same-origin.
+  "content-security-policy": "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+  "cross-origin-opener-policy": "same-origin",
+  "cross-origin-resource-policy": "same-origin",
+  "permissions-policy": "camera=(), geolocation=(), microphone=()",
+  "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
 };
 
 function sendText(response, statusCode, body, additionalHeaders = {}) {
@@ -37,13 +45,21 @@ function sendText(response, statusCode, body, additionalHeaders = {}) {
 
 async function fileForRequest(root, requestUrl) {
   const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-  const file = resolve(root, `.${pathname}`);
-  if (!(file === root || file.startsWith(`${root}${sep}`))) return null;
+  const canonicalRoot = await realpath(root);
+  const requestedFile = resolve(canonicalRoot, `.${pathname}`);
+  if (!(requestedFile === canonicalRoot || requestedFile.startsWith(`${canonicalRoot}${sep}`))) return null;
+
+  // A lexical prefix check alone follows a repository symlink outside the UI
+  // root. Resolve the actual target before opening it and apply the boundary a
+  // second time so only assets physically rooted below demo/ can be served.
+  let file = await realpath(requestedFile);
+  if (!(file === canonicalRoot || file.startsWith(`${canonicalRoot}${sep}`))) return null;
   let info = await stat(file);
   if (!info.isDirectory()) return { file, info };
-  const indexFile = resolve(file, "index.html");
-  info = await stat(indexFile);
-  return { file: indexFile, info };
+  file = await realpath(resolve(file, "index.html"));
+  if (!file.startsWith(`${canonicalRoot}${sep}`)) return null;
+  info = await stat(file);
+  return { file, info };
 }
 
 export async function serveStaticDemo(root, request, response, requestUrl, {

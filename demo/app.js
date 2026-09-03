@@ -30,7 +30,6 @@ import {
   actionStage,
   operationName,
   operationProgressCopy,
-  recommendationFor,
 } from "./workflow-presentation.js";
 import {
   minTokenAmount,
@@ -44,6 +43,24 @@ const LINKY_IMAGES = Object.freeze({
   success: "/assets/linky/generated/states/linky-success.png",
   caution: "/assets/linky/generated/states/linky-caution.png",
   neutral: "/assets/linky/generated/states/linky-neutral.png",
+  identityScan: "/assets/linky/generated/moments/linky-identity-scan.png",
+  finalityWatch: "/assets/linky/generated/moments/linky-finality-watch.png",
+  quorumCollect: "/assets/linky/generated/moments/linky-quorum-collect.png",
+  proofInspect: "/assets/linky/generated/moments/linky-proof-inspect.png",
+  voucherDeliver: "/assets/linky/generated/moments/linky-voucher-deliver.png",
+  collateralDeposit: "/assets/linky/generated/moments/linky-collateral-deposit.png",
+  creditGuide: "/assets/linky/generated/moments/linky-credit-guide.png",
+  debtRepay: "/assets/linky/generated/moments/linky-debt-repay.png",
+  collateralWithdraw: "/assets/linky/generated/moments/linky-collateral-withdraw.png",
+  settlementUnlock: "/assets/linky/generated/moments/linky-settlement-unlock.png",
+  evidenceAudit: "/assets/linky/generated/moments/linky-evidence-audit.png",
+});
+const LINKY_SLOTS = Object.freeze({
+  identity: "linkyIdentityImage",
+  transfer: "linkyTransferImage",
+  lending: "linkyLendingImage",
+  settlement: "linkySettlementImage",
+  evidence: "linkyEvidenceImage",
 });
 
 const RUNTIME_STATUS_FIELDS = Object.freeze([
@@ -184,10 +201,6 @@ function bindControls() {
       renderAvailability();
     });
   });
-  element("linkyAction").addEventListener("click", () => {
-    const action = element("linkyAction").dataset.action;
-    if (action) selectAction(action);
-  });
   element("copyEvidenceButton").addEventListener("click", copyLatestEvidence);
 }
 
@@ -222,7 +235,9 @@ function bindStatusControls() {
     const runtimeWasOpen = runtimeButton.getAttribute("aria-expanded") === "true";
     setRuntimePopoverOpen(false);
     closeStatusDetails();
-    const restoreTarget = focusedDisclosure || expandedStatus || (runtimeWasOpen ? runtimeButton : null);
+    const restoreTarget = focusedDisclosure
+      || expandedStatus
+      || (runtimeWasOpen ? runtimeButton : null);
     restoreTarget?.focus({ preventScroll: true });
   });
 }
@@ -376,34 +391,33 @@ function renderRuntime(status) {
   runtime.classList.toggle("is-error", !status?.runtimeReadable);
   setText("runtimeStatusLabel", status?.laneReady ? "Lane ready" : status?.runtimeReadable ? "Lane review" : "Runtime unavailable");
   setText("runtimePopoverState", status?.runtimeReadable ? "Runtime snapshot available" : "Attention required");
-  setText(
-    "runtimeChainState",
-    status?.runtimeReadable
-      ? `${status.chainsProgressing ? "Progressing" : "Progress check pending"} · A #${formatInteger(status.chains?.A?.blockNumber)} · B #${formatInteger(status.chains?.B?.blockNumber)}`
-      : "Runtime is not readable",
-  );
-  setText(
-    "runtimeQuorumState",
-    status?.runtimeReadable
-      ? `${status.attestorQuorumReady ? "Quorum ready" : "Quorum unavailable"} · ${status.relay?.activeAttestors || 0}/${status.topology?.configuredAttestors || "-"} attestors · relay ${status.relayerHealthy ? "healthy" : "review"}`
-      : "Checkpoint services unavailable",
-  );
+  const runtimeReadable = Boolean(status?.runtimeReadable);
+  setText("runtimeChainSummary", runtimeReadable
+    ? status.chainsProgressing ? "Progressing" : "Progress check pending"
+    : "Runtime is not readable");
+  setText("runtimeChainA", `A #${formatInteger(status?.chains?.A?.blockNumber)}`);
+  setText("runtimeChainB", `B #${formatInteger(status?.chains?.B?.blockNumber)}`);
+  setText("runtimeQuorumSummary", runtimeReadable
+    ? status.attestorQuorumReady ? "Quorum ready" : "Quorum unavailable"
+    : "Checkpoint services unavailable");
+  setText("runtimeAttestorCount", `${status?.relay?.activeAttestors || 0}/${status?.topology?.configuredAttestors || "-"} attestors`);
+  setText("runtimeRelayState", `Relay ${status?.relayerHealthy ? "healthy" : "review"}`);
+  ["runtimeChainA", "runtimeChainB", "runtimeAttestorCount", "runtimeRelayState"].forEach((id) => {
+    element(id).hidden = !runtimeReadable;
+  });
   setText("runtimeGeneratedAt", status?.generatedAt ? formatTimestamp(status.generatedAt) : "Waiting");
 }
 
 function renderUnavailable(status) {
   clearRuntimeSnapshot();
-  setText("overviewCopy", status?.message || "Institutional runtime is not available.");
+  renderOverviewMessage(status?.message || "Institutional runtime is not available.");
   const readiness = element("readinessVerdict");
   readiness?.classList.add("is-review");
-  setText("readinessTitle", "Institutional runtime needs attention");
+  const readinessPill = element("readinessPill");
+  if (readinessPill?.lastChild) readinessPill.lastChild.textContent = "Unavailable";
+  setText("readinessTitle", "Runtime unavailable");
   setText("readinessCopy", status?.message || "Run the preparation command before opening operations.");
-  element("linkyAction").hidden = true;
-  renderLinkyState({
-    image: "caution",
-    title: "Institutional runtime needs attention",
-    copy: status?.message || "Run the preparation command before opening operations.",
-  });
+  renderUnavailableLinkyMoments();
   document.querySelectorAll("form .primary-button").forEach((button) => setSemanticDisabled(button, true));
   renderAvailability();
 }
@@ -412,8 +426,8 @@ function renderRuntimeFailure(message) {
   const unavailable = { ready: false, laneReady: false, runtimeReadable: false, message };
   renderRuntime(unavailable);
   clearRuntimeSnapshot();
-  setText("overviewCopy", message);
-  renderLinkyState({ image: "caution", title: "Connection interrupted", copy: message });
+  renderOverviewMessage(message);
+  renderUnavailableLinkyMoments();
   document.querySelectorAll("form .primary-button").forEach((button) => setSemanticDisabled(button, true));
   renderAvailability();
 }
@@ -425,10 +439,16 @@ function renderOverview(status) {
   setText("debtBalance", compactAmount(status.balances.outstandingDebt));
   setText("healthFactor", health.value);
   setText("healthLabel", health.label);
-  setText(
-    "overviewCopy",
-    `Bank A block ${formatInteger(status.chains.A.blockNumber)} and Bank B block ${formatInteger(status.chains.B.blockNumber)} are serving the governed collateral lane.`,
-  );
+  setText("overviewChainABlock", `#${formatInteger(status.chains.A.blockNumber)}`);
+  setText("overviewChainBBlock", `#${formatInteger(status.chains.B.blockNumber)}`);
+  element("overviewMessage").hidden = true;
+  element("overviewChainHeights").hidden = false;
+}
+
+function renderOverviewMessage(message) {
+  setText("overviewMessage", message);
+  element("overviewMessage").hidden = false;
+  element("overviewChainHeights").hidden = true;
 }
 
 function renderIdentity(status) {
@@ -442,21 +462,21 @@ function renderIdentity(status) {
   readiness.classList.toggle("is-review", !ready);
   const pill = element("readinessPill");
   pill.classList.toggle("is-warning", !ready);
-  pill.lastChild.textContent = ready ? " Current checks passed" : " Review required";
-  setText("readinessTitle", ready ? "Readiness checks passed" : "One or more checks require review");
+  pill.lastChild.textContent = ready ? "Ready" : "Review";
+  setText("readinessTitle", ready ? "Ready to transfer" : "Review required");
   setText(
     "readinessCopy",
     ready
-      ? "Both customers are eligible, governance is timelock-enforced, both chains are progressing, and relay plus attestor quorum signals are current."
-      : "Confirm chain progression, customer eligibility, governance enforcement, attestor quorum and relay heartbeat before transferring collateral.",
+      ? "Participants and required controls are ready."
+      : status.message || "Open the affected check below.",
   );
-  setText("identityAStatus", identityA?.active ? "Active credential" : titleCase(identityA?.label || "review"));
-  setText("identityBStatus", identityB?.active ? "Active credential" : titleCase(identityB?.label || "review"));
+  setText("identityAStatus", identityA?.active ? "Active" : titleCase(identityA?.label || "review"));
+  setText("identityBStatus", identityB?.active ? "Active" : titleCase(identityB?.label || "review"));
   setStatusTone("identityAStatus", identityA?.active);
   setStatusTone("identityBStatus", identityB?.active);
   setText("identityAAccount", shortHash(status.participants?.sourceCustomer || "-"));
   setText("identityBAccount", shortHash(status.participants?.destinationCustomer || "-"));
-  setText("identityGovernance", titleCase(status.governance?.mode));
+  setText("identityGovernance", governanceReady ? "Enforced" : "Review");
   setStatusTone("identityGovernance", governanceReady);
   setText(
     "identityGovernanceDelay",
@@ -464,13 +484,14 @@ function renderIdentity(status) {
   );
   setText(
     "identityQuorum",
-    `${status.relay?.activeAttestors || 0} listening · ${status.topology?.attestorThreshold || "-"}-of-${status.topology?.configuredAttestors || "-"} required`,
+    `${status.relay?.activeAttestors || 0} active · ${status.topology?.attestorThreshold || "-"} required`,
   );
   setStatusTone("identityQuorum", quorumReady);
   setText(
     "identityValidatorTopology",
     `${status.topology?.validatorsPerChain || "-"} validators per chain · ${status.topology?.toleratedFaultsPerChain || 0} unavailable-validator tolerance`,
   );
+  renderLinkyMoment("identity", ready ? "identityScan" : "caution");
 }
 
 function setStatusTone(id, verified) {
@@ -508,8 +529,12 @@ function renderOperationProgress(status) {
     if (latest?.action === "bridge" && latest.status === "completed") {
       steps.forEach((step) => step.classList.add("is-complete"));
       pipeline.setAttribute("aria-label", "Transfer proof pipeline completed");
+      renderLinkyMoment("transfer", "voucherDeliver");
+      setTransferLinkyProgress(100, { visible: true, complete: true });
     } else {
       pipeline.setAttribute("aria-label", "Transfer proof pipeline idle");
+      renderLinkyMoment("transfer", "finalityWatch");
+      setTransferLinkyProgress(0, { visible: false });
     }
     return;
   }
@@ -535,6 +560,22 @@ function renderOperationProgress(status) {
   const progress = progressCopy[active.stage] || titleCase(active.stage);
   setText("relayRouteStatus", progress);
   pipeline.setAttribute("aria-label", `Transfer proof pipeline: ${progress}`);
+  const pose = ["finalityWatch", "quorumCollect", "proofInspect", "voucherDeliver"][Math.min(activeIndex, 3)];
+  renderLinkyMoment("transfer", pose, { processing: activeIndex < steps.length });
+  setTransferLinkyProgress(
+    activeIndex === steps.length ? 100 : Math.min(88, 13 + (activeIndex * 25)),
+    { visible: true, complete: activeIndex === steps.length },
+  );
+}
+
+function setTransferLinkyProgress(value, { visible, complete = false }) {
+  const progress = element("linkyTransferProgress");
+  if (!progress) return;
+  const normalized = Math.max(0, Math.min(100, value));
+  progress.hidden = !visible;
+  progress.setAttribute("aria-valuenow", String(normalized));
+  progress.classList.toggle("is-complete", complete);
+  progress.querySelector("span").style.width = `${normalized}%`;
 }
 
 function renderLending(status) {
@@ -561,6 +602,19 @@ function renderLending(status) {
   const meter = fill.closest(".meter-track");
   meter.style.setProperty("--health-position", `${Math.min(99, Math.max(1, health.meter))}%`);
   meter.dataset.tone = health.tone;
+  renderLendingLinkyMoment();
+}
+
+function renderLendingLinkyMoment() {
+  const pose = {
+    deposit: "collateralDeposit",
+    borrow: "creditGuide",
+    repay: "debtRepay",
+    withdraw: "collateralWithdraw",
+  }[lendingMode] || "creditGuide";
+  renderLinkyMoment("lending", pose, {
+    processing: ["deposit", "borrow", "repay", "repayAll", "withdraw"].includes(busyAction),
+  });
 }
 
 function renderSettlement(status) {
@@ -572,15 +626,18 @@ function renderSettlement(status) {
   const guard = element("settlementGuardTitle")?.closest(".settlement-guard");
   guard?.classList.toggle("is-ready", debt === 0n && collateral === 0n);
   if (debt > 0) {
+    renderLinkyMoment("settlement", "debtRepay");
     setText("settlementGuardTitle", "Outstanding debt remains");
     setText(
       "settlementGuardCopy",
       isSmallBalance(status) ? "Settle the small remaining balance before withdrawing and returning collateral." : "Repay Bank B debt before withdrawing and returning collateral.",
     );
   } else if (collateral > 0) {
+    renderLinkyMoment("settlement", "collateralWithdraw");
     setText("settlementGuardTitle", "Collateral is still active");
     setText("settlementGuardCopy", "Withdraw voucher collateral from the lending pool before settlement.");
   } else {
+    renderLinkyMoment("settlement", "settlementUnlock", { processing: busyAction === "return" });
     setText("settlementGuardTitle", "Position is clear");
     setText("settlementGuardCopy", "Free voucher can be burned and released from Bank A custody.");
   }
@@ -615,6 +672,7 @@ function renderFormalEvidence(evidence) {
   const verdict = element("evidenceVerdict");
   verdict.classList.remove("is-warning", "is-error");
   if (!evidence?.available) {
+    renderLinkyMoment("evidence", "caution");
     verdict.classList.add("is-warning");
     setText("evidenceVerdictLabel", "VALIDATION EVIDENCE NOT AVAILABLE");
     setText("evidenceVerdictTitle", "Generate an isolated evidence run");
@@ -638,6 +696,7 @@ function renderFormalEvidence(evidence) {
   const reportPassed = evidenceReportPassed(evidence);
   const applicableToCurrentSource = evidenceAppliesToCurrentSource(evidence);
   const currentPass = reportPassed && applicableToCurrentSource;
+  renderLinkyMoment("evidence", currentPass ? "evidenceAudit" : "caution");
   if (!reportPassed) verdict.classList.add("is-error");
   else if (!applicableToCurrentSource) verdict.classList.add("is-warning");
   setText(
@@ -798,38 +857,51 @@ function renderJourney(status) {
   });
 }
 
-function renderLinky(status) {
-  if (busyAction || status.controller?.activeOperation) return renderLinkyProcessing(busyAction || status.controller.activeOperation.action);
-  const recommendation = recommendationFor(status);
-  renderLinkyState(recommendation);
-  setText("linkyIdentity", status.participants.identity.A.active && status.participants.identity.B.active ? "Active" : "Review");
-  setText("linkyRelay", status.relayerHealthy ? "Healthy" : "Review");
-  setText("linkyGovernance", titleCase(status.governance.mode));
-  const actionButton = element("linkyAction");
-  if (recommendation.action) {
-    actionButton.hidden = false;
-    actionButton.dataset.action = recommendation.action;
-    actionButton.querySelector("span").textContent = recommendation.button;
-  } else {
-    actionButton.hidden = true;
-    delete actionButton.dataset.action;
-  }
+function renderLinky() {
+  hydrateVisibleLinkyMoments();
 }
 
 function renderLinkyProcessing(action) {
-  const active = currentStatus?.controller?.activeOperation;
-  renderLinkyState({
-    image: "processing",
-    title: operationName(action || active?.action),
-    copy: active?.stage ? `Current stage: ${titleCase(active.stage)}.` : operationProgressCopy(action),
-  });
-  element("linkyAction").hidden = true;
+  const moment = {
+    bridge: ["transfer", "finalityWatch"],
+    deposit: ["lending", "collateralDeposit"],
+    borrow: ["lending", "creditGuide"],
+    repay: ["lending", "debtRepay"],
+    repayAll: ["lending", "debtRepay"],
+    withdraw: ["lending", "collateralWithdraw"],
+    return: ["settlement", "settlementUnlock"],
+  }[action];
+  if (moment) renderLinkyMoment(moment[0], moment[1], { processing: true });
 }
 
-function renderLinkyState({ image, title, copy }) {
-  element("linkyImage").src = LINKY_IMAGES[image] || LINKY_IMAGES.neutral;
-  setText("linkyTitle", title);
-  setText("linkyCopy", copy);
+function renderUnavailableLinkyMoments() {
+  Object.keys(LINKY_SLOTS).forEach((slot) => renderLinkyMoment(slot, "caution"));
+  hydrateVisibleLinkyMoments();
+}
+
+function renderLinkyMoment(slot, pose, { processing = false } = {}) {
+  const image = element(LINKY_SLOTS[slot]);
+  if (!image) return;
+  image.dataset.linkySrc = LINKY_IMAGES[pose] || LINKY_IMAGES.neutral;
+  image.closest(".linky-moment")?.classList.toggle("is-processing", processing);
+  if (!image.closest("[data-panel]")?.hidden) hydrateLinkyImage(image);
+}
+
+function hydrateVisibleLinkyMoments() {
+  document.querySelectorAll("[data-panel]:not([hidden]) [data-linky-image]").forEach(hydrateLinkyImage);
+}
+
+function hydrateLinkyImage(image) {
+  const nextSource = image.dataset.linkySrc;
+  if (!nextSource || image.getAttribute("src") === nextSource) return;
+  const loader = new Image();
+  loader.onload = () => {
+    if (image.dataset.linkySrc !== nextSource) return;
+    image.classList.add("is-changing");
+    image.src = nextSource;
+    requestAnimationFrame(() => image.classList.remove("is-changing"));
+  };
+  loader.src = nextSource;
 }
 
 function renderAvailability() {
@@ -911,6 +983,7 @@ function setLendingMode(mode, { primeAmount = false } = {}) {
   if (primeAmount) setInputAmount(element("lendingAmount"), config.limit(currentStatus), true);
   setFormMessage(element("lendingForm"), "");
   window.lucide?.createIcons();
+  renderLendingLinkyMoment();
   renderAvailability();
   syncWorkflowTabState();
   if (currentStatus?.runtimeReadable) renderJourney(currentStatus);
@@ -954,6 +1027,7 @@ function openTab(tab, { focusTab = false } = {}) {
   const selectedTab = syncWorkflowTabState();
   if (focusTab) selectedTab?.focus({ preventScroll: true });
   if (currentStatus?.runtimeReadable) renderJourney(currentStatus);
+  hydrateVisibleLinkyMoments();
 }
 
 function syncWorkflowTabState() {
@@ -989,7 +1063,7 @@ function setBusy(busy, action = null) {
   document.querySelectorAll("[data-operation-form]").forEach((form) => {
     form.setAttribute("aria-busy", String(busy));
   });
-  document.querySelectorAll(".journey-step, .segment, .text-button, .linky-action, .amount-input input").forEach((control) => {
+  document.querySelectorAll(".journey-step, .segment, .text-button, .amount-input input").forEach((control) => {
     setSemanticDisabled(control, busy);
   });
   document.querySelectorAll("form .primary-button").forEach((button) => {
@@ -1029,8 +1103,14 @@ function toast(message, tone = "success") {
   item.setAttribute("role", tone === "error" ? "alert" : "status");
   item.setAttribute("aria-live", tone === "error" ? "assertive" : "polite");
   item.setAttribute("aria-atomic", "true");
-  const icon = document.createElement("i");
-  icon.dataset.lucide = tone === "error" ? "circle-alert" : "circle-check";
+  const icon = document.createElement("span");
+  icon.className = "toast-linky";
+  const iconImage = document.createElement("img");
+  iconImage.src = tone === "error" ? LINKY_IMAGES.caution : LINKY_IMAGES.success;
+  iconImage.alt = "";
+  iconImage.width = 38;
+  iconImage.height = 38;
+  icon.append(iconImage);
   const copy = document.createElement("span");
   copy.textContent = message;
   const close = document.createElement("button");

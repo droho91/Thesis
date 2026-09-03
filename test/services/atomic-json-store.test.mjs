@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -11,6 +12,7 @@ import { RelayJournal } from "../../services/institutional-relay/relay-journal.m
 
 const TEST_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const RELAY_JOURNAL_MODULE = pathToFileURL(resolve(TEST_DIRECTORY, "../../services/institutional-relay/relay-journal.mjs")).href;
+const ATOMIC_STORE_MODULE = pathToFileURL(resolve(TEST_DIRECTORY, "../../services/shared/atomic-json-store.mjs")).href;
 
 function storeOptions() {
   return {
@@ -21,6 +23,10 @@ function storeOptions() {
       }
     },
   };
+}
+
+async function assertMissing(path) {
+  await assert.rejects(access(path), (error) => error?.code === "ENOENT");
 }
 
 test("AtomicJsonStore fails closed for a second owner and can reopen after explicit close", async (t) => {
@@ -67,6 +73,56 @@ test("a separate process cannot open the same relay journal while its owner is a
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /INSTITUTIONAL_PROCESS_LOCK_HELD/);
   assert.doesNotMatch(result.stdout, /UNEXPECTED_OPEN/);
+});
+
+test("AtomicJsonStore automatically reclaims a lock after an OS process crash", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "atomic-json-store-crash-"));
+  const path = join(directory, "journal.json");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const source = `
+    import { AtomicJsonStore } from ${JSON.stringify(ATOMIC_STORE_MODULE)};
+    const store = await AtomicJsonStore.open(${JSON.stringify(path)}, {
+      create: () => ({ version: "atomic-store-test-v1", value: 0 }),
+      validate: (state) => {
+        if (state?.version !== "atomic-store-test-v1" || !Number.isSafeInteger(state.value)) {
+          throw new Error("invalid child state");
+        }
+      },
+    });
+    await store.mutate((state) => { state.value = 7; });
+    console.log("CHILD_READY");
+    setInterval(() => {}, 1_000);
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  await Promise.race([
+    new Promise((resolveReady) => child.stdout.on("data", () => {
+      if (stdout.includes("CHILD_READY")) resolveReady();
+    })),
+    once(child, "close").then(([code]) => {
+      throw new Error(`child exited before acquiring its lock (code=${code}): ${stderr}`);
+    }),
+  ]);
+
+  child.kill("SIGKILL");
+  await once(child, "close");
+  await access(`${path}.lock`);
+
+  const reopened = await AtomicJsonStore.open(path, storeOptions());
+  assert.equal(reopened.snapshot().value, 7);
+  await reopened.close();
+  await assertMissing(`${path}.lock`);
 });
 
 test("AtomicJsonStore close refuses a replaced ownership token and preserves the lock", async (t) => {

@@ -58,13 +58,12 @@ library RLPDecodeLib {
     }
 
     function toBytes32(bytes memory value) internal pure returns (bytes32 result) {
-        require(value.length <= 32, "RLP_BYTES32_TOO_LONG");
-        if (value.length == 0) return bytes32(0);
+        // This conversion is used for the fixed-width storageRoot field in an
+        // Ethereum account tuple. Short RLP integers have different semantics;
+        // accepting them here would make an accidental caller-dependent shift.
+        require(value.length == 32, "RLP_BYTES32_LENGTH");
         assembly {
             result := mload(add(value, 32))
-        }
-        if (value.length < 32) {
-            result = result << ((32 - value.length) * 8);
         }
     }
 
