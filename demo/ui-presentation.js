@@ -27,6 +27,7 @@ export function formatDurationMs(value) {
 
 export function evidenceStepLabel(evidence) {
   if (!evidence?.available) return "Missing";
+  if (!evidenceValidatorCurrent(evidence)) return "Restart UI";
   if (!evidenceReportPassed(evidence)) return "Review";
   return evidenceAppliesToCurrentSource(evidence) ? "Current pass" : "Recorded";
 }
@@ -39,7 +40,52 @@ export function evidenceAppliesToCurrentSource(evidence) {
   return evidence?.applicableToCurrentSource ?? evidence?.provenance?.sourceMatches === true;
 }
 
+export function evidenceValidatorCurrent(evidence) {
+  return evidence?.validatorRuntime?.sourceMatchesCurrent === true;
+}
+
+export function evidenceVerdictPresentation(evidence) {
+  if (!evidenceValidatorCurrent(evidence)) {
+    return {
+      currentPass: false,
+      tone: "warning",
+      label: "UI VALIDATOR RESTART REQUIRED",
+      title: "Restart the UI to load the current evidence policy",
+      copy: "The UI server was loaded from an earlier source revision. Restart npm run demo:ui before interpreting these reports.",
+    };
+  }
+  if (!evidenceReportPassed(evidence)) {
+    const failedGates = evidence?.validation?.failedGates || [];
+    return {
+      currentPass: false,
+      tone: "error",
+      label: "VALIDATION GATES FAILED",
+      title: "One or more evidence gates require attention",
+      copy: failedGates.length > 0
+        ? `Failed checks: ${failedGates.map(titleCase).join(", ")}.`
+        : "Review the recorded validation reports before using this build for a defense.",
+    };
+  }
+  if (!evidenceAppliesToCurrentSource(evidence)) {
+    return {
+      currentPass: false,
+      tone: "warning",
+      label: "RECORDED VALIDATION — CURRENT SOURCE NOT VERIFIED",
+      title: "Evidence passed only for the recorded source",
+      copy: "The recorded run passed, but it is not a current pass for this source. Refresh validation evidence after reviewing and committing the source.",
+    };
+  }
+  return {
+    currentPass: true,
+    tone: "ready",
+    label: "REPRODUCIBLE VALIDATION PASSED",
+    title: "Evidence matches the current reviewed source",
+    copy: "An isolated two-chain run tested quorum behavior, recovery and lending invariants, and measured settlement latency.",
+  };
+}
+
 export function evidenceSourceStateLabel(evidence) {
+  if (!evidenceValidatorCurrent(evidence)) return "Restart UI to load the current validator";
   if (evidenceAppliesToCurrentSource(evidence)) return "Current source matched";
   const labels = {
     "commit-mismatch": "Current commit differs",

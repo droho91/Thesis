@@ -227,6 +227,12 @@ const passingEvidenceInput = {
   fault: passingComponentReports.fault,
   deployment: passingComponentReports.deployment,
   repository: { commit: passingCommit, dirty: false },
+  validatorRuntime: {
+    sourceMatchesCurrent: true,
+    reason: "matched",
+    loadedCommit: passingCommit,
+    currentCommit: passingCommit,
+  },
   reportDigests: { deployment: "d", fault: "f", integration: "i", security: "s" },
   securityValidationContext: {
     hardhatVersion: "3.1.8",
@@ -254,12 +260,26 @@ assert.equal(formalEvidence.integrity.deployedBytecodeValid, true);
 assert.equal(formalEvidence.integrity.provenanceStable, true);
 assert.equal(formalEvidence.integrity.exclusiveRunComplete, true);
 assert.equal(formalEvidence.integrity.publicEvidenceBundleClean, true);
+assert.deepEqual(formalEvidence.validation.failedGates, []);
+
+const staleValidatorEvidence = summarizeFormalEvidence({
+  ...passingEvidenceInput,
+  validatorRuntime: {
+    sourceMatchesCurrent: false,
+    reason: "commit-mismatch",
+    loadedCommit: "6".repeat(40),
+    currentCommit: passingCommit,
+  },
+});
+assert.equal(staleValidatorEvidence.reportStatus, "passed");
+assert.equal(staleValidatorEvidence.status, "validator-stale");
 
 const missingBytecodeInput = structuredClone(passingEvidenceInput);
 delete missingBytecodeInput.summary.evidence.deployedBytecode.B.gateway;
 const missingBytecodeEvidence = summarizeFormalEvidence(missingBytecodeInput);
 assert.equal(missingBytecodeEvidence.reportStatus, "failed");
 assert.equal(missingBytecodeEvidence.integrity.deployedBytecodeValid, false);
+assert.deepEqual(missingBytecodeEvidence.validation.failedGates, ["deployed-bytecode"]);
 
 const changedDuringRunInput = structuredClone(passingEvidenceInput);
 changedDuringRunInput.summary.completionProvenance.sourceTreeSha256 = "5".repeat(64);
@@ -453,7 +473,8 @@ assert.match(lendingDomain, /Enter a decimal amount with at most 18 decimal plac
 assert.doesNotMatch(modularUiSource, /\+\s*0\.0000001|maximumFractionDigits:\s*8/);
 assert.match(app, /catch \(error\) \{\s*currentStatus = null;\s*renderRuntimeFailure/s);
 assert.match(app, /const laneReady = Boolean\(currentStatus\?\.laneReady\);[\s\S]*if \(!laneReady\) \{[\s\S]*updateSubmit/);
-assert.match(app, /applicableToCurrentSource/);
+assert.match(uiPresentation, /applicableToCurrentSource/);
+assert.match(uiPresentation, /sourceMatchesCurrent/);
 assert.match(readModel, /timelock-enforced|governanceMode/);
 assert.match(doctor, /Deployed contract bytecode/);
 assert.match(doctor, /classifyDefenseEvidence/);

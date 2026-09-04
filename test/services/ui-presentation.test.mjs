@@ -6,6 +6,8 @@ import {
   evidenceReportPassed,
   evidenceSourceStateLabel,
   evidenceStepLabel,
+  evidenceValidatorCurrent,
+  evidenceVerdictPresentation,
   formatBps,
   formatDurationMs,
   formatInteger,
@@ -30,9 +32,15 @@ test("generic UI formatters preserve established labels", () => {
 });
 
 test("evidence presentation distinguishes report status from source applicability", () => {
-  const currentPass = { available: true, reportStatus: "passed", applicableToCurrentSource: true };
+  const currentPass = {
+    available: true,
+    reportStatus: "passed",
+    applicableToCurrentSource: true,
+    validatorRuntime: { sourceMatchesCurrent: true },
+  };
   assert.equal(evidenceReportPassed(currentPass), true);
   assert.equal(evidenceAppliesToCurrentSource(currentPass), true);
+  assert.equal(evidenceValidatorCurrent(currentPass), true);
   assert.equal(evidenceStepLabel(currentPass), "Current pass");
   assert.equal(evidenceSourceStateLabel(currentPass), "Current source matched");
 
@@ -41,12 +49,17 @@ test("evidence presentation distinguishes report status from source applicabilit
     status: "passed",
     applicableToCurrentSource: false,
     applicabilityReason: "commit-mismatch",
+    validatorRuntime: { sourceMatchesCurrent: true },
   };
   assert.equal(evidenceReportPassed(recorded), true);
   assert.equal(evidenceStepLabel(recorded), "Recorded");
   assert.equal(evidenceSourceStateLabel(recorded), "Current commit differs");
 
-  assert.equal(evidenceStepLabel({ available: true, status: "failed" }), "Review");
+  assert.equal(evidenceStepLabel({
+    available: true,
+    status: "failed",
+    validatorRuntime: { sourceMatchesCurrent: true },
+  }), "Review");
   assert.equal(evidenceStepLabel({ available: false }), "Missing");
   assert.equal(
     evidenceAppliesToCurrentSource({ provenance: { sourceMatches: true } }),
@@ -54,18 +67,54 @@ test("evidence presentation distinguishes report status from source applicabilit
   );
 });
 
+test("evidence presentation requests a UI restart for missing or stale validator provenance", () => {
+  const stale = {
+    available: true,
+    status: "failed",
+    reportStatus: "failed",
+    applicableToCurrentSource: true,
+    validatorRuntime: { sourceMatchesCurrent: false, reason: "commit-mismatch" },
+  };
+  assert.equal(evidenceValidatorCurrent(stale), false);
+  assert.equal(evidenceStepLabel(stale), "Restart UI");
+  assert.equal(evidenceSourceStateLabel(stale), "Restart UI to load the current validator");
+  assert.deepEqual(evidenceVerdictPresentation(stale), {
+    currentPass: false,
+    tone: "warning",
+    label: "UI VALIDATOR RESTART REQUIRED",
+    title: "Restart the UI to load the current evidence policy",
+    copy: "The UI server was loaded from an earlier source revision. Restart npm run demo:ui before interpreting these reports.",
+  });
+
+  // Payloads from an older server do not carry validator provenance and must
+  // not be presented as a trustworthy current validation decision.
+  assert.equal(evidenceValidatorCurrent({ available: true, reportStatus: "passed" }), false);
+});
+
+test("evidence failure presentation names the rejected gates", () => {
+  const presentation = evidenceVerdictPresentation({
+    available: true,
+    reportStatus: "failed",
+    validatorRuntime: { sourceMatchesCurrent: true },
+    validation: { failedGates: ["security-profile", "component-reports"] },
+  });
+  assert.equal(presentation.tone, "error");
+  assert.equal(presentation.copy, "Failed checks: Security Profile, Component Reports.");
+});
+
 test("evidence source-state wording covers every recorded mismatch reason", () => {
+  const validatorRuntime = { sourceMatchesCurrent: true };
   assert.equal(
-    evidenceSourceStateLabel({ applicabilityReason: "current-source-dirty" }),
+    evidenceSourceStateLabel({ applicabilityReason: "current-source-dirty", validatorRuntime }),
     "Current source has uncommitted changes",
   );
   assert.equal(
-    evidenceSourceStateLabel({ applicabilityReason: "recorded-source-dirty" }),
+    evidenceSourceStateLabel({ applicabilityReason: "recorded-source-dirty", validatorRuntime }),
     "Recorded source was not clean",
   );
   assert.equal(
-    evidenceSourceStateLabel({ applicabilityReason: "source-state-unknown" }),
+    evidenceSourceStateLabel({ applicabilityReason: "source-state-unknown", validatorRuntime }),
     "Current source state is unknown",
   );
-  assert.equal(evidenceSourceStateLabel({}), "Current source is not verified");
+  assert.equal(evidenceSourceStateLabel({ validatorRuntime }), "Current source is not verified");
 });

@@ -139,6 +139,8 @@ npm run institutional:evidence:verify
 
 Chỉ dùng evidence khi verifier pass và `demo:doctor` trả `READY FOR DEFENSE`. Report đã pass nhưng commit không khớp, source hiện tại dirty hoặc current-source provenance không xác định sẽ có trạng thái `stale` và bị xem là `NOT READY`. Report được ghi từ dirty tree không đủ điều kiện pass ngay từ đầu.
 
+UI server nạp evidence-validator modules một lần khi `npm run demo:ui` khởi động. API ghi cả commit đã nạp và commit hiện tại; nếu source được commit trong lúc UI vẫn mở, giao diện yêu cầu restart thay vì diễn giải kết quả từ validator cũ thành một evidence failure. Evidence được đọc lại khi mở tab và mỗi 30 giây khi tab đang hiển thị. Sau mỗi thay đổi/commit vào evidence policy, dừng UI, chạy lại `npm run demo:ui`, rồi refresh trình duyệt. Không cần tạo lại evidence nếu offline verifier vẫn pass cho đúng commit.
+
 Evidence đủ điều kiện trình bày yêu cầu một Git commit sạch, đã review và khớp source provenance. `--allow-dirty` chỉ tạo `calibration-passed`, không evidence-eligible. Các checksum cung cấp kiểm tra tính nhất quán dưới giả định host và toolchain đáng tin cậy; chúng không phải chữ ký độc lập, formal verification, external audit hoặc production SLA.
 
 GitHub Actions định nghĩa thêm một clean hosted Besu evidence job trên Ubuntu 24.04, có Docker preflight, command budget 85 phút trong job budget 100 phút, diagnostics giới hạn, offline verifier và cleanup `always()`. Khoảng cách 15 phút giữ thời gian cho verifier, diagnostics và cleanup sau command. Workflow không dùng `--allow-dirty`; tuy vậy, việc job được định nghĩa hoặc upload được JSON vẫn không chứng minh nó đã pass. Chỉ sử dụng artifact khi exact Actions run xanh, summary v4 có status `passed`, verifier pass và commit khớp source đã review.

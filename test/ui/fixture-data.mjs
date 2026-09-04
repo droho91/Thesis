@@ -124,6 +124,13 @@ export const evidenceFixture = Object.freeze({
   reportStatus: "passed",
   applicableToCurrentSource: true,
   applicabilityReason: "matched",
+  validatorRuntime: {
+    schema: "institutional-evidence-validator-runtime-v1",
+    loadedCommitShort: "7e57c0de",
+    currentCommitShort: "7e57c0de",
+    sourceMatchesCurrent: true,
+    reason: "matched",
+  },
   generatedAt: "2026-08-02T00:10:00.000Z",
   provenance: {
     sourceMatches: true,
@@ -238,4 +245,21 @@ export const evidenceFixture = Object.freeze({
       },
     ],
   },
+});
+
+export const staleValidatorEvidenceFixture = Object.freeze({
+  ...evidenceFixture,
+  status: "validator-stale",
+  reportStatus: "failed",
+  validatorRuntime: Object.freeze({
+    schema: "institutional-evidence-validator-runtime-v1",
+    loadedCommitShort: "11111111",
+    currentCommitShort: "22222222",
+    sourceMatchesCurrent: false,
+    reason: "commit-mismatch",
+  }),
+  validation: Object.freeze({
+    failedGates: Object.freeze(["security-profile", "component-reports"]),
+    totalGates: 19,
+  }),
 });

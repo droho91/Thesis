@@ -61,6 +61,17 @@ test("doctor fails a current-source report when a component gate failed", () => 
   assert.equal(readinessVerdict([check]).exitCode, 1);
 });
 
+test("doctor reports an out-of-date evidence validator separately from failed reports", () => {
+  const check = classifyDefenseEvidence({
+    ...currentPassingEvidence,
+    reportStatus: "failed",
+    validatorRuntime: { sourceMatchesCurrent: false, reason: "commit-mismatch" },
+  });
+  assert.equal(check.status, "fail");
+  assert.match(check.detail, /validator runtime is stale \(commit-mismatch\)/);
+  assert.match(check.detail, /restart the UI process/);
+});
+
 test("doctor rejects a current report without live-client production-proof observations", () => {
   const check = classifyDefenseEvidence({
     ...currentPassingEvidence,

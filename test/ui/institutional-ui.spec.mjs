@@ -92,6 +92,21 @@ test.beforeEach(async ({ page }) => {
   await waitForInstitutionalSnapshot(page);
 });
 
+test("an outdated evidence validator requests restart instead of reporting failed gates", async ({ page }) => {
+  await page.context().addCookies([{
+    name: "institutional_test_stale_validator",
+    value: "1",
+    url: page.url(),
+  }]);
+  await page.locator("#workflowTabEvidence").click();
+  await expect(page.locator("#evidenceStepStatus")).toHaveText("Restart UI");
+  await expect(page.locator("#evidenceVerdictLabel")).toHaveText("UI VALIDATOR RESTART REQUIRED");
+  await expect(page.locator("#evidenceVerdictTitle")).toContainText("Restart the UI");
+  await expect(page.locator("#evidenceSourceState")).toHaveText("Restart UI to load the current validator");
+  await expect(page.locator("#evidenceVerdict")).toHaveClass(/is-warning/);
+  await expect(page.locator("#evidenceVerdict")).not.toHaveClass(/is-error/);
+});
+
 test("workflow supports roving keyboard navigation and disclosure controls", async ({ page }) => {
   const identityTab = page.locator("#workflowTabIdentity");
   await identityTab.focus();

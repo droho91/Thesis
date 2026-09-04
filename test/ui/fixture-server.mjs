@@ -1,7 +1,11 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { serveStaticDemo } from "../../scripts/ui/static-server.mjs";
-import { evidenceFixture, statusFixture } from "./fixture-data.mjs";
+import {
+  evidenceFixture,
+  staleValidatorEvidenceFixture,
+  statusFixture,
+} from "./fixture-data.mjs";
 import { fixtureHost, fixtureOrigin, fixturePort } from "./fixture-environment.mjs";
 
 const demoRoot = fileURLToPath(new URL("../../demo/", import.meta.url));
@@ -24,7 +28,10 @@ const server = createServer(async (request, response) => {
     return sendJson(response, 200, statusFixture);
   }
   if (request.method === "GET" && requestUrl.pathname === "/api/evidence") {
-    return sendJson(response, 200, evidenceFixture);
+    const evidence = request.headers.cookie?.includes("institutional_test_stale_validator=1")
+      ? staleValidatorEvidenceFixture
+      : evidenceFixture;
+    return sendJson(response, 200, evidence);
   }
   if (request.method === "GET" && requestUrl.pathname === "/api/session") {
     return sendJson(response, 200, { csrfToken: "phase7_ui_fixture_token_0000000000000000" });

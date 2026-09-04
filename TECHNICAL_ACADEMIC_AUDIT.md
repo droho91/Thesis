@@ -2,9 +2,9 @@
 
 ## 1. Thông tin audit
 
-- Ngày audit gốc: 2026-07-22; snapshot rà soát độc lập gần nhất: 2026-09-02
+- Ngày audit gốc: 2026-07-22; targeted lifecycle/evidence regression audit gần nhất: 2026-09-05
 - Phạm vi: toàn bộ source, contracts, services, scripts, UI, tests, config, CI và documentation đang có trong repository
-- Quy mô UI snapshot sau Phase 7: `demo/styles.css` 3.142 dòng, `demo/app.js` 1.149 dòng, `demo/index.html` 452 dòng; các backend monolith đã theo dõi từ Phase 6 giữ nguyên phạm vi cleanup
+- Quy mô UI snapshot hiện tại: `demo/styles.css` 3.702 dòng, `demo/app.js` 1.205 dòng, `demo/index.html` 497 dòng; các backend monolith đã theo dõi từ Phase 6 giữ nguyên phạm vi cleanup
 - Trạng thái Git: worktree đang có thay đổi chưa commit; audit đánh giá đúng snapshot hiện tại và không xem snapshot này là evidence đủ điều kiện bảo vệ
 - Phương pháp: static review, đối chiếu contract–runtime–UI–documentation, chạy test hiện có, tái hiện riêng các nghi vấn evidence, và research từ specification/tài liệu/paper gốc của Ethereum, EIP, EEA QBFT, Besu, OpenZeppelin, Solidity, Compound, Aave, NIST và SLSA
 
@@ -23,7 +23,7 @@ Dự án có nền tảng nghiên cứu tốt và đường chạy chính tươn
 
 Snapshot hiện tại **chưa nên được mô tả là production-ready hoặc formally verified**. Phase 1 đã khép bốn safety finding ban đầu, Phase 2 đã khép các đường false-positive/unsafe-pass trong evidence pipeline, Phase 3 đã khép các runtime blocker, Phase 4 đã khóa financial semantics, Phase 5 đã xử lý assurance/interface, Phase 6 đã tách các seam maintainability chính, Phase 7 đã khép UI/a11y cleanup, Phase 8 đã triển khai verification-depth gates và Phase 9 đã triển khai live-client/proof capture cùng defense preflight trong phạm vi repository. Các khoảng trống lớn còn lại là:
 
-1. integration v3 hiện có đường capture một live Besu client family và bốn production-accepted proof observations, nhưng chưa được quan sát chạy tại local/hosted trong audit này; đối chiếu với client thứ hai và independent review vẫn cần trước external audit;
+1. clean local evidence đã được quan sát pass tại commit `9f668609`: Besu trên hai chain, bốn production-accepted proof observations, 14/14 security controls, 100 latency samples và p95 post-inclusion 23,746 giây. Targeted audit hiện tại thay đổi source sau bundle này nên phải commit, restart UI và tạo evidence mới trước khi dùng để bảo vệ; đối chiếu với client family thứ hai và independent review vẫn cần trước external audit;
 2. clean hosted Besu evidence job đã được định nghĩa nhưng chưa được quan sát chạy; evidence chính thức theo runtime summary v4, integration report v3 và security report v2 vẫn cần tạo từ clean reviewed commit và live Docker runtime;
 3. production deployment vẫn cần transactional database, managed keys, monitoring và independent security review.
 
@@ -38,7 +38,7 @@ Snapshot hiện tại **chưa nên được mô tả là production-ready hoặc
 | Evidence integrity | Phase 2 remediated | Structured result, hardened profile, report checksum và source applicability đều fail-closed; vẫn phụ thuộc host/toolchain và chưa phải signed attestation |
 | Financial model | Phase 4–5 remediated trong scope prototype | Financial semantics, 18-decimal market guard, asset-keyed velocity và supplier-loss epoch có regression/property test; vẫn là single-market model chưa external audit |
 | Verification depth | Phase 8 implemented trong repository scope | 4 bounded stateful properties ở 64×64, line coverage 94,15% và 4/4 hand-selected mutants bị giết; đây không phải formal proof, branch coverage hoặc full mutation analysis |
-| Live evidence readiness | Phase 9 implemented trong repository scope; clean run pending | Summary v4/integration v3 fail closed nếu thiếu pinned Besu identity, deployed-gateway binding hoặc bốn accepted proof observations. Browser 44/44 và Docker/Compose hiện pass preflight; hai gate còn lại trước clean run là commit source đã review và current live-evidence applicability |
+| Live evidence readiness | Clean local run observed for `9f668609`; current rerun pending | Summary v4/integration v3 pass đã được quan sát với pinned Besu identity, deployed-gateway binding, bốn accepted proof observations, 100 samples và 4/4 checksums. Source của Phase 11 hiện dirty nên bundle đó không còn current-applicable |
 | UI trình chiếu | Phase 7 remediated, Phase 10 revalidated | Light theme, state-driven motion, exact amount, fail-closed stale state và keyboard/ARIA semantics có automated gate. Axe, overflow và typography chạy trên bốn pinned viewport từ 1100 đến 1920 px; visual regression khóa Identity ở cả bốn viewport và bảy operation-state tại 1600×900 |
 | Documentation | Khá tốt và đã khóa claim matrix | README/threat model phân biệt tested/observed/enforced, thu hẹp finality/independence/exactly-once claims; các residual production được công khai |
 
@@ -170,14 +170,27 @@ Giới hạn còn mở sau Phase 10: live evidence phải chạy lại trên cle
 
 Dependency review ghi nhận `npm audit` không có advisory trên dependency tree hiện tại. Hardhat `3.15.0`, OpenZeppelin Contracts `5.6.1` và Axe Playwright `4.13.0` đã có bản mới hơn pin hiện tại. Hardhat upstream nêu compile-speed improvement; OpenZeppelin `5.6.1` fix `InteroperableAddress`, component project không import. Audit không nâng toolchain/library chỉ vì version number: Hardhat version là một phần của evidence schema/structured runner, còn OpenZeppelin upgrade thay deployed bytecode. Hai migration này nên là PR riêng với full gate và regenerated clean evidence.
 
+### Cập nhật remediation Phase 11 — 2026-09-05
+
+Phase 11 là targeted regression audit sau hai lỗi chỉ xuất hiện theo thời gian chạy; nó không thay thế external audit hay live multi-client validation.
+
+| Finding / tối ưu | Trạng thái | Remediation và evidence |
+| --- | --- | --- |
+| P11-01 — Besu có thể trả `missing revert data` trong cửa sổ world-state/head ngắn | Resolved in `9f668609`; live-soak revalidated | Chỉ read-only contract calls dùng bounded transient retry; deterministic revert và transaction ghi không retry. Read-only soak mới đạt 500/500 trên hai chain đang tạo block; 501 RPC attempts cho thấy một lỗi transient thật đã được phục hồi |
+| P11-02 — UI process cũ có thể dùng evidence-policy module trước commit mới | Resolved in current source | UI server chụp commit/dirty state khi validator được nạp và so lại tại mỗi evidence request. Commit mismatch, dirty-at-load hoặc unknown provenance tạo `validator-stale`/`UI VALIDATOR RESTART REQUIRED`, không còn bị diễn giải thành report failure |
+| P11-03 — `VALIDATION GATES FAILED` không chỉ ra điều kiện nào hỏng | Resolved in current source | Evidence payload xuất 19 named gates và UI liệt kê gate thất bại khi validator hiện hành thực sự reject report |
+| P11-04 — lifecycle/lock regression sau sửa | Revalidated | Orphan recovery vẫn chỉ nhận same-host/same-platform/dead-PID owner; live/foreign/tampered lock fail closed. UI alternate-port smoke test khởi động, trả validator provenance và thoát `SIGINT` với code 0 |
+
+Clean evidence quan sát được trước Phase 11 thuộc commit `9f668609`, có 14/14 security controls, 100/100 benchmark samples, p95 post-inclusion 23,746 giây, 4/4 report checksums và bốn accepted proof observations. Vì Phase 11 tạo source revision mới, bundle này chỉ là regression baseline; sau commit phải restart UI, chạy lại `institutional:evidence`, `institutional:evidence:verify` và `demo:doctor` trước khi trình bày.
+
 ## 3. Baseline kiểm thử
 
 | Kiểm tra | Kết quả | Ghi chú |
 | --- | --- | --- |
 | Solidity tests | 140/140 pass | Bao gồm pinned corpus, 4 stateful invariant properties, exact/reject-short RLP regression và constructor guard cho dependency không có bytecode |
-| Service tests | 240/240 pass | Bao gồm full durable relay-envelope validation, lock publication/crash recovery, quorum early-return/straggler abort, static-server headers/symlink boundary và các evidence/runtime regressions trước đó |
+| Service tests | 249/249 pass | Bao gồm full durable relay-envelope validation, lock publication/crash recovery, quorum early-return/straggler abort, static-server headers/symlink boundary, RPC retry và stale-validator provenance |
 | UI source/read-model checks | Pass | `npm run test:ui` là static gate cho semantic readiness, stale-state action lock, BigInt source usage, summary v4/integration v3, pass/fail/stale, component completeness, bytecode, lock, secret contamination, live-client proof và source applicability; browser behavior được kiểm riêng ở hàng kế tiếp |
-| Browser interaction/a11y/visual | 44/44 pass | Fresh Phase 10 run xác nhận keyboard, axe/overflow/typography, motion/CSP regressions và 11 reviewed Linux/Chromium images trên bốn project viewport 1100, 1366, 1600 và 1920 px |
+| Browser interaction/a11y/visual | 52/52 pass | Chromium run xác nhận keyboard, axe/overflow/typography, motion/CSP regressions, stale-validator restart state và visual baselines trên bốn project viewport 1100, 1366, 1600 và 1920 px |
 | Solidity line coverage | 1.560/1.657 (94,15%) | Fresh LCOV trên 21 production files; global, every-file và 11 critical-source floors đều pass; đây là line coverage, không phải branch coverage |
 | Mutation smoke | 4/4 killed | Bốn mutant được chọn trước đều bị targeted test giết; không phải full-repository mutation score |
 | Security scenario regression | 14/14 pass | Hardhat `3.12.0` được pin chính xác; mỗi scenario chạy bằng exact full Solidity signature và structured `passed/failed/skipped/todo` counts; fuzz repayment chạy 128 lượt |

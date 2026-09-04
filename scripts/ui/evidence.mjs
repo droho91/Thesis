@@ -22,6 +22,7 @@ const PUBLIC_EVIDENCE_FILES = Object.freeze({
   deployment: "institutional-deployment.json",
 });
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
+const EVIDENCE_VALIDATOR_RUNTIME_SCHEMA = "institutional-evidence-validator-runtime-v1";
 const REPOSITORY_ENVIRONMENT_ALLOWLIST = Object.freeze([
   "APPDATA", "COMSPEC", "ComSpec", "HOME", "LANG", "LC_ALL", "LOCALAPPDATA", "PATH",
   "PATHEXT", "SystemRoot", "SYSTEMROOT", "TEMP", "TERM", "TMP", "TMPDIR", "TZ",
@@ -51,8 +52,24 @@ const INTEGRATION_LABELS = Object.freeze({
   engineReloadRecovery: "Relay engine reload recovery",
 });
 
-export async function formalEvidencePayload() {
+export async function formalEvidencePayload({
+  validatorRepositoryAtLoad,
+  validatorLoadedAt,
+} = {}) {
   const repository = await repositoryStateForEvidence();
+  // Only the long-lived UI service supplies an at-load snapshot. Short-lived
+  // verifier/doctor processes already execute the current modules and should
+  // report source applicability, not an unrelated UI restart instruction.
+  const loadedRepository = validatorRepositoryAtLoad === undefined
+    ? null
+    : await Promise.resolve(validatorRepositoryAtLoad);
+  const validatorRuntime = loadedRepository === null
+    ? null
+    : evaluateEvidenceValidatorRuntime({
+      loadedRepository: loadedRepository || {},
+      currentRepository: repository,
+      loadedAt: validatorLoadedAt,
+    });
   let managedPaths;
   try {
     managedPaths = await resolveSafeEvidencePaths();
@@ -60,11 +77,12 @@ export async function formalEvidencePayload() {
     return rejectedEvidencePayload(
       `Unsafe evidence path configuration: ${error?.message || String(error)}`,
       repository,
+      validatorRuntime,
     );
   }
 
   if (await evidenceLocksPresent(managedPaths)) {
-    return rejectedEvidencePayload("An evidence writer lock is active or orphaned.", repository);
+    return rejectedEvidencePayload("An evidence writer lock is active or orphaned.", repository, validatorRuntime);
   }
 
   const [
@@ -94,6 +112,7 @@ export async function formalEvidencePayload() {
       applicabilityReason: "report-missing",
       message: "No validation evidence report is available. Run npm run institutional:evidence.",
       repository,
+      validatorRuntime,
     };
   }
   return summarizeFormalEvidence({
@@ -103,6 +122,7 @@ export async function formalEvidencePayload() {
     fault: faultReport?.data,
     deployment: deploymentReport?.data,
     repository,
+    validatorRuntime,
     securityValidationContext,
     evidenceRunLockPresent,
     publicEvidenceBundleClean,
@@ -122,6 +142,7 @@ export function summarizeFormalEvidence({
   fault,
   deployment,
   repository = {},
+  validatorRuntime = null,
   reportDigests = {},
   securityValidationContext = null,
   evidenceRunLockPresent = false,
@@ -172,35 +193,39 @@ export function summarizeFormalEvidence({
     currentCommit: repository.commit,
     currentDirty: repository.dirty,
   });
-  const reportsPassed = [
-    summary.version === "institutional-runtime-evidence-v4",
-    summary.status === "passed",
-    summary.formalEvidenceEligible === true,
-    recordedDirty === false,
-    securityProfileValid,
-    securityReportValid,
-    componentReportsValid,
-    deployedBytecodeValid,
-    provenanceStable,
-    exclusiveRunComplete,
-    publicEvidenceBundleValid,
-    summary.evidence?.governanceMode === "timelock-enforced",
-    benchmark.status === "passed",
-    benchmark.requiredSamples > 0,
-    benchmark.sampleCount >= benchmark.requiredSamples,
-    benchmark.postSourceInclusionToCompletion?.p95Ms <= benchmark.targetP95Ms,
-    securityScenarios.length > 0 && securityPassed === securityScenarios.length,
-    integrationEntries.length > 0 && integrationPassed === integrationEntries.length,
-    fault?.status === "passed",
-    reportChecksumsMatch,
-  ].every(Boolean);
+  // Keep named gates in the public payload so the UI can distinguish a failed
+  // report from an out-of-date validator process and explain the exact cause.
+  const reportGates = [
+    ["summary-schema", summary.version === "institutional-runtime-evidence-v4"],
+    ["summary-status", summary.status === "passed"],
+    ["formal-evidence-eligible", summary.formalEvidenceEligible === true],
+    ["recorded-source-clean", recordedDirty === false],
+    ["security-profile", securityProfileValid],
+    ["security-report", securityReportValid],
+    ["component-reports", componentReportsValid],
+    ["deployed-bytecode", deployedBytecodeValid],
+    ["stable-provenance", provenanceStable],
+    ["exclusive-run-complete", exclusiveRunComplete],
+    ["public-evidence-bundle", publicEvidenceBundleValid],
+    ["timelock-governance", summary.evidence?.governanceMode === "timelock-enforced"],
+    ["benchmark-status", benchmark.status === "passed"],
+    ["benchmark-sample-requirement", benchmark.requiredSamples > 0
+      && benchmark.sampleCount >= benchmark.requiredSamples],
+    ["benchmark-latency", benchmark.postSourceInclusionToCompletion?.p95Ms <= benchmark.targetP95Ms],
+    ["security-controls", securityScenarios.length > 0 && securityPassed === securityScenarios.length],
+    ["integration-tests", integrationEntries.length > 0 && integrationPassed === integrationEntries.length],
+    ["validator-availability", fault?.status === "passed"],
+    ["report-checksums", reportChecksumsMatch],
+  ];
+  const failedGates = reportGates.filter(([, passed]) => !passed).map(([id]) => id);
+  const reportsPassed = failedGates.length === 0;
   const reportStatus = reportsPassed ? "passed" : "failed";
   const applicableToCurrentSource = sourceApplicability.applicable;
-  const status = reportStatus !== "passed"
-    ? "failed"
-    : applicableToCurrentSource
-      ? "passed"
-      : "stale";
+  const validatorSourceCurrent = validatorRuntime?.sourceMatchesCurrent !== false;
+  let status = "stale";
+  if (!validatorSourceCurrent) status = "validator-stale";
+  else if (reportStatus !== "passed") status = "failed";
+  else if (applicableToCurrentSource) status = "passed";
 
   return {
     available: true,
@@ -210,6 +235,11 @@ export function summarizeFormalEvidence({
     reportStatus,
     applicableToCurrentSource,
     applicabilityReason: sourceApplicability.reason,
+    validatorRuntime,
+    validation: {
+      failedGates,
+      totalGates: reportGates.length,
+    },
     formalEvidenceEligible: summary.formalEvidenceEligible === true,
     generatedAt: summary.finishedAt || summary.startedAt || null,
     runtimeStopped: summary.runtimeStopped === true,
@@ -291,6 +321,35 @@ export function summarizeFormalEvidence({
       })),
     },
   };
+}
+
+export function evaluateEvidenceValidatorRuntime({
+  loadedRepository = {},
+  currentRepository = {},
+  loadedAt = null,
+} = {}) {
+  const loadedCommit = loadedRepository.commit || null;
+  const currentCommit = currentRepository.commit || null;
+  let reason = "matched";
+  if (!loadedCommit || !currentCommit || loadedRepository.dirty == null || currentRepository.dirty == null) {
+    reason = "source-state-unknown";
+  } else if (loadedRepository.dirty !== false) {
+    reason = "validator-loaded-from-dirty-source";
+  } else if (currentRepository.dirty !== false) {
+    reason = "current-source-dirty";
+  } else if (loadedCommit !== currentCommit) {
+    reason = "commit-mismatch";
+  }
+  return Object.freeze({
+    schema: EVIDENCE_VALIDATOR_RUNTIME_SCHEMA,
+    loadedAt: loadedAt || null,
+    loadedCommit,
+    loadedCommitShort: shortCommit(loadedCommit),
+    currentCommit,
+    currentCommitShort: shortCommit(currentCommit),
+    sourceMatchesCurrent: reason === "matched",
+    reason,
+  });
 }
 
 function hasValidEvidenceSecurityProfile(summary) {
@@ -509,7 +568,7 @@ function commandOutput(command, args, environment) {
   });
 }
 
-function rejectedEvidencePayload(message, repository) {
+function rejectedEvidencePayload(message, repository, validatorRuntime) {
   return {
     available: false,
     status: "failed",
@@ -518,6 +577,7 @@ function rejectedEvidencePayload(message, repository) {
     applicabilityReason: "evidence-snapshot-unavailable",
     message,
     repository,
+    validatorRuntime,
   };
 }
 

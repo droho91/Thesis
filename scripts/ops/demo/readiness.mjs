@@ -7,6 +7,14 @@ export function classifyDefenseEvidence(evidence = {}) {
     };
   }
 
+  if (evidence.validatorRuntime?.sourceMatchesCurrent === false) {
+    return {
+      name: "Defense evidence",
+      status: "fail",
+      detail: `evidence validator runtime is stale (${evidence.validatorRuntime.reason || "source mismatch"}); restart the UI process`,
+    };
+  }
+
   const reportStatus = evidence.reportStatus ?? evidence.status;
   if (reportStatus !== "passed") {
     return {

@@ -1,7 +1,12 @@
 import { InstitutionalDemoRuntime } from "../../services/institutional-demo-runtime.mjs";
-import { formalEvidencePayload } from "./evidence.mjs";
+import { formalEvidencePayload, repositoryStateForEvidence } from "./evidence.mjs";
 
 const runtime = new InstitutionalDemoRuntime();
+const evidenceValidatorLoadedAt = new Date().toISOString();
+// Node caches imported modules for the lifetime of the UI server. Capture the
+// source revision now so a later commit cannot be validated by stale in-memory
+// policy code while being presented as a current-source result.
+const evidenceValidatorRepositoryAtLoad = repositoryStateForEvidence();
 
 export async function prepareRuntime() {
   await runtime.initialize();
@@ -42,7 +47,10 @@ export async function tracePayload() {
 }
 
 export async function evidencePayload() {
-  return formalEvidencePayload();
+  return formalEvidencePayload({
+    validatorRepositoryAtLoad: evidenceValidatorRepositoryAtLoad,
+    validatorLoadedAt: evidenceValidatorLoadedAt,
+  });
 }
 
 export async function runActionPayload(request) {

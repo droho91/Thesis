@@ -12,10 +12,9 @@ import {
 } from "./lending-domain.js";
 import {
   compactAmount,
-  evidenceAppliesToCurrentSource,
-  evidenceReportPassed,
   evidenceSourceStateLabel,
   evidenceStepLabel,
+  evidenceVerdictPresentation,
   formatBps,
   formatDurationMs,
   formatInteger,
@@ -76,6 +75,7 @@ const STATUS_TONE_CLASSES = Object.freeze([
   "is-error",
   "is-ready",
 ]);
+const EVIDENCE_REFRESH_INTERVAL_MS = 30_000;
 
 let currentStatus = null;
 let currentEvidence = null;
@@ -83,6 +83,7 @@ let currentTab = "identity";
 let lendingMode = "deposit";
 let busyAction = null;
 let refreshTimer = null;
+let evidenceRefreshedAt = 0;
 let csrfToken = null;
 let csrfBootstrapPromise = null;
 const disclosureHideTimers = new WeakMap();
@@ -311,13 +312,20 @@ async function refreshFormalEvidence({ announceError = false } = {}) {
     currentEvidence = { available: false, status: "unavailable", message: error.message };
     renderFormalEvidence(currentEvidence);
     if (announceError) toast(`Evidence report: ${error.message}`, "error");
+  } finally {
+    evidenceRefreshedAt = Date.now();
   }
 }
 
 function scheduleRefresh() {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(async () => {
-    await refreshStatus();
+    const evidenceDue = currentTab === "evidence"
+      && Date.now() - evidenceRefreshedAt >= EVIDENCE_REFRESH_INTERVAL_MS;
+    await Promise.all([
+      refreshStatus(),
+      evidenceDue ? refreshFormalEvidence() : Promise.resolve(),
+    ]);
     scheduleRefresh();
   }, busyAction || currentStatus?.controller?.busy ? 1_500 : 5_000);
 }
@@ -693,36 +701,13 @@ function renderFormalEvidence(evidence) {
     return;
   }
 
-  const reportPassed = evidenceReportPassed(evidence);
-  const applicableToCurrentSource = evidenceAppliesToCurrentSource(evidence);
-  const currentPass = reportPassed && applicableToCurrentSource;
-  renderLinkyMoment("evidence", currentPass ? "evidenceAudit" : "caution");
-  if (!reportPassed) verdict.classList.add("is-error");
-  else if (!applicableToCurrentSource) verdict.classList.add("is-warning");
-  setText(
-    "evidenceVerdictLabel",
-    !reportPassed
-      ? "VALIDATION GATES FAILED"
-      : applicableToCurrentSource
-        ? "REPRODUCIBLE VALIDATION PASSED"
-        : "RECORDED VALIDATION — CURRENT SOURCE NOT VERIFIED",
-  );
-  setText(
-    "evidenceVerdictTitle",
-    reportPassed
-      ? applicableToCurrentSource
-        ? "Evidence matches the current reviewed source"
-        : "Evidence passed only for the recorded source"
-      : "One or more evidence gates require attention",
-  );
-  setText(
-    "evidenceVerdictCopy",
-    currentPass
-      ? "An isolated two-chain run tested quorum behavior, recovery and lending invariants, and measured settlement latency."
-      : reportPassed
-        ? "The recorded run passed, but it is not a current pass for this source. Refresh validation evidence after reviewing and committing the source."
-        : "Review the recorded validation reports before using this build for a defense.",
-  );
+  const presentation = evidenceVerdictPresentation(evidence);
+  renderLinkyMoment("evidence", presentation.currentPass ? "evidenceAudit" : "caution");
+  if (presentation.tone === "warning") verdict.classList.add("is-warning");
+  else if (presentation.tone === "error") verdict.classList.add("is-error");
+  setText("evidenceVerdictLabel", presentation.label);
+  setText("evidenceVerdictTitle", presentation.title);
+  setText("evidenceVerdictCopy", presentation.copy);
   setText("evidenceSourceState", evidenceSourceStateLabel(evidence));
   setText("evidenceCommit", evidence.provenance?.recordedCommitShort || "-");
   setText("evidenceGeneratedAt", evidence.generatedAt ? formatTimestamp(evidence.generatedAt) : "-");
@@ -737,7 +722,7 @@ function renderFormalEvidence(evidence) {
   setText("securityEvidenceCount", `${evidence.security?.passed || 0}/${evidence.security?.total || 0} passed`);
   renderIntegrationEvidence(evidence.integration?.tests || []);
   renderSecurityEvidence(evidence.security?.scenarios || []);
-  setText("evidenceStepStatus", currentPass ? "Current pass" : reportPassed ? "Recorded" : "Review");
+  setText("evidenceStepStatus", evidenceStepLabel(evidence));
 }
 
 function renderIntegrationEvidence(tests) {
@@ -1028,6 +1013,9 @@ function openTab(tab, { focusTab = false } = {}) {
   if (focusTab) selectedTab?.focus({ preventScroll: true });
   if (currentStatus?.runtimeReadable) renderJourney(currentStatus);
   hydrateVisibleLinkyMoments();
+  // Evidence changes far less often than runtime status, but entering this
+  // view should never keep an old decision until the user finds Refresh.
+  if (tab === "evidence" && currentEvidence !== null) void refreshFormalEvidence();
 }
 
 function syncWorkflowTabState() {

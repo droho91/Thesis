@@ -61,6 +61,8 @@ The verifier requires summary v4, integration report v3, a valid effective-profi
 
 A clean report can remain internally passed but become `stale` when its recorded commit no longer matches, the current tree is dirty, or current source state is unknown. A dirty recorded run is ineligible rather than passed evidence. Missing completion provenance, changed provenance, invalid bytecode inventory or a remaining lock makes the report `failed`, not merely `stale`. Both `failed` and `stale` make the verifier exit nonzero and defense readiness `NOT READY`; neither is a presentation warning.
 
+The long-lived UI process also records the source commit from which its evidence validator was loaded. If that commit no longer matches the repository, the Evidence view reports `UI VALIDATOR RESTART REQUIRED`; it does not relabel a valid newer bundle as failed. The browser refreshes evidence when the view opens and every 30 seconds while it remains visible. Restart `npm run demo:ui` after committing evidence-policy changes. The API exposes named failed gates separately when a current validator genuinely rejects a bundle.
+
 To leave the isolated runtime running after a successful evidence run:
 
 ```bash
