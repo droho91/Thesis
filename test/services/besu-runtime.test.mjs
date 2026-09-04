@@ -4,6 +4,7 @@ import {
   providerForRpc,
   readContractCode,
   readLatestBlock,
+  readWithTransientRpcRetry,
   rpcCall,
   rpcFetchRequest,
   signerForRpc,
@@ -11,6 +12,59 @@ import {
 } from "../../scripts/ops/besu/runtime.mjs";
 
 const ADDRESS = "0x0000000000000000000000000000000000000001";
+
+test("contract-state reader retries a Besu world-state race without repeating a write", async () => {
+  let attempts = 0;
+  const value = await readWithTransientRpcRetry(
+    async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        const error = new Error("missing revert data");
+        error.code = "CALL_EXCEPTION";
+        error.data = null;
+        error.reason = null;
+        throw error;
+      }
+      return 42n;
+    },
+    { label: "voucher balance", retries: 2, intervalMs: 1 },
+  );
+
+  assert.equal(value, 42n);
+  assert.equal(attempts, 3);
+});
+
+test("contract-state reader does not retry a deterministic contract revert", async () => {
+  let attempts = 0;
+  const operation = async () => {
+    attempts += 1;
+    const error = new Error("execution reverted: ACCESS_DENIED");
+    error.code = "CALL_EXCEPTION";
+    error.data = "0x08c379a0";
+    error.reason = "ACCESS_DENIED";
+    throw error;
+  };
+
+  await assert.rejects(
+    readWithTransientRpcRetry(operation, { label: "governance state", retries: 8, intervalMs: 1 }),
+    /ACCESS_DENIED/,
+  );
+  assert.equal(attempts, 1);
+});
+
+test("contract-state reader bounds transient retries and reports the read label", async () => {
+  let attempts = 0;
+  const operation = async () => {
+    attempts += 1;
+    throw new Error("Missing block header for block hash 0x1234");
+  };
+
+  await assert.rejects(
+    readWithTransientRpcRetry(operation, { label: "benchmark-17 balance", retries: 2, intervalMs: 1 }),
+    /failed to read benchmark-17 balance after 3 attempts: Missing block header/,
+  );
+  assert.equal(attempts, 3);
+});
 
 test("contract-code reader retries transient null BytesLike failures", async () => {
   let attempts = 0;

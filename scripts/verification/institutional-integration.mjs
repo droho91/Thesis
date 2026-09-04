@@ -9,6 +9,7 @@ import {
   loadArtifact,
   providerForRpc,
   readLatestBlock,
+  readWithTransientRpcRetry,
   signerForRpc,
 } from "../ops/besu/runtime.mjs";
 import { AttestorJournal } from "../../services/institutional-relay/attestor-journal.mjs";
@@ -409,7 +410,10 @@ async function executeBridge({
   label,
   send,
 }) {
-  const before = BigInt(await destinationToken.balanceOf(destinationAccount));
+  const before = BigInt(await readContract(
+    `${label} destination balance before transfer`,
+    () => destinationToken.balanceOf(destinationAccount),
+  ));
   const sourceBlock = await readLatestBlock(sourceApp.runner.provider, { label: `${label} source block` });
   const timeout = BigInt(sourceBlock.timestamp) + 30n * 60n;
   const reference = ethers.keccak256(ethers.toUtf8Bytes(`${label}:${Date.now()}:${randomBytes(8).toString("hex")}`));
@@ -420,7 +424,10 @@ async function executeBridge({
   const messageId = findEventArgument(sourceApp, receipt, "CollateralMessageSent", "messageId");
   if (!messageId) throw new Error(`${label} did not emit CollateralMessageSent`);
   await runUntil(relay, () => sourceGateway.messageCompleted(messageId), `${label} acknowledgement`);
-  const after = BigInt(await destinationToken.balanceOf(destinationAccount));
+  const after = BigInt(await readContract(
+    `${label} destination balance after transfer`,
+    () => destinationToken.balanceOf(destinationAccount),
+  ));
   const delta = after - before;
   if (delta !== amount) throw new Error(`${label} destination balance delta ${delta} does not equal ${amount}`);
   const job = relay.journal.snapshot().jobs[messageId];
@@ -450,14 +457,26 @@ async function executeBridge({
 async function executeLending({ contracts, user }) {
   const userAddress = await user.getAddress();
   await ensureAllowance(contracts.voucherTokenB, await contracts.lendingPoolBUser.getAddress(), userAddress, COLLATERAL_AMOUNT);
-  const collateralBefore = BigInt(await contracts.lendingPoolBUser.collateralBalance(userAddress));
-  const debtBalanceBefore = BigInt(await contracts.debtTokenBUser.balanceOf(userAddress));
+  const collateralBefore = BigInt(await readContract(
+    "lending collateral balance before deposit",
+    () => contracts.lendingPoolBUser.collateralBalance(userAddress),
+  ));
+  const debtBalanceBefore = BigInt(await readContract(
+    "lending debt balance before borrow",
+    () => contracts.debtTokenBUser.balanceOf(userAddress),
+  ));
   const deposit = await contracts.lendingPoolBUser.depositCollateral(COLLATERAL_AMOUNT, txOptions());
   const depositReceipt = await waitForTx(deposit, "deposit voucher collateral");
   const borrow = await contracts.lendingPoolBUser.borrow(BORROW_AMOUNT, txOptions());
   const borrowReceipt = await waitForTx(borrow, "borrow bCASH from Bank B");
-  const collateralAfter = BigInt(await contracts.lendingPoolBUser.collateralBalance(userAddress));
-  const debtBalanceAfter = BigInt(await contracts.debtTokenBUser.balanceOf(userAddress));
+  const collateralAfter = BigInt(await readContract(
+    "lending collateral balance after deposit",
+    () => contracts.lendingPoolBUser.collateralBalance(userAddress),
+  ));
+  const debtBalanceAfter = BigInt(await readContract(
+    "lending debt balance after borrow",
+    () => contracts.debtTokenBUser.balanceOf(userAddress),
+  ));
   if (collateralAfter - collateralBefore !== COLLATERAL_AMOUNT) throw new Error("Collateral accounting delta is incorrect");
   if (debtBalanceAfter - debtBalanceBefore !== BORROW_AMOUNT) throw new Error("Borrowed token balance delta is incorrect");
   return {
@@ -466,16 +485,25 @@ async function executeLending({ contracts, user }) {
     borrowedAmount: BORROW_AMOUNT.toString(),
     depositTransaction: depositReceipt.hash,
     borrowTransaction: borrowReceipt.hash,
-    healthFactorE18: (await contracts.lendingPoolBUser.healthFactorE18(userAddress)).toString(),
+    healthFactorE18: (await readContract(
+      "lending health factor",
+      () => contracts.lendingPoolBUser.healthFactorE18(userAddress),
+    )).toString(),
   };
 }
 
 async function ensurePoolLiquidity(contracts, owner) {
-  const available = BigInt(await contracts.lendingPoolBOwner.availableLiquidity());
+  const available = BigInt(await readContract(
+    "lending pool available liquidity",
+    () => contracts.lendingPoolBOwner.availableLiquidity(),
+  ));
   if (available >= MINIMUM_POOL_LIQUIDITY) return;
   const amount = MINIMUM_POOL_LIQUIDITY - available;
   const ownerAddress = await owner.getAddress();
-  const balance = BigInt(await contracts.debtTokenBOwner.balanceOf(ownerAddress));
+  const balance = BigInt(await readContract(
+    "Bank B lender debt-token balance",
+    () => contracts.debtTokenBOwner.balanceOf(ownerAddress),
+  ));
   if (balance < amount) throw new Error(`Bank B lender has ${balance}, needs ${amount}`);
   await ensureAllowance(contracts.debtTokenBOwner, await contracts.lendingPoolBOwner.getAddress(), ownerAddress, amount);
   await waitForTx(await contracts.lendingPoolBOwner.depositLiquidity(amount, txOptions()), "seed lending liquidity");
@@ -484,7 +512,10 @@ async function ensurePoolLiquidity(contracts, owner) {
 async function testQuorumOutage({ manifest, contracts, users, relay, cluster }) {
   await cluster.stop([2, 3]);
   const userB = await users.B.getAddress();
-  const before = BigInt(await contracts.voucherTokenB.balanceOf(userB));
+  const before = BigInt(await readContract(
+    "quorum outage voucher balance before transfer",
+    () => contracts.voucherTokenB.balanceOf(userB),
+  ));
   const sourceBlock = await readLatestBlock(contracts.collateralAppA.runner.provider, {
     label: "quorum outage source block",
   });
@@ -507,11 +538,17 @@ async function testQuorumOutage({ manifest, contracts, users, relay, cluster }) 
     },
     "quorum failure observation",
   );
-  const during = BigInt(await contracts.voucherTokenB.balanceOf(userB));
+  const during = BigInt(await readContract(
+    "quorum outage voucher balance without quorum",
+    () => contracts.voucherTokenB.balanceOf(userB),
+  ));
   if (during !== before) throw new Error("Destination state changed without attestor quorum");
   await cluster.start([2]);
   await runUntil(relay, () => contracts.gatewayA.messageCompleted(messageId), "quorum recovery acknowledgement");
-  const after = BigInt(await contracts.voucherTokenB.balanceOf(userB));
+  const after = BigInt(await readContract(
+    "quorum outage voucher balance after recovery",
+    () => contracts.voucherTokenB.balanceOf(userB),
+  ));
   if (after - before !== CHAOS_AMOUNT) throw new Error("Recovered quorum did not preserve one expected mint effect");
   await cluster.start([3]);
   return {
@@ -535,7 +572,10 @@ async function testEngineReloadRecovery({
   proofObserver,
 }) {
   const userB = await users.B.getAddress();
-  const before = BigInt(await contracts.voucherTokenB.balanceOf(userB));
+  const before = BigInt(await readContract(
+    "relay reload voucher balance before transfer",
+    () => contracts.voucherTokenB.balanceOf(userB),
+  ));
   const block = await readLatestBlock(contracts.collateralAppA.runner.provider, {
     label: "relay engine reload source block",
   });
@@ -564,11 +604,17 @@ async function testEngineReloadRecovery({
     proofObserver,
   });
   await runUntil(reloaded, () => contracts.gatewayA.messageCompleted(messageId), "relay engine reload recovery");
-  const after = BigInt(await contracts.voucherTokenB.balanceOf(userB));
+  const after = BigInt(await readContract(
+    "relay reload voucher balance after recovery",
+    () => contracts.voucherTokenB.balanceOf(userB),
+  ));
   if (after - before !== ENGINE_RELOAD_AMOUNT) throw new Error("Reloaded relay engine did not preserve one expected mint effect");
   await reloaded.engine.tick();
   await reloaded.engine.tick();
-  const afterReplay = BigInt(await contracts.voucherTokenB.balanceOf(userB));
+  const afterReplay = BigInt(await readContract(
+    "relay reload voucher balance after replay check",
+    () => contracts.voucherTokenB.balanceOf(userB),
+  ));
   if (afterReplay !== after) throw new Error("Repeated relay ticks duplicated destination execution");
   return {
     relay: reloaded,
@@ -583,7 +629,11 @@ async function testEngineReloadRecovery({
 }
 
 async function ensureAllowance(token, spender, owner, required) {
-  if (BigInt(await token.allowance(owner, spender)) >= required) return;
+  const allowance = await readContract(
+    `allowance for ${spender}`,
+    () => token.allowance(owner, spender),
+  );
+  if (BigInt(allowance) >= required) return;
   await waitForTx(await token.approve(spender, ethers.MaxUint256, txOptions()), `approve ${spender}`);
 }
 
@@ -591,10 +641,14 @@ async function runUntil(relay, predicate, label) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < FLOW_TIMEOUT_MS) {
     await relay.engine.tick();
-    if (await predicate()) return;
+    if (await readContract(`${label} status`, predicate)) return;
     await sleep(500);
   }
   throw new Error(`${label} did not complete within ${FLOW_TIMEOUT_MS}ms`);
+}
+
+function readContract(label, operation) {
+  return readWithTransientRpcRetry(operation, { label });
 }
 
 async function chainSnapshot(provider, chain) {

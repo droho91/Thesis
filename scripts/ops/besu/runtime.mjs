@@ -82,7 +82,7 @@ function isNonceExpired(error) {
   return /NONCE_EXPIRED|nonce has already been used|nonce too low/i.test(text);
 }
 
-function transientSendErrorSummary(error) {
+function rpcErrorSummary(error) {
   return [
     error?.code,
     error?.shortMessage,
@@ -95,7 +95,17 @@ function transientSendErrorSummary(error) {
 }
 
 function isTransientBesuSendError(error) {
-  return /BAD_DATA|null.*hash|fetch failed|ECONNRESET|ETIMEDOUT|timeout/i.test(transientSendErrorSummary(error));
+  return /BAD_DATA|null.*hash|fetch failed|ECONNRESET|ETIMEDOUT|timeout/i.test(rpcErrorSummary(error));
+}
+
+function isTransientBesuReadError(error) {
+  const summary = rpcErrorSummary(error);
+  const missingRevertData = error?.code === "CALL_EXCEPTION"
+    && error?.data == null
+    && error?.reason == null
+    && /missing revert data/i.test(summary);
+  return missingRevertData
+    || /BAD_DATA|fetch failed|ECONNRESET|ETIMEDOUT|timeout|missing block header|block not found|world state|archive rolling/i.test(summary);
 }
 
 function sleep(ms) {
@@ -146,7 +156,7 @@ export function withManagedNonce(signer, label, {
         const delayMs = 1000 * (attempt + 1);
         if (process.env.DEBUG_BESU_TX_RETRY === "true") {
           console.log(
-            `[tx-retry] ${label} nonce ${nonce} retry ${attempt + 1}/${sendRetries}: ${transientSendErrorSummary(error)}`
+            `[tx-retry] ${label} nonce ${nonce} retry ${attempt + 1}/${sendRetries}: ${rpcErrorSummary(error)}`
           );
         }
         await sleep(delayMs);
@@ -232,6 +242,45 @@ export function rpcFetchRequest(
 
 export function providerForRpc(rpc, options = {}) {
   return new ethers.JsonRpcProvider(rpcFetchRequest(rpc, options));
+}
+
+export async function readWithTransientRpcRetry(
+  operation,
+  {
+    label = "contract state",
+    retries = Number(process.env.BESU_READ_RETRIES || 8),
+    intervalMs = Number(process.env.BESU_READ_RETRY_MS || 500),
+  } = {},
+) {
+  if (typeof operation !== "function") throw new TypeError("RPC read operation must be a function");
+  if (typeof label !== "string" || label.trim().length === 0) {
+    throw new TypeError("RPC read label must be a non-empty string");
+  }
+  if (!Number.isSafeInteger(retries) || retries < 0 || retries > 20) {
+    throw new RangeError("RPC read retries must be an integer between 0 and 20");
+  }
+  if (!Number.isSafeInteger(intervalMs) || intervalMs < 0 || intervalMs > 60_000) {
+    throw new RangeError("RPC read intervalMs must be an integer between 0 and 60000");
+  }
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isTransientBesuReadError(error)) throw error;
+      if (attempt >= retries) {
+        throw new Error(
+          `[rpc] failed to read ${label} after ${retries + 1} attempts: `
+            + `${error?.shortMessage || error?.message || error}`,
+          { cause: error },
+        );
+      }
+      // Besu can briefly expose a new QBFT head before its path-based world
+      // state has finished rolling to that header. Read-only calls are safe to
+      // repeat; state-changing transactions deliberately never use this path.
+      if (intervalMs > 0) await sleep(intervalMs);
+    }
+  }
 }
 
 export async function readContractCode(
