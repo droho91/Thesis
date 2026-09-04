@@ -14,12 +14,16 @@ test("builds a fail-closed allowlisted child environment and a verifiable profil
   const first = createEvidenceExecutionContext({
     PATH: "/usr/bin",
     HOME: "/safe-home",
+    ProgramFiles: "C:\\Program Files",
+    ProgramW6432: "C:\\Program Files",
     SECRET_SHOULD_NOT_LEAK: "secret",
   });
   const second = createEvidenceExecutionContext({ PATH: "/different/bin", UNRELATED: "value" });
 
   assert.equal(first.environment.PATH, "/usr/bin");
   assert.equal(first.environment.HOME, "/safe-home");
+  assert.equal(first.environment.ProgramFiles, "C:\\Program Files");
+  assert.equal(first.environment.ProgramW6432, "C:\\Program Files");
   assert.equal(first.environment.SECRET_SHOULD_NOT_LEAK, undefined);
   assert.equal(first.environment.UNSAFE_LOCAL_DEMO, "false");
   assert.equal(first.environment.BESU_ENABLE_ADMIN_DEBUG, "false");

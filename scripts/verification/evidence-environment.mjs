@@ -56,6 +56,11 @@ const HOST_ENVIRONMENT_ALLOWLIST = Object.freeze([
   "LOCALAPPDATA",
   "PATH",
   "PATHEXT",
+  // Docker Desktop discovers its Windows CLI plugins (including Compose)
+  // beneath Program Files. Preserve only these location variables instead of
+  // inheriting the broader host environment into evidence child processes.
+  "ProgramFiles",
+  "ProgramW6432",
   "SystemRoot",
   "SYSTEMROOT",
   "TEMP",
