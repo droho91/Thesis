@@ -5,10 +5,12 @@ import test from "node:test";
 
 const workflowPath = resolve(process.cwd(), ".github/workflows/ci.yml");
 
-test("hosted Besu job runs clean evidence, verifies it and retains bounded cleanup", async () => {
+test("manual Besu job runs clean evidence, verifies it and retains bounded cleanup", async () => {
   const workflow = await readFile(workflowPath, "utf8");
   const job = workflow.slice(workflow.indexOf("  live-besu-evidence:"));
   assert.match(job, /name: Live Besu evidence/);
+  assert.match(workflow, /^  workflow_dispatch:/m);
+  assert.match(job, /^    if: github\.event_name == 'workflow_dispatch'$/m);
   assert.match(job, /npm run institutional:evidence(?:\s|$)/);
   assert.doesNotMatch(job, /institutional:evidence\s+--\s+--allow-dirty/);
   assert.match(job, /npm run institutional:evidence:verify/);

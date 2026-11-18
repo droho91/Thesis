@@ -32,14 +32,6 @@ function useBesuKeys() {
   return process.env.USE_BESU_KEYS === "true";
 }
 
-function parseIndices(raw, fallback) {
-  const text = raw ?? fallback;
-  return text
-    .split(",")
-    .map((value) => Number(value.trim()))
-    .filter((value) => Number.isInteger(value) && value >= 0);
-}
-
 function chainFolder(chainKey) {
   if (chainKey === "A" || chainKey === "chainA") return "chainA";
   if (chainKey === "B" || chainKey === "chainB") return "chainB";

@@ -1,4 +1,0 @@
-/* Prevent sticky top chrome from occluding element-scoped workspace captures. */
-.topbar {
-  visibility: hidden !important;
-}

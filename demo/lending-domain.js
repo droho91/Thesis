@@ -18,7 +18,7 @@ export const LENDING_MODES = Object.freeze({
     limitLabel: "Available voucher",
     limit: (status) => status?.balances?.voucherAvailable || "0",
     button: "Activate collateral",
-    icon: "archive",
+    icon: "lock-keyhole",
   }),
   borrow: Object.freeze({
     label: "Borrow amount",
@@ -47,7 +47,7 @@ export const LENDING_MODES = Object.freeze({
       ? "0"
       : status?.balances?.activeCollateral || "0",
     button: "Withdraw collateral",
-    icon: "download",
+    icon: "arrow-up-right",
   }),
 });
 

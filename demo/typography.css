@@ -1,0 +1,72 @@
+@font-face { font-family:"Nunito"; font-style:normal; font-weight:400 600; font-display:swap; src:url("/assets/fonts/nunito-math.woff2") format("woff2"); unicode-range:U+221E; }
+@font-face {
+  font-family: 'Lora';
+    font-style: normal;
+    font-weight: 500 600;
+    font-display: swap;
+    src: url(/assets/fonts/lora-vietnamese.woff2) format('woff2');
+    unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+@font-face {
+  font-family: 'Lora';
+    font-style: normal;
+    font-weight: 500 600;
+    font-display: swap;
+    src: url(/assets/fonts/lora-latin-ext.woff2) format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Lora';
+    font-style: normal;
+    font-weight: 500 600;
+    font-display: swap;
+    src: url(/assets/fonts/lora-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Nunito';
+    font-style: normal;
+    font-weight: 400 600;
+    font-display: swap;
+    src: url(/assets/fonts/nunito-vietnamese.woff2) format('woff2');
+    unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+@font-face {
+  font-family: 'Nunito';
+    font-style: normal;
+    font-weight: 400 600;
+    font-display: swap;
+    src: url(/assets/fonts/nunito-latin-ext.woff2) format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Nunito';
+    font-style: normal;
+    font-weight: 400 600;
+    font-display: swap;
+    src: url(/assets/fonts/nunito-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+:root {
+  --type-display:38px; --type-section:26px; --type-subsection:22px;
+  --type-body:16px; --type-control:15px; --type-label:14px; --type-caption:13px; --type-value:26px;
+  --text-caption:var(--type-caption); --text-label:var(--type-label); --text-body:var(--type-body);
+  --text-ui:var(--type-control); --text-emphasis:var(--type-body); --text-heading-sm:var(--type-subsection);
+  --text-heading:var(--type-section); --text-heading-lg:28px; --text-metric:var(--type-value); --text-display:var(--type-display);
+}
+body { font-family:var(--font-ui); font-size:var(--type-body); line-height:1.5; }
+.brand-block strong { font:500 26px/1.2 var(--font-display); letter-spacing:-.02em; }
+.workspace-intro h1 { font:500 var(--type-display)/1.2 var(--font-display); letter-spacing:-.025em; }
+.workspace-intro h1 em { font:inherit; color:var(--green); }
+.section-heading h2 { color:var(--heading); font:500 var(--type-section)/1.3 var(--font-display); letter-spacing:-.015em; }
+.readiness-verdict h3,.operation-form > h3,.settlement-receipt h3,.evidence-verdict h3,.validation-heading h3,.evidence-subheading h3,.activity-heading h3,.portfolio-note h2 { color:var(--heading); font:500 var(--type-subsection)/1.35 var(--font-display); letter-spacing:-.01em; }
+.route-heading b { font-family:var(--font-display); font-weight:500; }
+.workspace-intro p,.section-heading > div > p,.form-intro,.readiness-verdict p,.settlement-guard p,.evidence-verdict p,.portfolio-note p { font:400 var(--type-body)/1.6 var(--font-ui); }
+.readiness-card h3,.route-bank b,.field-heading label,.risk-meter-head,.settlement-guard b { color:var(--heading); font-size:var(--type-body); font-weight:600; }
+.journey-step b,.primary-button,.secondary-button,.segment,.text-button { font-family:var(--font-ui); font-size:var(--type-control); font-weight:600; }
+.overview-metrics dt,.position-strip dt,.settlement-summary dt,.benchmark-strip dt,.assurance-grid dt,.risk-meter dt,.chain-evidence dt,.balance-line { font-size:var(--type-label); font-weight:400; line-height:1.5; }
+.overview-metrics dd span,.position-strip dd,.benchmark-strip dd > span { font-size:var(--type-value); font-weight:500; line-height:1.2; font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+.metric-bank-a dd span { font-size:38px; }
+.amount-input input { font:500 30px/1.2 var(--font-ui); font-variant-numeric:tabular-nums; }
+.intro-eyebrow,.section-kicker,.form-eyebrow,.rail-eyebrow,.validation-heading > div > span,.evidence-subheading > div > span { font-size:var(--type-caption); font-weight:500; line-height:1.5; letter-spacing:.08em; }
+.journey-step small,.route-bank small,.route-relay small,.overview-metrics dd small,.definition-note,.evidence-provenance small,.proof-pipeline span { font-size:var(--type-caption); }

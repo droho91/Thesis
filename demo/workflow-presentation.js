@@ -14,11 +14,11 @@ export const ACTION_TAB = Object.freeze({
 
 const ACTION_ICONS = Object.freeze({
   bridge: "arrow-right",
-  deposit: "archive",
+  deposit: "lock-keyhole",
   borrow: "banknote",
   repay: "hand-coins",
   repayAll: "circle-dollar-sign",
-  withdraw: "download",
+  withdraw: "arrow-up-right",
   return: "rotate-ccw",
 });
 

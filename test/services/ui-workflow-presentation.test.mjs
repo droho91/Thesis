@@ -30,7 +30,7 @@ test("workflow metadata maps operations to stable navigation and labels", () => 
   assert.equal(actionStage("repayAll"), "manage");
   assert.equal(actionStage("return"), "return");
   assert.equal(actionStage("unknown"), "review");
-  assert.equal(actionIcon("withdraw"), "download");
+  assert.equal(actionIcon("withdraw"), "arrow-up-right");
   assert.equal(actionIcon("unknown"), "circle-check");
   assert.equal(operationName("repayAll"), "Complete debt repayment");
   assert.equal(operationName("unknown"), "Institutional operation");

@@ -4,26 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
-    <title>Institutional Cross-chain Operations</title>
+    <title>Linky | Institutional Cross-chain Operations</title>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/workspace-theme.css" />
+    <link rel="preload" href="/assets/fonts/nunito-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/assets/fonts/lora-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/typography.css" />
   </head>
   <body>
     <header class="topbar">
       <div class="brand-block">
-        <span class="brand-plate brand-mascot"><img class="brand-mark" src="/assets/linky/generated/states/linky-guide.png" alt="Linky mascot" /></span>
+        <span class="brand-plate"><img class="brand-mark" src="/assets/linky-mark.svg" alt="" aria-hidden="true" width="40" height="40" /></span>
         <div>
-          <strong>Linky Nexus</strong>
-          <span class="brand-overline">INSTITUTIONAL COLLATERAL OPERATIONS</span>
+          <strong>Linky</strong>
         </div>
       </div>
       <div class="topbar-status">
-        <span class="environment-label ui-atomic"><i data-lucide="server"></i> LOCAL QBFT</span>
         <div class="runtime-status-control">
           <button class="live-status" id="runtimeStatus" type="button" aria-expanded="false" aria-controls="runtimePopover" aria-haspopup="dialog">
-            <i class="live-dot"></i><span id="runtimeStatusLabel" role="status" aria-live="polite" aria-atomic="true">Connecting</span><i class="status-chevron" data-lucide="chevron-down"></i>
+            <span id="runtimeStatusLabel" role="status" aria-live="polite" aria-atomic="true">Checking route</span><i class="status-chevron" data-lucide="chevron-down" aria-hidden="true"></i>
           </button>
           <div class="runtime-popover" id="runtimePopover" role="dialog" aria-labelledby="runtimePopoverTitle" tabindex="-1" hidden inert>
             <div class="runtime-popover-head"><span id="runtimePopoverTitle">NETWORK ASSURANCE</span><b id="runtimePopoverState">Connecting</b></div>
+            <p class="runtime-environment">Local QBFT environment</p>
             <dl>
               <div>
                 <dt>Bank chains</dt>
@@ -51,13 +54,22 @@
       </div>
     </header>
 
-    <nav class="journey" aria-label="Institutional workflow" role="tablist" aria-orientation="vertical">
+    <main>
+      <header class="workspace-intro">
+        <div>
+          <span class="intro-eyebrow">CROSS-BANK WORKSPACE</span>
+          <h1>Your collateral, <em>connected.</em></h1>
+          <p>From custody to credit and back. Every step, in one place.</p>
+        </div>
+      </header>
+
+    <nav class="journey" aria-label="Institutional workflow" role="tablist" aria-orientation="horizontal">
       <div class="journey-heading">
-        <span>WORKFLOW</span>
+        <span>Your journey</span>
       </div>
       <button class="journey-step is-active" id="workflowTabIdentity" data-stage="prepare" data-tab-target="identity" type="button" role="tab" aria-selected="true" aria-current="step" aria-controls="workspacePanelIdentity" tabindex="0">
         <span class="journey-index">1</span>
-        <span class="journey-icon"><i data-lucide="badge-check"></i></span>
+        <span class="journey-icon"><i data-lucide="check"></i></span>
         <span><b>Identity</b><small id="identityStepStatus">Checking</small></span>
       </button>
       <button class="journey-step" id="workflowTabTransfer" data-stage="transfer" data-tab-target="transfer" type="button" role="tab" aria-selected="false" aria-controls="workspacePanelTransfer" tabindex="-1">
@@ -90,63 +102,29 @@
         <b>Policy controlled</b>
       </div>
     </nav>
-
-    <main>
-      <section class="overview-band">
-        <div class="overview-title">
-          <span class="eyebrow">POSITION</span>
-          <p id="overviewCopy">
-            <span id="overviewMessage">Reading bank state.</span>
-            <span class="overview-chain-heights" id="overviewChainHeights" aria-label="Bank chain heights" hidden>
-              <span class="ui-atomic">A <b id="overviewChainABlock">#-</b></span>
-              <span class="ui-atomic">B <b id="overviewChainBBlock">#-</b></span>
-            </span>
-          </p>
-        </div>
-        <div class="overview-metrics" role="list" aria-label="Institutional position metrics">
-          <div class="metric-card metric-bank-a" role="listitem">
-            <i data-lucide="landmark" aria-hidden="true"></i>
-            <dl class="metric-definition"><dt>Bank A available</dt><dd><span id="canonicalBalance">-</span><small>aBANK</small></dd></dl>
-          </div>
-          <div class="metric-card metric-bank-b" role="listitem">
-            <i data-lucide="gem" aria-hidden="true"></i>
-            <dl class="metric-definition"><dt>Bank B collateral</dt><dd><span id="collateralBalance">-</span><small>vA</small></dd></dl>
-          </div>
-          <div class="metric-card metric-credit" role="listitem">
-            <i data-lucide="banknote" aria-hidden="true"></i>
-            <dl class="metric-definition"><dt>Outstanding debt</dt><dd><span id="debtBalance">-</span><small>bCASH</small></dd></dl>
-          </div>
-          <div class="metric-card metric-health" role="listitem">
-            <i data-lucide="activity" aria-hidden="true"></i>
-            <dl class="metric-definition"><dt>Health factor</dt><dd><span id="healthFactor">-</span><small id="healthLabel">No debt</small></dd></dl>
-          </div>
-        </div>
-      </section>
-
+      <div class="desk-layout">
       <div class="workspace-shell">
         <div class="workspace-content">
           <section class="workspace-panel is-active" id="workspacePanelIdentity" data-panel="identity" role="tabpanel" aria-labelledby="workflowTabIdentity">
             <header class="section-heading">
               <div>
                 <h2>Verify participants</h2>
+                <p>A quick check of the people and safeguards behind your next transfer.</p>
               </div>
             </header>
 
-            <div class="linky-companion-layout linky-companion-layout-identity">
-              <div class="readiness-verdict" id="readinessVerdict">
-                <div role="status" aria-live="polite" aria-atomic="true">
-                  <span class="assurance-pill ui-atomic" id="readinessPill"><i data-lucide="shield-check"></i><span>Checking</span></span>
+            <div class="identity-layout">
+
+              <div class="readiness-verdict status-panel" id="readinessVerdict">
+                <div class="status-panel-content" role="status" aria-live="polite" aria-atomic="true">
+                  <svg class="semantic-symbol panel-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#identity"></use></svg>
+                  <div class="status-panel-copy">
                   <h3 id="readinessTitle">Checking readiness</h3>
                   <p id="readinessCopy">Confirming participants and required controls.</p>
+                  </div>
                 </div>
                 <button class="secondary-button" data-tab-target="transfer" type="button"><span>Continue</span><i data-lucide="arrow-right"></i></button>
               </div>
-              <div class="linky-widget linky-widget-identity" aria-hidden="true">
-                <figure class="linky-moment linky-moment-readiness">
-                  <img id="linkyIdentityImage" data-linky-image alt="" width="200" height="200" decoding="async" />
-                </figure>
-              </div>
-            </div>
 
             <div class="readiness-grid" aria-label="Readiness checks">
               <article class="readiness-card identity-a-card">
@@ -154,7 +132,7 @@
                 <button class="status-button" id="identityAStatusToggle" data-status-toggle type="button" aria-expanded="false" aria-controls="identityAStatusDetail">
                   <span class="status-symbol" aria-hidden="true">
                     <i class="status-symbol-checking" data-lucide="loader-circle"></i>
-                    <i class="status-symbol-verified" data-lucide="badge-check"></i>
+                    <i class="status-symbol-verified" data-lucide="check"></i>
                     <i class="status-symbol-review" data-lucide="circle-alert"></i>
                   </span>
                   <span id="identityAStatus">Checking credential</span><i data-lucide="chevron-down"></i>
@@ -166,7 +144,7 @@
                 <button class="status-button" id="identityBStatusToggle" data-status-toggle type="button" aria-expanded="false" aria-controls="identityBStatusDetail">
                   <span class="status-symbol" aria-hidden="true">
                     <i class="status-symbol-checking" data-lucide="loader-circle"></i>
-                    <i class="status-symbol-verified" data-lucide="badge-check"></i>
+                    <i class="status-symbol-verified" data-lucide="check"></i>
                     <i class="status-symbol-review" data-lucide="circle-alert"></i>
                   </span>
                   <span id="identityBStatus">Checking credential</span><i data-lucide="chevron-down"></i>
@@ -174,7 +152,7 @@
                 <p class="status-detail" id="identityBStatusDetail" role="region" aria-labelledby="identityBStatusToggle" hidden inert>The destination customer must remain active before proof-authorized voucher issuance can execute.</p>
               </article>
               <article class="readiness-card">
-                <header><span class="readiness-icon"><i data-lucide="timer-reset"></i></span><h3>Governance</h3></header>
+                <header><span class="readiness-icon"><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#governance"></use></svg></span><h3>Governance</h3></header>
                 <button class="status-button" id="governanceStatusToggle" data-status-toggle type="button" aria-expanded="false" aria-controls="governanceStatusDetail">
                   <span class="status-symbol" aria-hidden="true">
                     <i class="status-symbol-checking" data-lucide="loader-circle"></i>
@@ -186,11 +164,11 @@
                 <p class="status-detail" id="governanceStatusDetail" role="region" aria-labelledby="governanceStatusToggle" hidden inert>Sensitive administrative changes require the enforced delay shown below before execution.</p>
               </article>
               <article class="readiness-card">
-                <header><span class="readiness-icon"><i data-lucide="users-round"></i></span><h3>Attestor quorum</h3></header>
+                <header><span class="readiness-icon"><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#quorum"></use></svg></span><h3>Attestor quorum</h3></header>
                 <button class="status-button" id="quorumStatusToggle" data-status-toggle type="button" aria-expanded="false" aria-controls="quorumStatusDetail">
                   <span class="status-symbol" aria-hidden="true">
                     <i class="status-symbol-checking" data-lucide="loader-circle"></i>
-                    <i class="status-symbol-verified" data-lucide="users-round"></i>
+                    <i class="status-symbol-verified" data-lucide="check"></i>
                     <i class="status-symbol-review" data-lucide="triangle-alert"></i>
                   </span>
                   <span id="identityQuorum">Checking services</span><i data-lucide="chevron-down"></i>
@@ -199,6 +177,7 @@
               </article>
             </div>
 
+            </div>
             <details class="technical-disclosure">
               <summary><i data-lucide="settings-2"></i><span>Technical details</span><i data-lucide="chevron-down"></i></summary>
               <dl class="technical-grid">
@@ -217,45 +196,12 @@
                 <span class="section-kicker">A-TO-B COLLATERAL LANE</span>
                 <h2>Lock aBANK and issue vA</h2>
               </div>
-              <span class="assurance-pill ui-atomic"><i data-lucide="shield-check"></i> 3-of-4 attested</span>
             </header>
 
-            <div class="linky-companion-layout linky-companion-layout-transfer">
-              <div class="route-visual" aria-label="Bank A to Bank B route">
-                <div class="route-bank">
-                  <span class="bank-symbol bank-symbol-a">A</span>
-                  <div><b>Bank A</b><small>Canonical custody</small></div>
-                  <strong class="ui-atomic" id="routeCanonical">- aBANK</strong>
-                </div>
-                <div class="route-relay">
-                  <span class="route-relay-symbol" aria-hidden="true"><i data-lucide="radio-tower"></i></span>
-                  <b>Proof relay</b>
-                  <small id="relayRouteStatus">Starting attestors</small>
-                </div>
-                <div class="route-bank route-bank-right">
-                  <span class="bank-symbol bank-symbol-b">B</span>
-                  <div><b>Bank B</b><small>Voucher issuance</small></div>
-                  <strong class="ui-atomic" id="routeVoucher">- vA</strong>
-                </div>
-                <div class="proof-pipeline" id="transferPipeline" role="status" aria-live="polite" aria-atomic="true" aria-label="Transfer proof pipeline idle">
-                  <span data-proof-step="source"><i></i>Checkpoint wait</span>
-                  <span data-proof-step="quorum"><i></i>3-of-4 quorum</span>
-                  <span data-proof-step="proof"><i></i>Storage proof</span>
-                  <span data-proof-step="ack"><i></i>Acknowledgement</span>
-                </div>
-              </div>
-              <div class="linky-widget linky-widget-transfer">
-                <div class="linky-transfer-progress" id="linkyTransferProgress" role="progressbar" aria-label="Transfer action progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
-                  <span></span>
-                </div>
-                <figure class="linky-moment linky-moment-transfer" aria-hidden="true">
-                  <img id="linkyTransferImage" data-linky-image alt="" width="220" height="220" decoding="async" />
-                </figure>
-              </div>
-            </div>
-
+            <div class="transfer-desk">
             <div class="operation-layout">
               <form class="operation-form" data-operation-form="bridge" aria-label="Bank A to Bank B collateral transfer">
+                <span class="form-eyebrow">YOUR NEXT MOVE</span><h3>Send collateral</h3><p class="form-intro">Lock on Bank A. Put it to work on Bank B.</p>
                 <div class="field-heading">
                   <label for="bridgeAmount">Transfer amount</label>
                   <button class="text-button" data-fill="canonicalAvailable" data-input="bridgeAmount" type="button" aria-controls="bridgeAmount" disabled aria-disabled="true">Use available</button>
@@ -278,6 +224,43 @@
                 <div><dt>Destination asset</dt><dd>Policy-controlled vA</dd></div>
               </dl>
             </div>
+
+              <div class="route-visual" aria-label="Bank A to Bank B route">
+                <header class="route-heading">
+                  <div><span>THE COLLATERAL ROUTE</span><b>Connected by proof.</b></div>
+                  <span class="route-direction" aria-hidden="true">A<i data-lucide="arrow-right"></i>B</span>
+                </header>
+                <div class="route-journey">
+                <div class="route-bank">
+                  <span class="bank-symbol bank-symbol-a" aria-hidden="true">A</span>
+                  <div><b>Bank A</b><small>Source · canonical custody</small></div>
+                  <strong class="ui-atomic" id="routeCanonical">- aBANK</strong>
+                </div>
+                <div class="route-relay">
+                  <span class="route-relay-symbol" aria-hidden="true"><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#relay"></use></svg></span>
+                  <div><b>Proof relay</b><small id="relayRouteStatus">Starting attestors</small></div>
+                </div>
+                <div class="route-bank route-bank-right">
+                  <span class="bank-symbol bank-symbol-b" aria-hidden="true">B</span>
+                  <div><b>Bank B</b><small>Destination · voucher issuance</small></div>
+                  <strong class="ui-atomic" id="routeVoucher">- vA</strong>
+                </div>
+                </div>
+                <div class="route-checkpoints">
+                <div class="route-checkpoints-heading"><b>Verification path</b><span id="routePhase">Waiting for runtime</span></div>
+                <div class="proof-pipeline" id="transferPipeline" role="status" aria-live="polite" aria-atomic="true" aria-label="Transfer proof pipeline idle">
+                  <span data-proof-step="source"><i aria-hidden="true"></i><b>Checkpoint wait</b></span>
+                  <span data-proof-step="quorum"><i aria-hidden="true"></i><b>3-of-4 quorum</b></span>
+                  <span data-proof-step="proof"><i aria-hidden="true"></i><b>Storage proof</b></span>
+                  <span data-proof-step="ack"><i aria-hidden="true"></i><b>Acknowledgement</b></span>
+                </div>
+                <div class="transfer-action-progress" id="transferActionProgress" role="progressbar" aria-label="Transfer action progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+                  <span></span>
+                </div>
+                </div>
+              </div>
+
+            </div>
           </section>
 
           <section class="workspace-panel" id="workspacePanelLending" data-panel="lending" role="tabpanel" aria-labelledby="workflowTabLending" hidden inert>
@@ -286,7 +269,6 @@
                 <span class="section-kicker">BANK B CREDIT MARKET</span>
                 <h2>Collateral and credit position</h2>
               </div>
-              <span class="assurance-pill assurance-pill-blue ui-atomic"><i data-lucide="scan-line"></i> Policy checked</span>
             </header>
 
             <dl class="position-strip">
@@ -316,29 +298,24 @@
                   </div>
                   <div class="balance-line" id="lendingAmountDescription"><span id="lendingLimitLabel">Available voucher</span><b class="ui-atomic" id="lendingLimit">-</b></div>
                   <button class="primary-button" id="lendingSubmit" data-action="deposit" type="submit" aria-describedby="lendingAmountDescription lendingMessage" disabled aria-disabled="true">
-                    <i data-lucide="archive"></i><span>Activate collateral</span>
+                    <i data-lucide="lock-keyhole"></i><span>Activate collateral</span>
                   </button>
                   <p class="form-message" id="lendingMessage" data-message="lending" role="status" aria-live="polite" aria-atomic="true"></p>
                 </form>
                 </div>
               </div>
               <div class="risk-meter">
-                <div class="linky-companion-layout linky-companion-layout-lending">
-                  <div class="risk-meter-hero">
+
+                  <div class="risk-meter-hero status-panel" data-tone="unavailable">
                     <div class="risk-meter-summary">
                       <div class="risk-meter-head">
-                        <span>Position health</span>
-                        <b id="riskHealthLabel" role="status" aria-live="polite" aria-atomic="true">No active debt</b>
+                        <span class="health-title"><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#health"></use></svg>Position health</span>
+                        <b id="riskHealthLabel" role="status" aria-live="polite" aria-atomic="true">Waiting for runtime</b>
                       </div>
-                      <div class="meter-track"><span id="riskMeterFill"></span><i></i></div>
+                      <div class="meter-track" data-tone="unavailable"><span id="riskMeterFill"></span><i></i></div>
                     </div>
                   </div>
-                  <div class="linky-widget linky-widget-lending" aria-hidden="true">
-                    <figure class="linky-moment linky-moment-lending">
-                      <img id="linkyLendingImage" data-linky-image alt="" width="200" height="200" decoding="async" />
-                    </figure>
-                  </div>
-                </div>
+
                 <dl>
                   <div><dt>Collateral value</dt><dd class="ui-atomic" id="collateralValue">-</dd></div>
                   <div><dt>Threshold value</dt><dd class="ui-atomic" id="liquidationValue">-</dd></div>
@@ -358,20 +335,26 @@
                 <span class="section-kicker">B-TO-A SETTLEMENT LANE</span>
                 <h2>Return collateral to source custody</h2>
               </div>
-              <span class="assurance-pill ui-atomic"><i data-lucide="badge-check"></i> Burn before unlock</span>
             </header>
 
+            <div class="operation-layout">
+              <div class="settlement-guard status-panel">
+                  <svg class="semantic-symbol panel-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#settlement"></use></svg>
+                  <div role="status" aria-live="polite" aria-atomic="true"><b id="settlementGuardTitle">Position check</b><p id="settlementGuardCopy">Free voucher can be settled after lending collateral is withdrawn.</p></div>
+                </div>
+              <form class="operation-form" data-operation-form="return" aria-label="Bank B to Bank A collateral settlement">
+                <div class="settlement-receipt">
+                <span class="form-eyebrow">BACK TO BANK A</span><h3>Bring it home</h3><p class="form-intro">Settle free vouchers and release the original collateral.</p>
             <div class="settlement-flow">
-              <div><i data-lucide="coins"></i><span><b class="ui-atomic" id="returnVoucherBalance">- vA</b><small>Available voucher</small></span></div>
+              <div><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#collateral"></use></svg><span><b class="ui-atomic" id="returnVoucherBalance">- vA</b><small>Available voucher</small></span></div>
               <i data-lucide="chevron-right"></i>
-              <div><i data-lucide="flame"></i><span><b>Voucher burn</b><small>Bank B</small></span></div>
+              <div><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#voucher"></use></svg><span><b>Voucher burn</b><small>Bank B</small></span></div>
               <i data-lucide="chevron-right"></i>
-              <div><i data-lucide="lock-open"></i><span><b class="ui-atomic" id="returnCanonicalBalance">- aBANK</b><small>Released on Bank A</small></span></div>
+              <div><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#custody"></use></svg><span><b class="ui-atomic" id="returnCanonicalBalance">- aBANK</b><small>Released on Bank A</small></span></div>
             </div>
 
-            <div class="operation-layout">
-              <form class="operation-form" data-operation-form="return" aria-label="Bank B to Bank A collateral settlement">
-                <div class="field-heading">
+                </div>
+                <div class="settlement-fields"><div class="field-heading">
                   <label for="returnAmount">Settlement amount</label>
                   <button class="text-button" data-fill="voucherAvailable" data-input="returnAmount" type="button" aria-controls="returnAmount" disabled aria-disabled="true">Use available</button>
                 </div>
@@ -384,18 +367,9 @@
                   <i data-lucide="rotate-ccw"></i><span>Settle on Bank A</span>
                 </button>
                 <p class="form-message" id="returnMessage" data-message="return" role="status" aria-live="polite" aria-atomic="true"></p>
+              </div>
               </form>
 
-              <div class="linky-companion-layout linky-companion-layout-settlement">
-                <div class="settlement-guard">
-                  <div role="status" aria-live="polite" aria-atomic="true"><b id="settlementGuardTitle">Position check</b><p id="settlementGuardCopy">Free voucher can be settled after lending collateral is withdrawn.</p></div>
-                </div>
-                <div class="linky-widget linky-widget-settlement" aria-hidden="true">
-                  <figure class="linky-moment linky-moment-settlement">
-                    <img id="linkySettlementImage" data-linky-image alt="" width="200" height="200" decoding="async" />
-                  </figure>
-                </div>
-              </div>
             </div>
           </section>
 
@@ -408,12 +382,14 @@
               <button class="secondary-button" id="copyEvidenceButton" type="button"><i data-lucide="copy"></i><span>Copy latest ID</span></button>
             </header>
 
-            <div class="linky-companion-layout linky-companion-layout-evidence">
-              <div class="evidence-verdict" id="evidenceVerdict">
-                <div role="status" aria-live="polite" aria-atomic="true">
+              <div class="evidence-verdict status-panel" id="evidenceVerdict">
+                <div class="status-panel-content" role="status" aria-live="polite" aria-atomic="true">
+                  <svg class="semantic-symbol panel-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#evidence"></use></svg>
+                  <div class="status-panel-copy">
                   <span class="evidence-verdict-label" id="evidenceVerdictLabel">REPRODUCIBLE VALIDATION</span>
                   <h3 id="evidenceVerdictTitle">Loading isolated validation evidence</h3>
                   <p id="evidenceVerdictCopy">Reading the isolated QBFT validation report and source provenance.</p>
+                  </div>
                 </div>
                 <div class="evidence-provenance">
                   <span id="evidenceSourceState">Checking source</span>
@@ -421,12 +397,6 @@
                   <small class="ui-atomic" id="evidenceGeneratedAt">-</small>
                 </div>
               </div>
-              <div class="linky-widget linky-widget-evidence" aria-hidden="true">
-                <figure class="linky-moment linky-moment-evidence">
-                  <img id="linkyEvidenceImage" data-linky-image alt="" width="200" height="200" decoding="async" />
-                </figure>
-              </div>
-            </div>
 
             <dl class="benchmark-strip">
               <div><dt>Benchmark samples</dt><dd><span class="ui-atomic" id="benchmarkSamples">-</span><small class="definition-note">full safety cycles</small></dd></div>
@@ -461,10 +431,10 @@
             </div>
 
             <dl class="assurance-grid">
-              <div><i data-lucide="network" aria-hidden="true"></i><dt>QBFT topology</dt><dd><span class="ui-atomic" id="validatorEvidence">-</span><small class="definition-note" id="faultEvidence">-</small></dd></div>
-              <div><i data-lucide="users-round" aria-hidden="true"></i><dt>Checkpoint quorum</dt><dd><span class="ui-atomic" id="quorumEvidence">-</span><small class="definition-note" id="attestorEvidence">-</small></dd></div>
-              <div><i data-lucide="timer-reset" aria-hidden="true"></i><dt>Governance</dt><dd><span class="ui-atomic" id="governanceEvidence">-</span><small class="definition-note" id="governanceDelay">-</small></dd></div>
-              <div><i data-lucide="radio-tower" aria-hidden="true"></i><dt>Relay journal</dt><dd><span class="ui-atomic" id="relayEvidence">-</span><small class="definition-note" id="pendingEvidence">-</small></dd></div>
+              <div><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#quorum"></use></svg><dt>QBFT topology</dt><dd><span class="ui-atomic" id="validatorEvidence">-</span><small class="definition-note" id="faultEvidence">-</small></dd></div>
+              <div><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#quorum"></use></svg><dt>Checkpoint quorum</dt><dd><span class="ui-atomic" id="quorumEvidence">-</span><small class="definition-note" id="attestorEvidence">-</small></dd></div>
+              <div><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#governance"></use></svg><dt>Governance</dt><dd><span class="ui-atomic" id="governanceEvidence">-</span><small class="definition-note" id="governanceDelay">-</small></dd></div>
+              <div><svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#relay"></use></svg><dt>Relay journal</dt><dd><span class="ui-atomic" id="relayEvidence">-</span><small class="definition-note" id="pendingEvidence">-</small></dd></div>
             </dl>
 
             <div class="chain-evidence">
@@ -487,6 +457,45 @@
           </section>
         </div>
 
+      </div>
+        <aside class="portfolio-rail" aria-label="Portfolio and shortcuts">
+      <section class="overview-band" aria-label="Live portfolio">
+        <div class="overview-title">
+          <span class="eyebrow">Your position</span>
+          <p id="overviewCopy">
+            <span id="overviewMessage">Reading bank state.</span>
+            <span class="overview-chain-heights" id="overviewChainHeights" aria-label="Bank chain heights" hidden>
+              <span class="ui-atomic">A <b id="overviewChainABlock">#-</b></span>
+              <span class="ui-atomic">B <b id="overviewChainBBlock">#-</b></span>
+            </span>
+          </p>
+        </div>
+        <div class="overview-metrics" role="list" aria-label="Institutional position metrics">
+          <div class="metric-card metric-bank-a" role="listitem">
+            <svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#custody"></use></svg>
+            <dl class="metric-definition"><dt>Bank A available</dt><dd><span id="canonicalBalance">-</span><small>aBANK</small></dd></dl>
+          </div>
+          <div class="metric-card metric-bank-b" role="listitem">
+            <svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#collateral"></use></svg>
+            <dl class="metric-definition"><dt>Bank B collateral</dt><dd><span id="collateralBalance">-</span><small>vA</small></dd></dl>
+          </div>
+          <div class="metric-card metric-credit" role="listitem">
+            <svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#credit"></use></svg>
+            <dl class="metric-definition"><dt>Outstanding debt</dt><dd><span id="debtBalance">-</span><small>bCASH</small></dd></dl>
+          </div>
+          <div class="metric-card metric-health" role="listitem">
+            <svg class="semantic-symbol" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="/assets/symbols.svg#health"></use></svg>
+            <dl class="metric-definition"><dt>Health factor</dt><dd><span id="healthFactor">-</span><small id="healthLabel">No debt</small></dd></dl>
+          </div>
+        </div>
+      </section>
+          <div class="portfolio-note">
+            <span class="rail-eyebrow">A CONNECTED POSITION</span>
+            <h2>Two banks.<br>More possibilities.</h2>
+            <p>Your assets stay visible while you move between custody, collateral and credit.</p>
+            <button class="rail-link" data-tab-target="evidence" type="button">Explore the evidence <i data-lucide="arrow-up-right" aria-hidden="true"></i></button>
+          </div>
+        </aside>
       </div>
     </main>
 

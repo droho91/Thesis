@@ -1,12 +1,58 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ethers } from "ethers";
 import {
+  deriveInstitutionalWorkflow,
   observeChainProgress,
+  parseActionAmount,
   readInstitutionalStatus,
   summarizeRelayJournal,
 } from "../../scripts/ui/read-model.mjs";
 
 const ADDRESS = "0x00000000000000000000000000000000000000A1";
+
+test("API action amounts reject zero and amounts above the on-chain limit", () => {
+  assert.equal(parseActionAmount("12.5"), ethers.parseEther("12.5"));
+  assert.throws(() => parseActionAmount("0"), /greater than zero/);
+  assert.throws(() => parseActionAmount("2", { maximum: ethers.parseEther("1") }), /exceeds/);
+});
+
+test("workflow advances from transfer to lending and debt management", () => {
+  const status = {
+    ready: true,
+    laneReady: true,
+    controller: { activeOperation: null },
+    balances: {
+      canonicalAvailable: "100",
+      voucherAvailable: "0",
+      activeCollateral: "0",
+      outstandingDebt: "0",
+    },
+    risk: { availableBorrowRaw: "0" },
+    activity: { latest: null },
+  };
+  assert.deepEqual(deriveInstitutionalWorkflow(status), { stage: "transfer", nextAction: "bridge" });
+  assert.deepEqual(deriveInstitutionalWorkflow({
+    ...status,
+    balances: { ...status.balances, voucherAvailable: "25" },
+  }), { stage: "lend", nextAction: "deposit" });
+  assert.deepEqual(deriveInstitutionalWorkflow({
+    ...status,
+    balances: { ...status.balances, activeCollateral: "25", outstandingDebt: "10" },
+  }), { stage: "manage", nextAction: "repay" });
+});
+
+test("relay summary counts jobs and selects the most recently updated message", () => {
+  const relay = summarizeRelayJournal({
+    jobs: {
+      one: { messageId: "one", state: "completed", updatedAt: "2026-01-01T00:00:00.000Z" },
+      two: { messageId: "two", state: "received", updatedAt: "2026-01-02T00:00:00.000Z" },
+    },
+  });
+  assert.equal(relay.completedMessages, 1);
+  assert.equal(relay.pendingMessages, 1);
+  assert.equal(relay.latestJob.messageId, "two");
+});
 
 function manifest() {
   const contracts = Object.fromEntries([

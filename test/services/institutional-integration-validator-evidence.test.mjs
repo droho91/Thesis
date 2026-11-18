@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -132,8 +133,8 @@ test("malformed topology and report-path boundaries fail closed", () => {
 test("collector resolves integration paths and delegates parsing through an injectable boundary", async () => {
   const reads = [];
   const byPath = new Map([
-    ["/workspace/custom-network/scaffold.json", scaffold],
-    ["/workspace/reports/qbft.json", faultReport],
+    [resolve("/workspace", "custom-network/scaffold.json"), scaffold],
+    [resolve("/workspace", "reports/qbft.json"), faultReport],
   ]);
   const result = await collectValidatorAvailabilityEvidence({
     cwd: "/workspace",
@@ -148,9 +149,9 @@ test("collector resolves integration paths and delegates parsing through an inje
   });
 
   assert.deepEqual(reads.sort(), [
-    "/workspace/custom-network/scaffold.json",
-    "/workspace/reports/qbft.json",
+    resolve("/workspace", "custom-network/scaffold.json"),
+    resolve("/workspace", "reports/qbft.json"),
   ]);
   assert.equal(result.validatorAvailabilityTest.status, "passed");
-  assert.equal(result.validatorAvailabilityTest.report, "/workspace/reports/qbft.json");
+  assert.equal(result.validatorAvailabilityTest.report, resolve("/workspace", "reports/qbft.json"));
 });

@@ -8,7 +8,7 @@ const root = process.cwd();
 
 test("workflow and lending tabs expose complete roving-tab semantics", async () => {
   const html = await readFile(resolve(root, "demo/index.html"), "utf8");
-  assert.match(html, /class="journey"[^>]*role="tablist"[^>]*aria-orientation="vertical"/);
+  assert.match(html, /class="journey"[^>]*role="tablist"[^>]*aria-orientation="horizontal"/);
   assert.equal((html.match(/role="tab"/g) || []).length, 10);
   for (const [tabId, panelId] of [
     ["workflowTabIdentity", "workspacePanelIdentity"],

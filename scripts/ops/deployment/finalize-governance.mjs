@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { ethers } from "ethers";
 import { readJson, writeJsonAtomic } from "../../../services/shared/json-file.mjs";
 import { createTransactionWaiter } from "../../../services/shared/transaction-receipt.mjs";
-import { defaultBesuRuntimeEnv, loadArtifact, signerForRpc } from "../besu/runtime.mjs";
+import { defaultBesuRuntimeEnv, loadArtifact, readWithTransientRpcRetry, signerForRpc } from "../besu/runtime.mjs";
 
 defaultBesuRuntimeEnv();
 
@@ -28,7 +28,10 @@ async function main() {
     B: await signerForRpc(manifest.chains.B.rpc, "B", 0),
   };
   const matrices = await Promise.all(
-    ["A", "B"].map((chainKey) => buildRoleMatrix(chainKey, manifest, signers[chainKey], artifacts)),
+    ["A", "B"].map((chainKey) => readWithTransientRpcRetry(
+      () => buildRoleMatrix(chainKey, manifest, signers[chainKey], artifacts),
+      { label: `${chainKey} governance role matrix` },
+    )),
   );
 
   // Grant every governance role first so interruption cannot leave any contract without an administrator.
@@ -55,7 +58,12 @@ async function main() {
   }
 
   const evidence = [];
-  for (const matrix of matrices) evidence.push(await verifyMatrix(matrix));
+  for (const matrix of matrices) {
+    evidence.push(await readWithTransientRpcRetry(
+      () => verifyMatrix(matrix),
+      { label: `${matrix.chainKey} governance handoff verification` },
+    ));
+  }
   manifest.securityProfile.governanceMode = "timelock-enforced";
   manifest.securityProfile.governanceFinalizedAt = new Date().toISOString();
   manifest.securityProfile.governance = {
@@ -167,13 +175,19 @@ function roleEntry(name, contract, governedRoles, retainedRoles) {
 }
 
 async function ensureGranted(contract, role, account, label) {
-  if (await contract.hasRole(role, account)) return;
+  if (await readWithTransientRpcRetry(
+    () => contract.hasRole(role, account),
+    { label: `${label} timelock role ${role}` },
+  )) return;
   console.log(`[governance] grant ${label} role=${role} to timelock`);
   await waitForTx(await contract.grantRole(role, account, txOptions()), `grant ${label}`);
 }
 
 async function ensureRenounced(contract, role, owner, label) {
-  if (!(await contract.hasRole(role, owner))) return;
+  if (!(await readWithTransientRpcRetry(
+    () => contract.hasRole(role, owner),
+    { label: `${label} operator role ${role}` },
+  ))) return;
   console.log(`[governance] renounce ${label} role=${role} from operator`);
   await waitForTx(await contract.renounceRole(role, owner, txOptions()), `renounce ${label}`);
 }

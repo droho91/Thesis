@@ -12,6 +12,7 @@ const types = {
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".woff2": "font/woff2",
 };
 
 const noStoreHeaders = {

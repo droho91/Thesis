@@ -1,6 +1,12 @@
 :root {
   color-scheme: light;
-  font-family: Inter, "Segoe UI Variable", Aptos, "Segoe UI", sans-serif;
+  --font-ui: "Nunito", "Trebuchet MS", sans-serif;
+  --font-display: "Lora", Georgia, serif;
+  --font-code: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-strong: 600;
+  font-family: var(--font-ui);
   font-synthesis: none;
 
   /* Solid semantic color palette */
@@ -87,21 +93,6 @@
   white-space: nowrap;
 }
 
-.ui-truncate {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ui-wrap-groups {
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
-}
-
 html {
   min-width: 1280px;
 
@@ -124,7 +115,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -190,7 +183,7 @@ svg {
   line-height: 1.2;
 
   color: var(--ink);
-  font-weight: 760;
+  font-weight: var(--weight-strong);
   letter-spacing: -0.01em;
 
   font-size: var(--text-heading-sm);
@@ -208,28 +201,9 @@ svg {
   gap: 12px;
 }
 
-.environment-label {
-  font-weight: 700;
-
-  display: inline-flex;
-  align-items: center;
-
-  gap: 6px;
-  border: 1px solid var(--line-info);
-  border-radius: var(--radius-sm);
-  color: var(--blue);
-  background: var(--blue-soft);
-  letter-spacing: 0.07em;
-
-  height: 34px;
-  padding: 0 11px;
-  font-size: var(--text-caption);
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
-}
-
 .live-status {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 
   border: 1px solid var(--line);
   background: var(--surface-raised);
@@ -244,49 +218,12 @@ svg {
   transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
-.live-status .live-dot {
-  position: relative;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
-  border-radius: 50%;
-  background: transparent;
-}
-
-/* The core and pulse share one coordinate plane so the wave stays optically centred. */
-.live-dot::before,
-.live-dot::after {
-  content: "";
-  position: absolute;
-  box-sizing: border-box;
-  top: 50%;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  transform-origin: center;
-}
-
-.live-dot::before {
-  background: var(--subtle);
-}
-
 .live-status.is-ready {
   color: var(--green);
 }
 
-.live-status.is-ready .live-dot::before {
-  background: var(--green-bright);
-  box-shadow: 0 0 0 3px var(--green-soft);
-}
-
 .live-status.is-error {
   color: var(--red);
-}
-
-.live-status.is-error .live-dot::before {
-  background: var(--red);
 }
 
 .icon-button {
@@ -379,7 +316,7 @@ svg {
 
 .journey-index {
   position: absolute;
-  font-weight: 700;
+  font-weight: var(--weight-strong);
 
   z-index: 3;
   top: 6px;
@@ -424,7 +361,7 @@ svg {
 }
 
 .journey-step b {
-  font-weight: 700;
+  font-weight: var(--weight-strong);
 
   font-size: var(--text-body);
 }
@@ -492,7 +429,7 @@ svg {
 .section-kicker {
   display: block;
   color: var(--teal);
-  font-weight: 800;
+  font-weight: var(--weight-strong);
   line-height: 1.4;
 
   font-size: var(--text-label);
@@ -502,7 +439,7 @@ svg {
   margin: 6px 0 0;
   color: var(--muted);
   font-size: var(--text-caption);
-  font-weight: 700;
+  font-weight: var(--weight-strong);
   line-height: 1.4;
 }
 
@@ -521,7 +458,7 @@ svg {
 
 .overview-chain-heights b {
   font: inherit;
-  font-weight: 750;
+  font-weight: var(--weight-strong);
 }
 
 .overview-metrics {
@@ -539,7 +476,7 @@ svg {
 
 .definition-note {
   display: block;
-  font-weight: 400;
+  font-weight: var(--weight-normal);
 }
 
 .overview-metrics > div {
@@ -565,7 +502,7 @@ svg {
   display: block;
   overflow: hidden;
   line-height: 1.2;
-  font-weight: 680;
+  font-weight: var(--weight-strong);
   text-overflow: ellipsis;
   white-space: nowrap;
 
@@ -622,43 +559,13 @@ svg {
   line-height: 1.25;
 
   margin-top: 0;
-  font-weight: 720;
+  font-weight: var(--weight-strong);
   letter-spacing: -0.018em;
 
   font-size: var(--text-heading-lg);
   text-wrap: balance;
 }
 
-.assurance-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid var(--line-success);
-  color: var(--green);
-  background: var(--green-soft);
-  font-weight: 700;
-  white-space: nowrap;
-
-  border-radius: var(--radius-sm);
-
-  position: relative;
-  overflow: hidden;
-  height: 34px;
-  padding: 0 12px;
-  font-size: var(--text-label);
-  transition: border-color 0.22s ease, box-shadow 0.22s ease, transform 0.22s ease;
-}
-
-.assurance-pill svg {
-  width: 15px;
-  height: 15px;
-}
-
-.assurance-pill-blue {
-  color: var(--blue);
-  border-color: var(--line-info);
-  background: var(--blue-soft);
-}
 
 .route-visual {
   display: grid;
@@ -699,7 +606,7 @@ svg {
   display: grid;
   place-items: center;
   font-size: var(--text-ui);
-  font-weight: 800;
+  font-weight: var(--weight-strong);
 
   border-radius: var(--radius-md);
 }
@@ -736,7 +643,7 @@ svg {
 .route-bank strong {
   grid-column: 1 / -1;
   margin-top: 10px;
-  font-weight: 650;
+  font-weight: var(--weight-strong);
 
   color: var(--ink);
   font-variant-numeric: tabular-nums;
@@ -754,7 +661,7 @@ svg {
   text-align: center;
 }
 
-.linky-transfer-progress {
+.transfer-action-progress {
   width: min(136px, 100%);
   height: 6px;
   overflow: hidden;
@@ -764,7 +671,7 @@ svg {
   background: var(--surface);
 }
 
-.linky-transfer-progress > span {
+.transfer-action-progress > span {
   display: block;
   width: 0;
   height: 100%;
@@ -773,13 +680,8 @@ svg {
   transition: width 0.35s ease;
 }
 
-.linky-transfer-progress.is-complete > span {
+.transfer-action-progress.is-complete > span {
   background: var(--green-bright);
-}
-
-.linky-moment-transfer {
-  width: min(130px, 100%);
-  height: 112px;
 }
 
 .route-relay b {
@@ -824,14 +726,14 @@ svg {
 }
 
 .field-heading label {
-  font-weight: 700;
+  font-weight: var(--weight-strong);
 
   font-size: var(--text-label);
 }
 
 .text-button {
   color: var(--blue);
-  font-weight: 650;
+  font-weight: var(--weight-strong);
   cursor: pointer;
 
   padding: 5px 8px;
@@ -873,7 +775,7 @@ svg {
   outline: 0;
   color: var(--ink);
   background: transparent;
-  font-weight: 620;
+  font-weight: var(--weight-strong);
 
   font-variant-numeric: tabular-nums;
 
@@ -884,7 +786,7 @@ svg {
   padding: 0 15px;
   color: var(--surface);
   font-size: var(--text-label);
-  font-weight: 700;
+  font-weight: var(--weight-strong);
 
   height: 43px;
   border-radius: var(--radius-sm);
@@ -926,7 +828,7 @@ svg {
   background: var(--blue);
   box-shadow: var(--shadow-blue);
   font-size: var(--text-label);
-  font-weight: 700;
+  font-weight: var(--weight-strong);
   transition: background 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
 }
 
@@ -946,7 +848,7 @@ svg {
   border: 1px solid var(--line-strong);
   background: var(--surface);
   font-size: var(--text-label);
-  font-weight: 650;
+  font-weight: var(--weight-strong);
 }
 
 .form-message {
@@ -990,7 +892,7 @@ svg {
 .settlement-summary dd {
   margin: 6px 0 0;
   font-size: var(--text-body);
-  font-weight: 650;
+  font-weight: var(--weight-strong);
 }
 
 .position-strip {
@@ -1019,7 +921,7 @@ svg {
 .position-strip dd {
   max-width: 100%;
   margin: 5px 0 0;
-  font-weight: 650;
+  font-weight: var(--weight-strong);
 
   font-variant-numeric: tabular-nums;
 
@@ -1048,7 +950,7 @@ svg {
   color: var(--muted);
   background: transparent;
   font-size: var(--text-label);
-  font-weight: 650;
+  font-weight: var(--weight-strong);
   cursor: pointer;
 
   border-radius: var(--radius-sm);
@@ -1081,11 +983,6 @@ svg {
 
 .risk-meter-summary {
   min-width: 0;
-}
-
-.linky-moment-lending {
-  width: 132px;
-  height: 116px;
 }
 
 .risk-meter-head span {
@@ -1166,7 +1063,7 @@ svg {
   max-width: 62%;
   margin: 0;
   font-size: var(--text-label);
-  font-weight: 650;
+  font-weight: var(--weight-strong);
 }
 
 .settlement-flow {
@@ -1229,15 +1126,9 @@ svg {
   background: var(--amber-soft);
 
   border: 1px solid var(--line-warning);
-  border-left: 3px solid var(--amber);
   border-radius: var(--radius-md);
 
   transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
-}
-
-.linky-moment-settlement {
-  width: 144px;
-  height: 112px;
 }
 
 .settlement-guard b {
@@ -1262,16 +1153,10 @@ svg {
   min-height: 132px;
   padding: 10px 18px 10px 12px;
   border: 1px solid var(--line-success);
-  border-left: 4px solid var(--green);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
 
   transition: border-color 0.28s ease, box-shadow 0.28s ease, transform 0.28s ease;
-}
-
-.linky-moment-evidence {
-  width: 126px;
-  height: 112px;
 }
 
 .evidence-verdict-label,
@@ -1279,12 +1164,12 @@ svg {
 .evidence-subheading span {
   color: var(--green);
   font-size: var(--text-caption);
-  font-weight: 800;
+  font-weight: var(--weight-strong);
 }
 
 .evidence-verdict h3 {
   margin: 4px 0 3px;
-  font-weight: 700;
+  font-weight: var(--weight-strong);
 
   font-size: var(--text-heading-sm);
   text-wrap: balance;
@@ -1299,7 +1184,6 @@ svg {
 
 .evidence-verdict.is-warning {
   border-color: var(--line-warning);
-  border-left-color: var(--amber);
   background: var(--amber-soft);
 }
 
@@ -1314,7 +1198,6 @@ svg {
 
 .evidence-verdict.is-error {
   border-color: var(--line-danger);
-  border-left-color: var(--red);
   background: var(--red-soft);
 }
 
@@ -1338,7 +1221,7 @@ svg {
 }
 
 .evidence-provenance b {
-  font-family: Consolas, "Cascadia Mono", monospace;
+  font-family: var(--font-code);
   font-size: var(--text-body);
 }
 
@@ -1379,7 +1262,7 @@ svg {
 
 .benchmark-strip dd {
   margin: 5px 0 2px;
-  font-weight: 680;
+  font-weight: var(--weight-strong);
 
   font-variant-numeric: tabular-nums;
 
@@ -1502,7 +1385,7 @@ svg {
 .security-evidence-item span {
   color: var(--teal);
   font-size: var(--text-caption);
-  font-weight: 800;
+  font-weight: var(--weight-strong);
 }
 
 .security-evidence-item b {
@@ -1576,7 +1459,7 @@ svg {
 
 .assurance-grid dd {
   margin: 6px 0 2px;
-  font-weight: 700;
+  font-weight: var(--weight-strong);
 
   font-size: var(--text-ui);
 }
@@ -1622,7 +1505,7 @@ svg {
   overflow: hidden;
   margin: 5px 0 0;
   font-size: var(--text-label);
-  font-weight: 650;
+  font-weight: var(--weight-strong);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1689,7 +1572,7 @@ svg {
 .activity-status {
   color: var(--green);
   text-align: right;
-  font-weight: 700;
+  font-weight: var(--weight-strong);
 }
 
 .activity-status.is-failed {
@@ -1700,40 +1583,6 @@ svg {
   padding: 30px 0;
   color: var(--muted);
   font-size: var(--text-label);
-}
-
-.linky-moment {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  display: grid;
-  place-items: center;
-  margin: 0;
-  overflow: hidden;
-}
-
-.linky-moment img {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  max-width: none;
-  max-height: none;
-  object-fit: contain;
-  object-position: center;
-  opacity: 1;
-  transform: translateY(0) scale(1);
-  transition: opacity 0.18s ease, transform 0.18s ease;
-}
-
-.linky-moment img.is-changing {
-  opacity: 0.35;
-  transform: translateY(4px) scale(0.98);
-}
-
-.linky-moment.is-processing img {
-  animation: linky-work 1.8s ease-in-out infinite;
 }
 
 .toast-region {
@@ -1753,7 +1602,6 @@ svg {
   gap: 9px;
   padding: 13px 14px;
   border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--green);
   background: var(--surface);
   line-height: 1.45;
 
@@ -1765,12 +1613,11 @@ svg {
 }
 
 .toast.is-error {
-  border-left-color: var(--red);
 
   animation: none;
 }
 
-.toast-linky {
+.toast-icon {
   width: 38px;
   height: 38px;
   display: grid;
@@ -1780,13 +1627,13 @@ svg {
   background: var(--green-soft);
 }
 
-.toast-linky img {
-  width: 46px;
-  height: 46px;
+.toast-icon svg {
+  width: 20px;
+  height: 20px;
   object-fit: contain;
 }
 
-.toast.is-error .toast-linky {
+.toast.is-error .toast-icon {
   background: var(--red-soft);
 }
 
@@ -1831,27 +1678,6 @@ body.is-busy .text-button {
   transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.28s ease;
 }
 
-.brand-mascot .brand-mark {
-  object-fit: contain;
-  filter: none;
-  transform: translateY(10px) scale(1.75);
-  transform-origin: center;
-}
-
-.brand-block .brand-overline {
-  color: var(--teal);
-  font-weight: 800;
-  letter-spacing: 0.12em;
-
-  margin-top: 1px;
-  font-size: var(--text-caption);
-}
-
-.environment-label svg {
-  width: 13px;
-  height: 13px;
-}
-
 .journey-heading {
   padding: 0 9px 12px;
   border-bottom: 1px solid var(--line);
@@ -1860,7 +1686,7 @@ body.is-busy .text-button {
 
 .journey-heading > span {
   color: var(--teal);
-  font-weight: 850;
+  font-weight: var(--weight-strong);
   letter-spacing: 0.14em;
 
   font-size: var(--text-caption);
@@ -1931,7 +1757,7 @@ body.is-busy .text-button {
   right: 8px;
   color: var(--gold-ink);
   font-size: var(--text-caption);
-  font-weight: 900;
+  font-weight: var(--weight-strong);
   letter-spacing: 0.08em;
 }
 
@@ -1991,40 +1817,11 @@ main {
 .overview-title h1 {
   margin: 7px 0 7px;
   max-width: 390px;
-  font-weight: 720;
+  font-weight: var(--weight-strong);
   letter-spacing: -0.025em;
 
   font-size: var(--text-display);
   line-height: 1.14;
-}
-
-.hero-assurance {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 12px;
-}
-
-.hero-assurance span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-pill);
-  color: var(--muted);
-  background: var(--surface);
-  font-weight: 700;
-
-  height: 27px;
-  padding: 0 10px;
-  font-size: var(--text-caption);
-  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
-}
-
-.hero-assurance svg {
-  width: 12px;
-  height: 12px;
-  color: var(--teal);
 }
 
 .overview-metrics > .metric-card {
@@ -2099,11 +1896,6 @@ body[data-view="evidence"] .workspace-shell {
   letter-spacing: 0.1em;
 }
 
-.assurance-pill.is-warning {
-  color: var(--amber);
-  border-color: var(--line-warning);
-  background: var(--amber-soft);
-}
 
 .readiness-verdict {
   display: grid;
@@ -2124,27 +1916,14 @@ body[data-view="evidence"] .workspace-shell {
   background: var(--gold-soft);
 }
 
-.linky-moment-readiness {
-  width: 126px;
-  height: 112px;
-}
-
-.readiness-verdict > div:nth-child(2) > span,
-.readiness-label {
+.readiness-verdict > div:nth-child(2) > span{
   color: var(--green);
-  font-weight: 850;
+  font-weight: var(--weight-strong);
   letter-spacing: 0.11em;
 
   font-size: var(--text-caption);
 }
 
-.readiness-verdict .assurance-pill {
-  width: fit-content;
-  height: 26px;
-  padding: 0 9px;
-  font-size: var(--text-caption);
-  letter-spacing: 0;
-}
 
 .readiness-verdict h3 {
   margin: 6px 0 2px;
@@ -2252,13 +2031,13 @@ body[data-view="evidence"] .workspace-shell {
   font-size: var(--text-label);
 }
 
-.readiness-card > :is(code, small) {
+.readiness-card > code {
   display: block;
   overflow: hidden;
   margin-top: auto;
   padding-top: 12px;
   color: var(--muted);
-  font-family: Consolas, "Cascadia Mono", monospace;
+  font-family: var(--font-code);
   text-overflow: ellipsis;
   white-space: nowrap;
 
@@ -2291,7 +2070,7 @@ body[data-view="evidence"] .workspace-shell {
   padding: 0 14px;
   color: var(--ink);
   font-size: var(--text-label);
-  font-weight: 750;
+  font-weight: var(--weight-strong);
   cursor: pointer;
   list-style: none;
 }
@@ -2343,13 +2122,13 @@ body[data-view="evidence"] .workspace-shell {
   overflow: hidden;
   color: var(--ink);
   font-size: var(--text-caption);
-  font-weight: 700;
+  font-weight: var(--weight-strong);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .technical-grid code {
-  font-family: Consolas, "Cascadia Mono", monospace;
+  font-family: var(--font-code);
 }
 
 .technical-disclosure > p {
@@ -2357,32 +2136,6 @@ body[data-view="evidence"] .workspace-shell {
   padding: 0 14px 14px;
   color: var(--muted);
   font-size: var(--text-caption);
-}
-
-.control-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin-top: 17px;
-  padding: 14px 16px;
-  border: 1px solid var(--line-info);
-  border-radius: var(--radius-md);
-  background: var(--surface-info);
-
-  transition: border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
-}
-
-.control-note > svg {
-  flex: 0 0 auto;
-  color: var(--blue);
-}
-
-.control-note p {
-  margin: 3px 0 0;
-  color: var(--muted);
-  line-height: 1.5;
-
-  font-size: var(--text-label);
 }
 
 .proof-pipeline {
@@ -2417,7 +2170,7 @@ body[data-view="evidence"] .workspace-shell {
   padding: 2px 6px;
   color: var(--muted);
   background: var(--surface-teal);
-  font-weight: 700;
+  font-weight: var(--weight-strong);
   white-space: nowrap;
 
   font-size: var(--text-caption);
@@ -2502,7 +2255,6 @@ body[data-view="evidence"] .workspace-shell {
 
 .settlement-guard.is-ready {
   border-color: var(--line-success);
-  border-left-color: var(--green);
   background: var(--green-soft);
 }
 
@@ -2552,12 +2304,6 @@ body[data-view="evidence"] .workspace-shell {
   transform: translateY(-2px) rotate(-2deg) scale(1.04);
 }
 
-.environment-label:hover {
-  border-color: var(--line-info);
-  background: var(--blue-soft);
-  transform: translateY(-1px);
-}
-
 .runtime-status-control {
   position: relative;
 }
@@ -2574,16 +2320,6 @@ body[data-view="evidence"] .workspace-shell {
 .runtime-status-control.is-open .live-status.is-error {
   border-color: var(--line-danger);
   background: var(--red-soft);
-}
-
-.live-dot::after {
-  border: 1px solid currentColor;
-  opacity: 0;
-}
-
-.live-status.is-ready .live-dot::after {
-  animation: live-ring 1.8s ease-out infinite;
-  opacity: 1;
 }
 
 .status-chevron {
@@ -2646,7 +2382,7 @@ body[data-view="evidence"] .workspace-shell {
 .runtime-popover-head span {
   color: var(--teal);
   font-size: var(--text-caption);
-  font-weight: 850;
+  font-weight: var(--weight-strong);
   letter-spacing: 0.09em;
 }
 
@@ -2683,7 +2419,7 @@ body[data-view="evidence"] .workspace-shell {
   margin: 0;
   color: var(--ink);
   font-size: var(--text-label);
-  font-weight: 700;
+  font-weight: var(--weight-strong);
   text-align: right;
 }
 
@@ -2711,13 +2447,6 @@ body[data-view="evidence"] .workspace-shell {
 .overview-band:hover {
   border-color: var(--line-info);
   box-shadow: var(--shadow);
-  transform: translateY(-2px);
-}
-
-.hero-assurance span:hover {
-  color: var(--teal);
-  border-color: var(--line-accent);
-  background: var(--surface);
   transform: translateY(-2px);
 }
 
@@ -2761,27 +2490,6 @@ body[data-view="evidence"] .workspace-shell {
   box-shadow: var(--shadow-raised);
 }
 
-.assurance-pill::after {
-  content: "";
-  position: absolute;
-  top: -20%;
-  bottom: -20%;
-  left: -45%;
-  width: 28%;
-  background: transparent;
-  transform: skewX(-18deg);
-  animation: status-sheen 4.8s ease-in-out infinite;
-}
-
-.assurance-pill.is-warning::after {
-  animation: none;
-  opacity: 0;
-}
-
-.assurance-pill:hover {
-  box-shadow: var(--shadow-green);
-  transform: translateY(-2px);
-}
 
 .readiness-verdict:hover {
   border-color: var(--line-success);
@@ -2828,7 +2536,7 @@ body[data-view="evidence"] .workspace-shell {
   color: var(--green);
   background: transparent;
   font-size: var(--text-label);
-  font-weight: 750;
+  font-weight: var(--weight-strong);
   text-align: left;
   cursor: pointer;
   transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
@@ -2911,17 +2619,6 @@ body[data-view="evidence"] .workspace-shell {
   margin: 5px 0 4px;
   opacity: 1;
   transform: translateY(0);
-}
-
-.control-note:hover {
-  border-color: var(--line-info);
-  background: var(--surface-info);
-  box-shadow: var(--shadow-blue);
-  transform: translateY(-2px);
-}
-
-.control-note b {
-  font-size: var(--text-label);
 }
 
 .route-bank,
@@ -3034,33 +2731,6 @@ body[data-view="evidence"] .workspace-shell {
   transform: translateY(-3px);
 }
 
-.settlement-guard:hover {
-  border-left-color: var(--gold);
-  box-shadow: var(--shadow-warning);
-  transform: translateY(-3px);
-}
-
-.settlement-guard.is-ready:hover {
-  border-left-color: var(--green-bright);
-  box-shadow: var(--shadow-green);
-}
-
-.evidence-verdict:hover {
-  border-left-color: var(--green-bright);
-  box-shadow: var(--shadow-green);
-  transform: translateY(-3px);
-}
-
-/* Hover reinforces the recorded state; it must never imply a different result. */
-.evidence-verdict.is-warning:hover {
-  border-left-color: var(--gold);
-  box-shadow: var(--shadow-warning);
-}
-
-.evidence-verdict.is-error:hover {
-  border-left-color: var(--red-bright);
-  box-shadow: var(--shadow-danger);
-}
 
 .evidence-provenance span,
 .evidence-provenance small,
@@ -3104,83 +2774,6 @@ body[data-view="evidence"] .workspace-shell {
   font-size: var(--text-label);
 }
 
-/* --------------------------------------------------------------------------
-   Linky companion widgets
-
-   The mascot has its own visual dock. Operational copy remains in the primary
-   card, so changes in text length cannot overlap or distort Linky.
-   -------------------------------------------------------------------------- */
-
-.linky-companion-layout {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 208px;
-  align-items: stretch;
-  gap: 0;
-}
-
-.linky-companion-layout > :first-child {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.linky-widget {
-  position: relative;
-  min-width: 0;
-  min-height: 184px;
-  display: grid;
-  place-items: center;
-  align-self: stretch;
-  overflow: hidden;
-  border: 1px solid var(--line-accent);
-  border-left: 0;
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  background: var(--surface-teal);
-}
-
-.linky-widget .linky-moment {
-  width: 196px;
-  max-width: 100%;
-  height: 176px;
-}
-
-.linky-widget-identity {
-  min-height: 184px;
-  border-color: var(--line-success);
-  background: var(--green-soft);
-}
-
-.linky-widget-identity .linky-moment {
-  width: 196px;
-  height: 176px;
-}
-
-.linky-companion-layout-identity .readiness-verdict {
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 184px;
-  padding: 20px 22px;
-}
-
-.linky-widget-transfer {
-  min-height: 250px;
-  align-self: stretch;
-  align-content: center;
-  gap: 10px;
-  padding: 12px 8px;
-  border-color: var(--line-info);
-  background: var(--surface-info);
-}
-
-.linky-widget-transfer .linky-moment {
-  width: 200px;
-  height: 210px;
-}
-
-.linky-widget-transfer .linky-transfer-progress {
-  width: 100%;
-  margin: 0;
-}
-
 .route-relay-symbol {
   width: 48px;
   height: 48px;
@@ -3196,92 +2789,6 @@ body[data-view="evidence"] .workspace-shell {
 .route-relay-symbol svg {
   width: 22px;
   height: 22px;
-}
-
-.linky-companion-layout-lending .risk-meter-hero {
-  min-height: 184px;
-  display: flex;
-  align-items: center;
-  padding: 22px;
-  border: 1px solid var(--line-info);
-  background: var(--surface-info);
-}
-
-.linky-widget-lending {
-  min-height: 184px;
-  border-color: var(--line-info);
-  background: var(--surface-info);
-}
-
-.linky-widget-lending .linky-moment {
-  width: 196px;
-  height: 176px;
-}
-
-.linky-companion-layout-settlement .settlement-guard {
-  min-height: 184px;
-  display: flex;
-  align-items: center;
-  padding: 22px;
-}
-
-.linky-widget-settlement {
-  min-height: 184px;
-  border-color: var(--line-warning);
-  background: var(--amber-soft);
-}
-
-.linky-widget-settlement .linky-moment {
-  width: 196px;
-  height: 176px;
-}
-
-.linky-companion-layout-evidence {
-  margin-bottom: 24px;
-}
-
-.linky-companion-layout-evidence .evidence-verdict {
-  grid-template-columns: minmax(0, 1fr) 210px;
-  min-height: 184px;
-  margin-bottom: 0;
-  padding: 18px 22px;
-}
-
-.linky-widget-evidence {
-  min-height: 184px;
-  border-color: var(--line-success);
-  background: var(--surface-raised);
-}
-
-.linky-widget-evidence .linky-moment {
-  width: 196px;
-  height: 176px;
-}
-
-/* Keep each dock on the same semantic surface as the state it accompanies. */
-.readiness-verdict.is-review + .linky-widget-identity {
-  border-color: var(--line-warning);
-  background: var(--gold-soft);
-}
-
-.settlement-guard.is-ready + .linky-widget-settlement {
-  border-color: var(--line-success);
-  background: var(--green-soft);
-}
-
-.evidence-verdict.is-warning + .linky-widget-evidence {
-  border-color: var(--line-warning);
-  background: var(--amber-soft);
-}
-
-.evidence-verdict.is-error + .linky-widget-evidence {
-  border-color: var(--line-danger);
-  background: var(--red-soft);
-}
-
-@keyframes live-ring {
-  0% { opacity: 0.65; transform: translate(-50%, -50%) scale(0.35); }
-  75%, 100% { opacity: 0; transform: translate(-50%, -50%) scale(2.3); }
 }
 
 @keyframes active-step-breathe {
@@ -3304,30 +2811,10 @@ body[data-view="evidence"] .workspace-shell {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-@keyframes status-sheen {
-  0%, 62% { left: -45%; opacity: 0; }
-  68% { opacity: 0.9; }
-  82%, 100% { left: 125%; opacity: 0; }
-}
-
-@keyframes verified-seal {
-  0%, 100% { box-shadow: 0 5px 14px var(--green-soft); transform: scale(1); }
-  50% { box-shadow: 0 8px 22px var(--line-success); transform: scale(1.04); }
-}
 
 @keyframes meter-indicator {
   0%, 100% { box-shadow: 0 2px 7px var(--line-strong); }
   50% { box-shadow: 0 3px 10px var(--health-color); }
-}
-
-@keyframes linky-float {
-  0%, 100% { transform: translateY(3px); }
-  50% { transform: translateY(-5px); }
-}
-
-@keyframes linky-work {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-4px) scale(1.01); }
 }
 
 @keyframes toast-enter {
@@ -3359,10 +2846,6 @@ body[data-view="evidence"] .workspace-shell {
     padding-right: 18px;
   }
 
-  .brand-block .brand-overline {
-    letter-spacing: 0.08em;
-  }
-
   .topbar-status {
     gap: 8px;
   }
@@ -3391,14 +2874,6 @@ body[data-view="evidence"] .workspace-shell {
     margin-top: 3px;
     font-size: var(--text-caption);
     line-height: 1.3;
-  }
-
-  .journey-copy-wide {
-    display: none;
-  }
-
-  .journey-copy-compact {
-    display: inline;
   }
 
   .journey-step {
@@ -3538,56 +3013,6 @@ body[data-view="evidence"] .workspace-shell {
     padding: 12px 14px;
   }
 
-  .linky-companion-layout {
-    grid-template-columns: minmax(0, 1fr) 176px;
-    gap: 0;
-  }
-
-  .linky-widget {
-    min-height: 168px;
-  }
-
-  .linky-widget .linky-moment {
-    width: 168px;
-    height: 160px;
-  }
-
-  .linky-companion-layout-identity .readiness-verdict,
-  .linky-widget-identity,
-  .linky-companion-layout-lending .risk-meter-hero,
-  .linky-widget-lending,
-  .linky-companion-layout-settlement .settlement-guard,
-  .linky-widget-settlement,
-  .linky-companion-layout-evidence .evidence-verdict,
-  .linky-widget-evidence {
-    min-height: 168px;
-  }
-
-  .linky-widget-transfer {
-    min-height: 250px;
-  }
-
-  .linky-widget-transfer .linky-moment {
-    width: 168px;
-    height: 196px;
-  }
-
-  .linky-companion-layout-identity .readiness-verdict,
-  .linky-companion-layout-lending .risk-meter-hero,
-  .linky-companion-layout-settlement .settlement-guard,
-  .linky-companion-layout-evidence .evidence-verdict {
-    padding: 16px 18px;
-  }
-
-  .linky-companion-layout-evidence .evidence-verdict {
-    grid-template-columns: minmax(0, 1fr) 178px;
-  }
-
-  .linky-moment-readiness {
-    width: 104px;
-    height: 96px;
-  }
-
   .readiness-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
@@ -3607,17 +3032,8 @@ body[data-view="evidence"] .workspace-shell {
     padding-left: 14px;
   }
 
-  .linky-moment-transfer {
+  .transfer-action-progress {
     width: 112px;
-    height: 100px;
-  }
-
-  .linky-transfer-progress {
-    width: 112px;
-  }
-
-  .linky-widget .linky-transfer-progress {
-    width: 100%;
   }
 
   .route-bank {
@@ -3634,11 +3050,6 @@ body[data-view="evidence"] .workspace-shell {
     grid-template-columns: minmax(0, 1fr) 108px;
     gap: 10px;
     min-height: 106px;
-  }
-
-  .linky-moment-lending {
-    width: 108px;
-    height: 96px;
   }
 
   .position-strip,
@@ -3670,19 +3081,9 @@ body[data-view="evidence"] .workspace-shell {
     min-height: 116px;
   }
 
-  .linky-moment-settlement {
-    width: 118px;
-    height: 100px;
-  }
-
   .evidence-verdict {
     grid-template-columns: minmax(0, 1fr) 178px;
     min-height: 116px;
-  }
-
-  .linky-moment-evidence {
-    width: 106px;
-    height: 96px;
   }
 
   .toast-region {
@@ -3700,3 +3101,6 @@ body[data-view="evidence"] .workspace-shell {
     transition: none !important;
   }
 }
+
+h1,h2,h3,h4,b,strong { font-weight: var(--weight-strong); }
+code,pre,kbd,samp { font-family: var(--font-code); }

@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="identity" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="5" width="24" height="22" rx="4" fill="var(--symbol-wash, #dce7db)"/>
+      <circle cx="12" cy="13" r="3"/>
+      <path d="M7.5 22c.7-4.8 8.3-4.8 9 0M21 12h3m-3 5h3m-3 5h2"/>
+    </g>
+  </symbol>
+  <symbol id="governance" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 27V6a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v6"/>
+      <path d="M7 5h15v7H7z" fill="var(--symbol-wash, #dce7db)" stroke="none"/>
+      <path d="M10 10h8m-8 6h3m-3 5h2M6 27h8"/>
+      <circle cx="22" cy="22" r="7" fill="var(--symbol-wash, #dce7db)"/>
+      <path d="M22 18v4l3 2"/>
+    </g>
+  </symbol>
+  <symbol id="quorum" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m10 10 12 12M22 10 10 22M12 8h8M8 12v8"/>
+      <circle cx="8" cy="8" r="4" fill="currentColor"/>
+      <circle cx="24" cy="8" r="4" fill="var(--symbol-wash, #dce7db)"/>
+      <circle cx="8" cy="24" r="4" fill="var(--symbol-wash, #dce7db)"/>
+      <circle cx="24" cy="24" r="4" fill="none"/>
+    </g>
+  </symbol>
+  <symbol id="relay" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="6" width="14" height="20" rx="4" fill="var(--symbol-wash, #dce7db)" stroke="none"/>
+      <path d="M4 10h24m-5-5 5 5-5 5M28 22H4m5 5-5-5 5-5"/>
+    </g>
+  </symbol>
+  <symbol id="collateral" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="12" cy="9" rx="8" ry="4" fill="var(--symbol-wash, #dce7db)"/>
+      <path d="M4 9v6c0 2.2 3.6 4 8 4m-8-4v6c0 2.2 3.6 4 8 4"/>
+      <rect x="15" y="17" width="14" height="12" rx="3" fill="var(--symbol-wash, #dce7db)"/>
+      <path d="M18 17v-3a4 4 0 0 1 8 0v3m-4 5v2"/>
+    </g>
+  </symbol>
+  <symbol id="credit" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="7" width="24" height="18" rx="4" fill="var(--symbol-wash, #dce7db)"/>
+      <path d="M9 7v4H4m24 0h-5V7M4 21h5v4m14 0v-4h5"/>
+      <circle cx="16" cy="16" r="4"/>
+    </g>
+  </symbol>
+  <symbol id="health" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m16 3 11 5v8c0 6-6 10-11 13C11 26 5 22 5 16V8z" fill="var(--symbol-wash, #dce7db)"/>
+      <path d="M8 16h5l2-5 3 11 2-6h5"/>
+    </g>
+  </symbol>
+  <symbol id="evidence" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 28H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h12l6 6v5" fill="var(--symbol-wash, #dce7db)"/>
+      <path d="M18 4v7h7M10 15h7m-7 5h4"/>
+      <circle cx="23" cy="23" r="5"/>
+      <path d="m27 27 3 3"/>
+    </g>
+  </symbol>
+  <symbol id="custody" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m3 12 13-8 13 8z" fill="var(--symbol-wash, #dce7db)"/>
+      <path d="M7 15v10m9-10v10m9-10v10M4 28h24M3 12h26"/>
+    </g>
+  </symbol>
+  <symbol id="voucher" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 5h20a2 2 0 0 1 2 2v6a3 3 0 0 0 0 6v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6a3 3 0 0 0 0-6V7a2 2 0 0 1 2-2Z" fill="var(--symbol-wash, #dce7db)"/>
+      <path d="M11 16h10m-5-7v2m0 10v2"/>
+    </g>
+  </symbol>
+  <symbol id="settlement" viewBox="0 0 32 32">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M27 13A11 11 0 0 0 8 7L4 11m0-7v7h7M5 19a11 11 0 0 0 19 6l4-4m0 7v-7h-7"/>
+      <rect x="11" y="11" width="10" height="10" rx="3" fill="var(--symbol-wash, #dce7db)"/>
+    </g>
+  </symbol>
+</svg>

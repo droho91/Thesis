@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "@playwright/test";
+import { browserLaunchOptions } from "./browser-options.mjs";
 
 import { writeJsonAtomic } from "../../services/shared/json-file.mjs";
 
@@ -19,7 +20,7 @@ export function parseMissingSharedLibraries(output) {
     .sort();
 }
 
-export function evaluateBrowserRuntime({ executablePath, executablePresent, lddOk, missingLibraries }) {
+export function evaluateBrowserRuntime({ executablePath, executablePresent, lddOk, missingLibraries, platform = process.platform }) {
   const checks = [
     {
       id: "chromium-executable",
@@ -27,7 +28,7 @@ export function evaluateBrowserRuntime({ executablePath, executablePresent, lddO
       detail: executablePresent ? executablePath : "Playwright Chromium executable is missing",
     },
   ];
-  if (process.platform === "linux") {
+  if (platform === "linux") {
     checks.push({
       id: "linux-shared-libraries",
       status: lddOk && missingLibraries.length === 0 ? "passed" : "failed",
@@ -45,9 +46,9 @@ export function evaluateBrowserRuntime({ executablePath, executablePresent, lddO
 }
 
 export async function inspectBrowserRuntime({
-  executablePath = chromium.executablePath(),
+  executablePath = browserLaunchOptions().executablePath || chromium.executablePath(),
   runCommand = commandOutput,
-  launch = () => chromium.launch({ headless: true }),
+  launch = () => chromium.launch({ headless: true, ...browserLaunchOptions() }),
 } = {}) {
   const executablePresent = await access(executablePath).then(() => true).catch(() => false);
   let lddOk = true;

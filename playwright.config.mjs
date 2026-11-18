@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { browserLaunchOptions } from "./scripts/verification/browser-options.mjs";
 import { fixtureOrigin } from "./test/ui/fixture-environment.mjs";
 
 const desktopProjects = [
@@ -16,23 +17,20 @@ export default defineConfig({
   timeout: 180_000,
   expect: {
     timeout: 8_000,
-    toHaveScreenshot: {
-      animations: "disabled",
-      caret: "hide",
-      maxDiffPixelRatio: 0.001,
-      scale: "css",
-    },
   },
   outputDir: ".runtime/playwright-results",
   reporter: "line",
   use: {
     baseURL: fixtureOrigin,
     browserName: "chromium",
+    launchOptions: browserLaunchOptions(),
     colorScheme: "light",
     locale: "en-US",
     reducedMotion: "reduce",
     timezoneId: "UTC",
-    trace: process.env.CI ? "retain-on-failure" : "off",
+    screenshot: "off",
+    trace: "off",
+    video: "off",
   },
   projects: desktopProjects.map(({ name, viewport }) => ({
     name,

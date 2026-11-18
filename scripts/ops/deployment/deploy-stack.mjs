@@ -11,6 +11,7 @@ import {
   providerForRpc,
   readContractCode,
   readLatestBlock,
+  readWithTransientRpcRetry,
   signerForRpc,
   waitForBesuRuntimeReady,
 } from "../besu/runtime.mjs";
@@ -337,10 +338,10 @@ async function configureStack({ chainA, chainB, chainIds, attestors, threshold, 
 
   await ensureSource(chainA.checkpointClient, chainIds.B, attestors, threshold, "Bank A trusts Bank B checkpoints");
   await ensureSource(chainB.checkpointClient, chainIds.A, attestors, threshold, "Bank B trusts Bank A checkpoints");
-  await ensureValue(chainA.gateway.remoteGatewayByChain(chainIds.B), gatewayB, "Bank A remote gateway", () =>
+  await ensureValue(() => chainA.gateway.remoteGatewayByChain(chainIds.B), gatewayB, "Bank A remote gateway", () =>
     chainA.gateway.setRemoteGateway(chainIds.B, gatewayB, txOptions()),
   );
-  await ensureValue(chainB.gateway.remoteGatewayByChain(chainIds.A), gatewayA, "Bank B remote gateway", () =>
+  await ensureValue(() => chainB.gateway.remoteGatewayByChain(chainIds.A), gatewayA, "Bank B remote gateway", () =>
     chainB.gateway.setRemoteGateway(chainIds.A, gatewayA, txOptions()),
   );
   await ensureGatewayRoute(chainA.gateway, appA, chainIds.B, appB, "Bank A application route");
@@ -349,68 +350,68 @@ async function configureStack({ chainA, chainB, chainIds, attestors, threshold, 
   await ensureAppRoute(chainA.collateralApp, chainIds.B, appB, canonicalAsset, "Bank A collateral route");
   await ensureAppRoute(chainB.collateralApp, chainIds.A, appA, canonicalAsset, "Bank B collateral route");
   await ensureBigInt(
-    chainA.collateralApp.dailyOutboundLimit(canonicalAsset),
+    () => chainA.collateralApp.dailyOutboundLimit(canonicalAsset),
     DAILY_OUTBOUND_LIMIT,
     "Bank A daily outbound limit",
     () => chainA.collateralApp.setDailyOutboundLimit(canonicalAsset, DAILY_OUTBOUND_LIMIT, txOptions()),
   );
   await ensureBigInt(
-    chainB.collateralApp.dailyOutboundLimit(canonicalAsset),
+    () => chainB.collateralApp.dailyOutboundLimit(canonicalAsset),
     DAILY_OUTBOUND_LIMIT,
     "Bank B daily outbound limit",
     () => chainB.collateralApp.setDailyOutboundLimit(canonicalAsset, DAILY_OUTBOUND_LIMIT, txOptions()),
   );
 
-  await ensureValue(chainB.voucherToken.canonicalAsset(), canonicalAsset, "bind canonical voucher asset", () =>
+  await ensureValue(() => chainB.voucherToken.canonicalAsset(), canonicalAsset, "bind canonical voucher asset", () =>
     chainB.voucherToken.bindCanonicalAsset(canonicalAsset, txOptions()),
   );
-  await ensureRole(chainA.escrowVault, await chainA.escrowVault.APP_ROLE(), appA, "Bank A escrow app role");
-  await ensureRole(chainB.voucherToken, await chainB.voucherToken.APP_ROLE(), appB, "Bank B voucher app role");
+  await ensureRole(chainA.escrowVault, "APP_ROLE", appA, "Bank A escrow app role");
+  await ensureRole(chainB.voucherToken, "APP_ROLE", appB, "Bank B voucher app role");
   await ensureRole(
     chainA.restitutionVault,
-    await chainA.restitutionVault.APP_ROLE(),
+    "APP_ROLE",
     appA,
     "Bank A restitution app role",
   );
   await ensureRole(
     chainB.restitutionVault,
-    await chainB.restitutionVault.APP_ROLE(),
+    "APP_ROLE",
     appB,
     "Bank B restitution app role",
   );
-  await ensureValue(chainA.collateralApp.restitutionVault(), restitutionVaultA, "Bank A restitution vault", () =>
+  await ensureValue(() => chainA.collateralApp.restitutionVault(), restitutionVaultA, "Bank A restitution vault", () =>
     chainA.collateralApp.setRestitutionVault(restitutionVaultA, txOptions()),
   );
-  await ensureValue(chainB.collateralApp.restitutionVault(), restitutionVaultB, "Bank B restitution vault", () =>
+  await ensureValue(() => chainB.collateralApp.restitutionVault(), restitutionVaultB, "Bank B restitution vault", () =>
     chainB.collateralApp.setRestitutionVault(restitutionVaultB, txOptions()),
   );
   await ensureRole(
     chainB.voucherToken,
-    await chainB.voucherToken.TRANSFER_OPERATOR_ROLE(),
+    "TRANSFER_OPERATOR_ROLE",
     await chainB.lendingPool.getAddress(),
     "Bank B voucher lending transfer role",
   );
   await ensureRole(
     chainB.voucherToken,
-    await chainB.voucherToken.TRANSFER_OPERATOR_ROLE(),
+    "TRANSFER_OPERATOR_ROLE",
     restitutionVaultB,
     "Bank B restitution transfer role",
   );
   await ensureRole(
     chainA.policyEngine,
-    await chainA.policyEngine.POLICY_APP_ROLE(),
+    "POLICY_APP_ROLE",
     await chainA.escrowVault.getAddress(),
     "Bank A escrow policy role",
   );
   await ensureRole(
     chainB.policyEngine,
-    await chainB.policyEngine.POLICY_APP_ROLE(),
+    "POLICY_APP_ROLE",
     voucherAsset,
     "Bank B voucher policy role",
   );
   await ensureRole(
     chainB.policyEngine,
-    await chainB.policyEngine.POLICY_APP_ROLE(),
+    "POLICY_APP_ROLE",
     await chainB.lendingPool.getAddress(),
     "Bank B lending policy role",
   );
@@ -418,13 +419,13 @@ async function configureStack({ chainA, chainB, chainIds, attestors, threshold, 
   await ensureIdentityRoles(chainA.identityRegistry, await chainA.identityRegistry.runner.getAddress(), "Bank A");
   await ensureIdentityRoles(chainB.identityRegistry, await chainB.identityRegistry.runner.getAddress(), "Bank B");
   await ensureValue(
-    chainA.policyEngine.identityRegistry(),
+    () => chainA.policyEngine.identityRegistry(),
     await chainA.identityRegistry.getAddress(),
     "Bank A identity policy",
     () => chainA.policyEngine.setIdentityRegistry(chainA.identityRegistry.getAddress(), txOptions()),
   );
   await ensureValue(
-    chainB.policyEngine.identityRegistry(),
+    () => chainB.policyEngine.identityRegistry(),
     await chainB.identityRegistry.getAddress(),
     "Bank B identity policy",
     () => chainB.policyEngine.setIdentityRegistry(chainB.identityRegistry.getAddress(), txOptions()),
@@ -433,68 +434,68 @@ async function configureStack({ chainA, chainB, chainIds, attestors, threshold, 
   await ensureCredential(chainB.identityRegistry, userB, "bank-b-user");
   await ensureCredential(chainA.identityRegistry, restitutionVaultA, "bank-a-restitution-vault");
   await ensureCredential(chainB.identityRegistry, restitutionVaultB, "bank-b-restitution-vault");
-  await ensureBoolean(chainA.policyEngine.accountAllowed(userA), true, "allow Bank A user", () =>
+  await ensureBoolean(() => chainA.policyEngine.accountAllowed(userA), true, "allow Bank A user", () =>
     chainA.policyEngine.setAccountAllowed(userA, true, txOptions()),
   );
-  await ensureBoolean(chainB.policyEngine.accountAllowed(userB), true, "allow Bank B user", () =>
+  await ensureBoolean(() => chainB.policyEngine.accountAllowed(userB), true, "allow Bank B user", () =>
     chainB.policyEngine.setAccountAllowed(userB, true, txOptions()),
   );
   await ensureBoolean(
-    chainA.policyEngine.accountAllowed(restitutionVaultA),
+    () => chainA.policyEngine.accountAllowed(restitutionVaultA),
     true,
     "allow Bank A restitution vault",
     () => chainA.policyEngine.setAccountAllowed(restitutionVaultA, true, txOptions()),
   );
   await ensureBoolean(
-    chainB.policyEngine.accountAllowed(restitutionVaultB),
+    () => chainB.policyEngine.accountAllowed(restitutionVaultB),
     true,
     "allow Bank B restitution vault",
     () => chainB.policyEngine.setAccountAllowed(restitutionVaultB, true, txOptions()),
   );
-  await ensureBoolean(chainA.policyEngine.sourceChainAllowed(chainIds.B), true, "allow Bank B source", () =>
+  await ensureBoolean(() => chainA.policyEngine.sourceChainAllowed(chainIds.B), true, "allow Bank B source", () =>
     chainA.policyEngine.setSourceChainAllowed(chainIds.B, true, txOptions()),
   );
-  await ensureBoolean(chainB.policyEngine.sourceChainAllowed(chainIds.A), true, "allow Bank A source", () =>
+  await ensureBoolean(() => chainB.policyEngine.sourceChainAllowed(chainIds.A), true, "allow Bank A source", () =>
     chainB.policyEngine.setSourceChainAllowed(chainIds.A, true, txOptions()),
   );
-  await ensureBoolean(chainA.policyEngine.unlockAssetAllowed(canonicalAsset), true, "allow canonical unlock", () =>
+  await ensureBoolean(() => chainA.policyEngine.unlockAssetAllowed(canonicalAsset), true, "allow canonical unlock", () =>
     chainA.policyEngine.setUnlockAssetAllowed(canonicalAsset, true, txOptions()),
   );
-  await ensureBoolean(chainB.policyEngine.mintAssetAllowed(canonicalAsset), true, "allow voucher mint", () =>
+  await ensureBoolean(() => chainB.policyEngine.mintAssetAllowed(canonicalAsset), true, "allow voucher mint", () =>
     chainB.policyEngine.setMintAssetAllowed(canonicalAsset, true, txOptions()),
   );
-  await ensureBoolean(chainB.policyEngine.collateralAssetAllowed(voucherAsset), true, "allow voucher collateral", () =>
+  await ensureBoolean(() => chainB.policyEngine.collateralAssetAllowed(voucherAsset), true, "allow voucher collateral", () =>
     chainB.policyEngine.setCollateralAssetAllowed(voucherAsset, true, txOptions()),
   );
-  await ensureBoolean(chainB.policyEngine.debtAssetAllowed(debtAsset), true, "allow debt asset", () =>
+  await ensureBoolean(() => chainB.policyEngine.debtAssetAllowed(debtAsset), true, "allow debt asset", () =>
     chainB.policyEngine.setDebtAssetAllowed(debtAsset, true, txOptions()),
   );
   await ensureBigInt(
-    chainB.policyEngine.voucherExposureCap(canonicalAsset),
+    () => chainB.policyEngine.voucherExposureCap(canonicalAsset),
     EXPOSURE_CAP,
     "voucher exposure cap",
     () => chainB.policyEngine.setVoucherExposureCap(canonicalAsset, EXPOSURE_CAP, txOptions()),
   );
-  await ensureBigInt(chainB.policyEngine.collateralCap(voucherAsset), EXPOSURE_CAP, "collateral cap", () =>
+  await ensureBigInt(() => chainB.policyEngine.collateralCap(voucherAsset), EXPOSURE_CAP, "collateral cap", () =>
     chainB.policyEngine.setCollateralCap(voucherAsset, EXPOSURE_CAP, txOptions()),
   );
   await ensureBigInt(
-    chainB.policyEngine.debtAssetOriginationPrincipalCap(debtAsset),
+    () => chainB.policyEngine.debtAssetOriginationPrincipalCap(debtAsset),
     EXPOSURE_CAP,
     "debt-asset origination-principal cap",
     () => chainB.policyEngine.setDebtAssetOriginationPrincipalCap(debtAsset, EXPOSURE_CAP, txOptions()),
   );
   await ensureBigInt(
-    chainB.policyEngine.accountOriginationPrincipalCap(userB),
+    () => chainB.policyEngine.accountOriginationPrincipalCap(userB),
     USER_BORROW_CAP,
     "account aggregate origination-principal cap",
     () => chainB.policyEngine.setAccountOriginationPrincipalCap(userB, USER_BORROW_CAP, txOptions()),
   );
 
-  await ensureValue(chainB.lendingPool.valuationOracle(), await chainB.oracle.getAddress(), "lending oracle", () =>
+  await ensureValue(() => chainB.lendingPool.valuationOracle(), await chainB.oracle.getAddress(), "lending oracle", () =>
     chainB.lendingPool.setValuationOracle(chainB.oracle.getAddress(), txOptions()),
   );
-  await ensureBigInt(chainB.oracle.maxStaleness(), 30n * 24n * 60n * 60n, "oracle max staleness", () =>
+  await ensureBigInt(() => chainB.oracle.maxStaleness(), 30n * 24n * 60n * 60n, "oracle max staleness", () =>
     chainB.oracle.setMaxStaleness(30n * 24n * 60n * 60n, txOptions()),
   );
   await ensureFreshOraclePrice(chainB.oracle, voucherAsset, ONE_E18, "voucher price");
@@ -557,10 +558,10 @@ async function deployOrAttach(context, chainKey, name, artifact, args) {
 }
 
 async function ensureSource(client, sourceChainId, attestors, threshold, label) {
-  const status = BigInt(await client.status(sourceChainId));
+  const status = BigInt(await readWithTransientRpcRetry(() => client.status(sourceChainId), { label }));
   if (status === 1n) {
-    const epoch = await client.currentAttestorEpoch(sourceChainId);
-    const configured = await client.attestorSet(sourceChainId, epoch);
+    const epoch = await readWithTransientRpcRetry(() => client.currentAttestorEpoch(sourceChainId), { label });
+    const configured = await readWithTransientRpcRetry(() => client.attestorSet(sourceChainId, epoch), { label });
     const configuredThreshold = Number(configured.threshold ?? configured[0]);
     const configuredAttestors = configured.attestors ?? configured[2];
     if (configuredThreshold !== threshold || !sameAddressList(configuredAttestors, attestors)) {
@@ -573,14 +574,14 @@ async function ensureSource(client, sourceChainId, attestors, threshold, label) 
 }
 
 async function ensureGatewayRoute(gateway, localApp, remoteChainId, remoteApp, label) {
-  const key = await gateway.routeKey(localApp, remoteChainId, remoteApp);
-  await ensureBoolean(gateway.applicationRoutes(key), true, label, () =>
+  const key = await readWithTransientRpcRetry(() => gateway.routeKey(localApp, remoteChainId, remoteApp), { label });
+  await ensureBoolean(() => gateway.applicationRoutes(key), true, label, () =>
     gateway.setApplicationRoute(localApp, remoteChainId, remoteApp, true, txOptions()),
   );
 }
 
 async function ensureAppRoute(app, remoteChainId, remoteApp, canonicalAsset, label) {
-  const route = await app.remoteRoutes(remoteChainId);
+  const route = await readWithTransientRpcRetry(() => app.remoteRoutes(remoteChainId), { label });
   const matches =
     route.enabled &&
     sameAddress(route.remoteApplication, remoteApp) &&
@@ -593,13 +594,13 @@ async function ensureAppRoute(app, remoteChainId, remoteApp, canonicalAsset, lab
 }
 
 async function ensureIdentityRoles(registry, admin, label) {
-  await ensureRole(registry, await registry.IDENTITY_ISSUER_ROLE(), admin, `${label} identity issuer role`);
-  await ensureRole(registry, await registry.COMPLIANCE_ROLE(), admin, `${label} compliance role`);
-  await ensureRole(registry, await registry.GUARDIAN_ROLE(), admin, `${label} identity guardian role`);
+  await ensureRole(registry, "IDENTITY_ISSUER_ROLE", admin, `${label} identity issuer role`);
+  await ensureRole(registry, "COMPLIANCE_ROLE", admin, `${label} compliance role`);
+  await ensureRole(registry, "GUARDIAN_ROLE", admin, `${label} identity guardian role`);
 }
 
 async function ensureCredential(registry, account, reference) {
-  const status = BigInt(await registry.effectiveStatus(account));
+  const status = BigInt(await readWithTransientRpcRetry(() => registry.effectiveStatus(account), { label: `credential ${reference}` }));
   if (status !== 0n) {
     if (status !== 1n) throw new Error(`Credential for ${account} is not active (status=${status})`);
     return;
@@ -618,22 +619,23 @@ async function ensureCredential(registry, account, reference) {
   );
 }
 
-async function ensureRole(contract, role, account, label) {
-  if (await contract.hasRole(role, account)) return;
+async function ensureRole(contract, roleName, account, label) {
+  const role = await readWithTransientRpcRetry(() => contract[roleName](), { label: `${label} identifier` });
+  if (await readWithTransientRpcRetry(() => contract.hasRole(role, account), { label })) return;
   await txStep(label, () => contract.grantRole(role, account, txOptions()));
 }
 
 async function ensureMinimumBalance(token, account, minimum, label) {
-  const balance = BigInt(await token.balanceOf(account));
+  const balance = BigInt(await readWithTransientRpcRetry(() => token.balanceOf(account), { label }));
   if (balance >= minimum) return;
   await txStep(label, () => token.mint(account, minimum - balance, txOptions()));
 }
 
 async function ensureFreshOraclePrice(oracle, asset, expectedPrice, label) {
   const [price, updatedAt, maxStaleness, block] = await Promise.all([
-    oracle.assetPriceE18(asset),
-    oracle.assetPriceUpdatedAt(asset),
-    oracle.maxStaleness(),
+    readWithTransientRpcRetry(() => oracle.assetPriceE18(asset), { label }),
+    readWithTransientRpcRetry(() => oracle.assetPriceUpdatedAt(asset), { label }),
+    readWithTransientRpcRetry(() => oracle.maxStaleness(), { label }),
     readLatestBlock(oracle.runner.provider, { label: `${label} oracle timestamp block` }),
   ]);
   const refreshBefore = BigInt(updatedAt) + BigInt(maxStaleness) / 2n;
@@ -641,19 +643,19 @@ async function ensureFreshOraclePrice(oracle, asset, expectedPrice, label) {
   await txStep(label, () => oracle.setPrice(asset, expectedPrice, txOptions()));
 }
 
-async function ensureValue(currentPromise, expected, label, send) {
-  const current = await currentPromise;
+export async function ensureValue(readCurrent, expected, label, send) {
+  const current = await readWithTransientRpcRetry(readCurrent, { label });
   if (sameAddress(current, expected)) return;
   await txStep(label, send);
 }
 
-async function ensureBoolean(currentPromise, expected, label, send) {
-  if (Boolean(await currentPromise) === expected) return;
+export async function ensureBoolean(readCurrent, expected, label, send) {
+  if (Boolean(await readWithTransientRpcRetry(readCurrent, { label })) === expected) return;
   await txStep(label, send);
 }
 
-async function ensureBigInt(currentPromise, expected, label, send) {
-  if (BigInt(await currentPromise) === BigInt(expected)) return;
+export async function ensureBigInt(readCurrent, expected, label, send) {
+  if (BigInt(await readWithTransientRpcRetry(readCurrent, { label })) === BigInt(expected)) return;
   await txStep(label, send);
 }
 

@@ -28,6 +28,7 @@ test("browser preflight fails closed for a missing executable or shared library"
   assert.equal(missingExecutable.status, "failed");
 
   const missingLibrary = evaluateBrowserRuntime({
+    platform: "linux",
     executablePath: "/playwright/chromium",
     executablePresent: true,
     lddOk: true,
@@ -39,6 +40,7 @@ test("browser preflight fails closed for a missing executable or shared library"
 
 test("browser preflight accepts a present executable with resolved dependencies", () => {
   const result = evaluateBrowserRuntime({
+    platform: "linux",
     executablePath: "/playwright/chromium",
     executablePresent: true,
     lddOk: true,

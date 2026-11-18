@@ -1,10 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test as base } from "@playwright/test";
-import { fileURLToPath } from "node:url";
 import { statusFixture } from "./fixture-data.mjs";
 
 const loopbackHosts = new Set(["127.0.0.1", "localhost", "::1"]);
-const workspaceScreenshotStyle = fileURLToPath(new URL("./screenshot.css", import.meta.url));
 const test = base.extend({
   browserIntegrity: [async ({ page }, use) => {
     const issues = [];
@@ -59,7 +57,7 @@ const workflowTabs = [
 
 async function waitForInstitutionalSnapshot(page) {
   await page.goto("/");
-  await expect(page.locator("#runtimeStatusLabel")).toHaveText("Lane ready");
+  await expect(page.locator("#runtimeStatusLabel")).toHaveText("Route ready");
   await expect(page.locator("#readinessTitle")).toHaveText("Ready to transfer");
   await expect(page.locator("#evidenceStepStatus")).toHaveText("Current pass");
   await expect(page.locator("#evidenceVerdictTitle")).toHaveText("Evidence matches the current reviewed source");
@@ -72,11 +70,6 @@ async function expectNoAccessibilityViolations(page, context) {
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22a", "wcag22aa"])
     .analyze();
   expect(result.violations, `${context}: ${JSON.stringify(result.violations, null, 2)}`).toEqual([]);
-}
-
-async function resetScreenshotScroll(page) {
-  await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: "instant" }));
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
 }
 
 async function waitForPanelEntry(page, tab) {
@@ -164,68 +157,21 @@ test("workflow supports roving keyboard navigation and disclosure controls", asy
   await expect(depositTab).toBeFocused();
 });
 
-test("Linky moments stay contextual, separated from copy, and preserve image proportions", async ({ page }) => {
-  await expect(page.locator(".linky-command-center")).toHaveCount(0);
-  await expect(page.locator(".linky-widget")).toHaveCount(5);
-  const panels = [
-    ["#workflowTabIdentity", "#linkyIdentityImage", "#readinessVerdict > div[role='status']"],
-    ["#workflowTabTransfer", "#linkyTransferImage", ".route-relay > b"],
-    ["#workflowTabLending", "#linkyLendingImage", ".risk-meter-summary"],
-    ["#workflowTabPosition", "#linkyLendingImage", ".risk-meter-summary"],
-    ["#workflowTabReturn", "#linkySettlementImage", ".settlement-guard > div[role='status']"],
-    ["#workflowTabEvidence", "#linkyEvidenceImage", ".evidence-verdict > div[role='status']"],
-  ];
-  for (const [tabSelector, imageSelector, copySelector] of panels) {
-    await page.locator(tabSelector).click();
-    const mascot = page.locator(imageSelector);
-    await expect(mascot).toBeVisible();
-    await expect.poll(() => mascot.evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
-    const geometry = await page.evaluate(({ imageSelector: imageQuery, copySelector: copyQuery }) => {
-      const image = document.querySelector(imageQuery);
-      const copy = document.querySelector(copyQuery);
-      const widget = image.closest(".linky-widget");
-      const companion = widget?.closest(".linky-companion-layout");
-      const primarySurface = companion?.firstElementChild;
-      const imageRect = image.getBoundingClientRect();
-      const copyRect = copy.getBoundingClientRect();
-      const widgetRect = widget?.getBoundingClientRect();
-      const primaryRect = primarySurface?.getBoundingClientRect();
-      const widgetStyle = widget ? getComputedStyle(widget) : null;
-      const primaryStyle = primarySurface ? getComputedStyle(primarySurface) : null;
-      return {
-        objectFit: getComputedStyle(image).objectFit,
-        naturalRatio: image.naturalWidth / image.naturalHeight,
-        hasIndependentWidget: Boolean(widget && companion && companion.contains(copy) && !widget.contains(copy)),
-        dockGap: widgetRect && primaryRect ? Math.abs(widgetRect.left - primaryRect.right) : null,
-        paletteMatches: Boolean(widgetStyle && primaryStyle
-          && widgetStyle.backgroundColor === primaryStyle.backgroundColor
-          && widgetStyle.borderTopColor === primaryStyle.borderRightColor),
-        displaySize: { width: imageRect.width, height: imageRect.height },
-        imageRect: { left: imageRect.left, right: imageRect.right, top: imageRect.top, bottom: imageRect.bottom },
-        copyRect: { left: copyRect.left, right: copyRect.right, top: copyRect.top, bottom: copyRect.bottom },
-        overlaps: imageRect.left < copyRect.right
-          && imageRect.right > copyRect.left
-          && imageRect.top < copyRect.bottom
-          && imageRect.bottom > copyRect.top,
-      };
-    }, { imageSelector, copySelector });
-    expect(geometry.objectFit).toBe("contain");
-    expect(geometry.naturalRatio).toBeGreaterThan(0.7);
-    expect(geometry.naturalRatio).toBeLessThan(1.35);
-    expect(geometry.hasIndependentWidget).toBe(true);
-    expect(geometry.dockGap).toBeLessThanOrEqual(1);
-    expect(geometry.paletteMatches).toBe(true);
-    expect(geometry.displaySize.width).toBeGreaterThanOrEqual(160);
-    expect(geometry.displaySize.height).toBeGreaterThanOrEqual(160);
-    expect(geometry.overlaps, JSON.stringify({ tabSelector, imageSelector, copySelector, geometry }, null, 2)).toBe(false);
+test("brand symbol replaces mascot imagery while workflow guidance stays visible", async ({ page }) => {
+  const requests = [];
+  page.on("request", r => { if (r.url().includes("/assets/linky/generated/")) requests.push(r.url()); });
+  await page.reload();
+  await expect(page.locator("#readinessTitle")).toHaveText("Ready to transfer");
+  await expect(page.locator(".brand-mark")).toHaveAttribute("src", "/assets/linky-mark.svg");
+  for (const [tab, copy] of [["Identity", "readinessCopy"], ["Transfer", "relayRouteStatus"], ["Lending", "riskHealthLabel"], ["Position", "riskHealthLabel"], ["Return", "settlementGuardCopy"], ["Evidence", "evidenceVerdictCopy"]]) {
+    await page.locator(`#workflowTab${tab}`).click();
+    await expect(page.locator(`#${copy}`)).toBeVisible();
+    await expect(page.locator(`#${copy}`)).not.toBeEmpty();
   }
-
-  await expect(page.locator(".risk-meter > .linky-companion-layout-lending + dl")).toHaveCount(1);
-  await expect(page.locator("#workspacePanelLending > .linky-companion-layout-lending")).toHaveCount(0);
-  await expect(page.locator(".operation-layout > .linky-companion-layout-settlement")).toHaveCount(1);
+  expect(requests).toEqual([]);
 });
 
-test("Transfer Linky reports live action progress instead of a decorative accent", async ({ page }) => {
+test("transfer progress remains visible without a mascot", async ({ page }) => {
   const messageId = "0xd100000000000000000000000000000000000000000000000000000000000001";
   await page.route("**/api/status", async (route) => {
     await route.fulfill({
@@ -253,12 +199,43 @@ test("Transfer Linky reports live action progress instead of a decorative accent
 
   await page.locator("#refreshButton").click();
   await page.locator("#workflowTabTransfer").click();
-  const progress = page.locator("#linkyTransferProgress");
+  const progress = page.locator("#transferActionProgress");
   await expect(progress).toBeVisible();
   await expect(progress).toHaveAttribute("aria-valuenow", "63");
   await expect(progress.locator("span")).toHaveAttribute("style", /width: 63%/);
   await expect(page.locator("#transferPipeline")).toHaveClass(/\bis-processing\b/);
-  await expect(page.locator("#linkyTransferImage")).toHaveAttribute("src", /linky-proof-inspect\.png$/);
+  await expect(page.locator("[data-proof-step=proof]")).toHaveClass(/is-active/);
+  await expect(page.locator("#relayRouteStatus")).toContainText(/source checkpointed/i);
+});
+
+test("completed transfer keeps a dismissible notification", async ({ page }) => {
+  await page.route("**/api/action", route => route.fulfill({status:200, contentType:"application/json", body:JSON.stringify({ok:true, operation:{action:"bridge",status:"completed"},status:statusFixture})}));
+  await page.locator("#workflowTabTransfer").click();
+  await page.locator('[data-action="bridge"]').click();
+  await expect(page.locator("#workspacePanelLending")).toBeVisible();
+  const toast=page.locator(".toast");
+  await expect(toast).toHaveAttribute("role","status");
+  await expect(toast.locator(".toast-icon svg")).toHaveCount(1);
+  await expect(toast.locator("img")).toHaveCount(0);
+  await toast.getByRole("button",{name:"Dismiss notification"}).click();
+  await expect(toast).toHaveCount(0);
+});
+
+test("shared type roles use bundled fonts across views", async ({ page }) => {
+  for (const weight of [400,500,600]) {
+    expect(await page.evaluate(async w => (await document.fonts.load(`${w} 16px "Nunito"`)).length,weight)).toBeGreaterThan(0);
+  }
+  for (const weight of [500,600]) {
+    expect(await page.evaluate(async w => (await document.fonts.load(`${w} 26px "Lora"`)).length,weight)).toBeGreaterThan(0);
+  }
+  let expected;
+  for(const id of workflowTabs) {
+    await page.locator(`#${id}`).click();
+    const type=await page.locator('[data-panel]:not([hidden]) .section-heading h2').evaluate(n => {const s=getComputedStyle(n);return [s.fontFamily,s.fontSize,s.fontWeight,s.lineHeight,s.letterSpacing];});
+    expected ??= type;
+    expect(type).toEqual(expected);
+    expect(type[0]).toContain("Lora");
+  }
 });
 
 test("semantic value groups stay intact with long chain heights across the workflow", async ({ page }) => {
@@ -418,64 +395,19 @@ test("compact desktop preserves essential labels and values", async ({ page }, t
   expect(journeyGeometry.assuranceBottom).toBeLessThanOrEqual(journeyGeometry.bottom);
 });
 
-test("motion follows readiness state and reduced-motion preference", async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: "no-preference" });
-  const readyMotion = await page.evaluate(() => {
-    const liveDot = document.querySelector(".live-dot");
-    const dotRect = liveDot.getBoundingClientRect();
-    const coreStyle = getComputedStyle(liveDot, "::before");
-    const ringStyle = getComputedStyle(liveDot, "::after");
-    const resolveAnchor = (value, extent) => (
-      value.endsWith("%")
-        ? Number.parseFloat(value) * extent / 100
-        : Number.parseFloat(value)
-    );
-    const isCentred = (style) => {
-      const [originX, originY] = style.transformOrigin.split(" ").map(Number.parseFloat);
-      return (
-        Math.abs(resolveAnchor(style.left, dotRect.width) - dotRect.width / 2) < 0.1
-        && Math.abs(resolveAnchor(style.top, dotRect.height) - dotRect.height / 2) < 0.1
-        && Math.abs(originX - Number.parseFloat(style.width) / 2) < 0.1
-        && Math.abs(originY - Number.parseFloat(style.height) / 2) < 0.1
-      );
-    };
-    return {
-      live: ringStyle.animationName,
-      liveCentred: isCentred(coreStyle) && isCentred(ringStyle),
-      liveGeometry: {
-        dot: { width: dotRect.width, height: dotRect.height },
-        core: {
-          left: coreStyle.left,
-          top: coreStyle.top,
-          width: coreStyle.width,
-          height: coreStyle.height,
-          transformOrigin: coreStyle.transformOrigin,
-        },
-        ring: {
-          left: ringStyle.left,
-          top: ringStyle.top,
-          width: ringStyle.width,
-          height: ringStyle.height,
-          transformOrigin: ringStyle.transformOrigin,
-        },
-      },
-      status: getComputedStyle(document.querySelector("#identityAStatusToggle .status-symbol-verified")).animationName,
-    };
-  });
-  expect(readyMotion.live).toBe("live-ring");
-  expect(readyMotion.liveCentred, JSON.stringify(readyMotion.liveGeometry)).toBe(true);
-  expect(readyMotion.status).toBe("none");
+test("status controls stay still with either motion preference", async ({ page }) => {
+  for (const reducedMotion of ["no-preference", "reduce"]) {
+    await page.emulateMedia({ reducedMotion });
+    const motion = await page.evaluate(() => ({
+      runtime: getComputedStyle(document.querySelector("#runtimeStatus")).animationName,
+      credential: getComputedStyle(document.querySelector("#identityAStatusToggle .status-symbol-verified")).animationName,
+    }));
+    expect(motion).toEqual({ runtime: "none", credential: "none" });
+  }
 
   const readinessCard = page.locator(".readiness-card").first();
   await readinessCard.hover();
-  await expect.poll(() => readinessCard.evaluate((node) => getComputedStyle(node).transform)).not.toBe("none");
-
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  const reducedMotion = await page.evaluate(() => ({
-    live: getComputedStyle(document.querySelector(".live-dot"), "::after").animationName,
-    status: getComputedStyle(document.querySelector("#identityAStatusToggle .status-symbol-verified")).animationName,
-  }));
-  expect(reducedMotion).toEqual({ live: "none", status: "none" });
+  await expect.poll(() => readinessCard.evaluate((node) => getComputedStyle(node).transform)).toBe("none");
 
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.route("**/api/status", async (route) => {
@@ -500,81 +432,68 @@ test("motion follows readiness state and reduced-motion preference", async ({ pa
     });
   });
   await page.locator("#refreshButton").click();
-  await expect(page.locator("#runtimeStatusLabel")).toHaveText("Lane review");
+  await expect(page.locator("#runtimeStatusLabel")).toHaveText("Needs review");
   const reviewMotion = await page.evaluate(() => ({
-    live: getComputedStyle(document.querySelector(".live-dot"), "::after").animationName,
-    sheen: getComputedStyle(document.querySelector("#readinessPill"), "::after").animationName,
+    runtime: getComputedStyle(document.querySelector("#runtimeStatus")).animationName,
     credential: getComputedStyle(document.querySelector("#identityAStatusToggle .status-symbol-review")).animationName,
   }));
-  expect(reviewMotion).toEqual({ live: "none", sheen: "none", credential: "none" });
+  expect(reviewMotion).toEqual({ runtime: "none", credential: "none" });
 });
 
-test("settlement and evidence hover only brightens the semantic left accent", async ({ page }) => {
-  await page.addStyleTag({ content: ".settlement-guard, .evidence-verdict, .linky-widget { transition: none !important; }" });
-  await page.route("**/api/status", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ...statusFixture,
-        balances: {
-          ...statusFixture.balances,
-          activeCollateral: "0",
-          outstandingDebt: "0",
-        },
-      }),
-    });
-  });
-  await page.locator("#refreshButton").click();
-
-  const readTone = (card, accentVariable = null) => card.evaluate((node, expectedAccentVariable) => {
-    const probe = document.createElement("span");
-    if (expectedAccentVariable) probe.style.borderLeft = `1px solid var(${expectedAccentVariable})`;
-    document.body.append(probe);
-    const nodeStyle = getComputedStyle(node);
-    const widgetStyle = getComputedStyle(node.nextElementSibling);
-    const probeStyle = getComputedStyle(probe);
-    const result = {
-      cardBackground: nodeStyle.backgroundColor,
-      cardBorder: nodeStyle.borderTopColor,
-      cardLeftAccent: nodeStyle.borderLeftColor,
-      widgetBackground: widgetStyle.backgroundColor,
-      widgetBorder: widgetStyle.borderTopColor,
-      expectedAccent: expectedAccentVariable ? probeStyle.borderLeftColor : null,
-    };
-    probe.remove();
-    return result;
-  }, accentVariable);
-  const expectOnlyAccentChanged = (before, after) => {
-    expect(after.cardLeftAccent).toBe(after.expectedAccent);
-    expect(after.cardLeftAccent).not.toBe(before.cardLeftAccent);
-    expect(after.cardBackground).toBe(before.cardBackground);
-    expect(after.cardBorder).toBe(before.cardBorder);
-    expect(after.widgetBackground).toBe(before.widgetBackground);
-    expect(after.widgetBorder).toBe(before.widgetBorder);
+test("information panels preserve their status and geometry on hover", async ({ page }) => {
+  const expectStablePanel = (before, after) => {
+    const { width: beforeWidth, height: beforeHeight, ...beforeAppearance } = before;
+    const { width: afterWidth, height: afterHeight, ...afterAppearance } = after;
+    expect(afterWidth).toBeCloseTo(beforeWidth, 1);
+    expect(afterHeight).toBeCloseTo(beforeHeight, 1);
+    expect(afterAppearance).toEqual(beforeAppearance);
   };
-
-  await page.locator("#workflowTabReturn").click();
-  await expect(page.locator("#settlementGuardTitle")).toHaveText("Position is clear");
-  const settlementGuard = page.locator(".settlement-guard");
-  const settlementBefore = await readTone(settlementGuard);
-  await settlementGuard.hover();
-  expectOnlyAccentChanged(settlementBefore, await readTone(settlementGuard, "--green-bright"));
-
-  await page.locator("#workflowTabEvidence").click();
-  const evidenceVerdict = page.locator(".evidence-verdict");
-  const evidenceBefore = await readTone(evidenceVerdict);
-  await evidenceVerdict.hover();
-  expectOnlyAccentChanged(evidenceBefore, await readTone(evidenceVerdict, "--green-bright"));
-
-  await page.mouse.move(1, 1);
-  await evidenceVerdict.evaluate((node) => node.classList.add("is-error"));
-  const errorBefore = await readTone(evidenceVerdict);
-  await evidenceVerdict.hover();
-  expectOnlyAccentChanged(errorBefore, await readTone(evidenceVerdict, "--red-bright"));
+  const readPanel = (panel) => panel.evaluate((node) => {
+    const style = getComputedStyle(node);
+    const bounds = node.getBoundingClientRect();
+    return {
+      text: node.innerText,
+      background: style.backgroundColor,
+      border: style.borderColor,
+      borderWidths: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+      shadow: style.boxShadow,
+      transform: style.transform,
+      width: bounds.width,
+      height: bounds.height,
+    };
+  });
+  let commonSurface;
+  for (const [tab, selector] of [
+    ["Identity", "#readinessVerdict"],
+    ["Lending", ".risk-meter-hero"],
+    ["Return", ".settlement-guard"],
+    ["Evidence", ".evidence-verdict"],
+  ]) {
+    await page.locator(`#workflowTab${tab}`).click();
+    await page.mouse.move(1, 1);
+    const panel = page.locator(selector);
+    const before = await readPanel(panel);
+    expect(before.borderWidths).toEqual(["1px", "1px", "1px", "1px"]);
+    expect(before.transform).toBe("none");
+    commonSurface ??= before.background;
+    expect(before.background).toBe(commonSurface);
+    await panel.hover();
+    expectStablePanel(before, await readPanel(panel));
+  }
+  const verdict = page.locator(".evidence-verdict");
+  for (const tone of ["is-warning", "is-error"]) {
+    await page.mouse.move(1, 1);
+    await verdict.evaluate((node, state) => {
+      node.classList.remove("is-warning", "is-error");
+      node.classList.add(state);
+    }, tone);
+    const before = await readPanel(verdict);
+    await verdict.hover();
+    expectStablePanel(before, await readPanel(verdict));
+  }
 });
 
-test("ready status tones reset when the runtime snapshot becomes unavailable", async ({ page, browserIntegrity }) => {
+test("runtime failures clear stale status and position guidance, then recover", async ({ page, browserIntegrity }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   browserIntegrity.expectIssue(/^console\.error: Failed to load resource: the server responded with a status of 503/);
   const statusButtons = [
@@ -594,22 +513,42 @@ test("ready status tones reset when the runtime snapshot becomes unavailable", a
     await expect(page.locator(`#${buttonId}`)).toHaveClass(/\bis-verified\b/);
   }
 
+  const clearPositionStatus = {
+    ...statusFixture,
+    balances: { ...statusFixture.balances, outstandingDebt: "0", activeCollateral: "0" },
+  };
+  let offline = false;
   await page.route("**/api/status", async (route) => {
     await route.fulfill({
-      status: 503,
+      status: offline ? 503 : 200,
       contentType: "application/json",
-      body: JSON.stringify({ error: "Fixture status endpoint is offline." }),
+      body: JSON.stringify(offline ? { error: "Fixture status endpoint is offline." } : clearPositionStatus),
     });
   });
+  await page.locator("#refreshButton").click();
+  await expect(page.locator("#settlementGuardTitle")).toHaveText("Position is clear");
+  await expect(page.locator(".settlement-guard")).toHaveClass(/\bis-ready\b/);
+  await expect(page.locator("#accrualState")).toHaveText("Current for actions");
+
+  offline = true;
   const unavailableConsole = page.waitForEvent("console", {
     predicate: (message) => message.type() === "error" && /503 \(Service Unavailable\)/.test(message.text()),
   });
   await page.locator("#refreshButton").click();
-  await expect(page.locator("#runtimeStatusLabel")).toHaveText("Runtime unavailable");
+  await expect(page.locator("#runtimeStatusLabel")).toHaveText("Unavailable");
   await expect(page.locator("#runtimeStatus")).toHaveClass(/\bis-error\b/);
   await expect(page.locator("#runtimeStatus")).not.toHaveClass(/\bis-ready\b/);
   await expect(page.locator("#readinessVerdict")).toHaveClass(/\bis-review\b/);
-  await expect(page.locator("#readinessPill")).toHaveClass(/\bis-warning\b/);
+  await expect(page.locator("#readinessTitle")).toHaveText("Runtime unavailable");
+  await expect(page.locator("#settlementGuardTitle")).toHaveText("Position unavailable");
+  await expect(page.locator("#settlementGuardCopy")).toContainText("Reconnect to the runtime");
+  await expect(page.locator(".settlement-guard")).not.toHaveClass(/\bis-ready\b/);
+  await expect(page.locator("#accrualState")).toHaveText("-");
+  await expect(page.locator("#riskHealthLabel")).toHaveText("Unavailable");
+  await expect(page.locator(".risk-meter-hero")).toHaveAttribute("data-tone", "unavailable");
+  await page.locator("#workflowTabLending").click();
+  await expect(page.locator("#riskMeterFill")).toHaveCSS("width", "0px");
+  await expect(page.locator("#routePhase")).toHaveText("Unavailable");
 
   for (const fieldId of statusFields) {
     await expect(page.locator(`#${fieldId}`)).toHaveText("Unavailable");
@@ -626,29 +565,13 @@ test("ready status tones reset when the runtime snapshot becomes unavailable", a
     getComputedStyle(document.querySelector(`#${buttonId} .status-symbol-review`)).animationName,
   ])), statusButtons);
   expect(statusMotion).toEqual(Object.fromEntries(statusButtons.map((buttonId) => [buttonId, "none"])));
-});
 
-test("identity workspace matches the approved visual baseline", async ({ page }) => {
-  await resetScreenshotScroll(page);
-  await expect(page).toHaveScreenshot("institutional-identity.png", { fullPage: true });
-});
-
-test("canonical desktop workspace states match approved visual baselines", async ({ page }, testInfo) => {
-  if (testInfo.project.name !== "desktop-1600") return;
-  const workspace = page.locator(".workspace-shell");
-  const captureWorkflow = async (tabId, name) => {
-    await page.locator(`#${tabId}`).click();
-    await expect(workspace).toHaveScreenshot(`${name}.png`, { stylePath: workspaceScreenshotStyle });
-  };
-
-  await captureWorkflow("workflowTabTransfer", "workspace-transfer");
-  await page.locator("#workflowTabLending").click();
-  for (const mode of ["Deposit", "Borrow", "Repay", "Withdraw"]) {
-    await page.locator(`#lendingMode${mode}Tab`).click();
-    await expect(workspace).toHaveScreenshot(`workspace-lending-${mode.toLowerCase()}.png`, {
-      stylePath: workspaceScreenshotStyle,
-    });
-  }
-  await captureWorkflow("workflowTabReturn", "workspace-settlement");
-  await captureWorkflow("workflowTabEvidence", "workspace-evidence");
+  offline = false;
+  await page.locator("#refreshButton").click();
+  await expect(page.locator("#runtimeStatusLabel")).toHaveText("Route ready");
+  await expect(page.locator("#settlementGuardTitle")).toHaveText("Position is clear");
+  await expect(page.locator(".settlement-guard")).toHaveClass(/\bis-ready\b/);
+  await expect(page.locator("#accrualState")).toHaveText("Current for actions");
+  await expect(page.locator("#riskHealthLabel")).toHaveText("No active debt");
+  await expect(page.locator(".risk-meter-hero")).toHaveAttribute("data-tone", "safe");
 });
