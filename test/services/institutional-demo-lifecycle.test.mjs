@@ -384,6 +384,25 @@ test("runtime returns the stored recoverable operation for action and amount ide
   assert.equal(runtime.activeOperation, null);
 });
 
+test("completed full repayment replays its recorded result despite a changed debt quote", async (t) => {
+  const runtime = new InstitutionalDemoRuntime({ logger: { error() {} }, activityWriter: async () => {} });
+  t.after(() => runtime.close());
+  const result = { id: "operation-full-repay", action: "repayAll", amount: "100.0001", status: "completed" };
+  const requestId = "request-full-repay-0001";
+  runtime.context = {
+    actionJournal: {
+      get: () => ({ requestId, action: "repayAll", amount: "100.0001", status: "completed", result }),
+      async close() {},
+    },
+    providers: {}, users: {}, owners: {}, relayers: {},
+  };
+  runtime.status = async () => ({ ready: true, balances: { outstandingDebt: "0" } });
+  const replay = await runtime.execute({ requestId, action: "repayAll", amount: "100" });
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.operation, result);
+  assert.equal(runtime.activeOperation, null);
+});
+
 test("runtime unresolved-action fence rejects before an approval prerequisite can consume its nonce", async (t) => {
   const runtime = new InstitutionalDemoRuntime({ logger: { error() {} } });
   t.after(() => runtime.close());

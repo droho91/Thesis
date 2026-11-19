@@ -53,8 +53,9 @@ export function compactTokenAmount(value, { maximumFractionDigits = 4 } = {}) {
   const fullFraction = remainder.toString().padStart(TOKEN_DECIMALS, "0");
   const visible = fullFraction.slice(0, maximumFractionDigits).replace(/0+$/, "");
   const hiddenNonZero = /[1-9]/.test(fullFraction.slice(maximumFractionDigits));
-  if (!visible && hiddenNonZero) return `<0.${"0".repeat(Math.max(0, maximumFractionDigits - 1))}1`;
-  return `${groupedWhole}.${visible}${hiddenNonZero ? "…" : ""}`;
+  if (whole === 0n && !visible && hiddenNonZero) return `<0.${"0".repeat(Math.max(0, maximumFractionDigits - 1))}1`;
+  const displayedFraction = visible || fullFraction.slice(0, maximumFractionDigits);
+  return `${groupedWhole}.${displayedFraction}${hiddenNonZero ? "…" : ""}`;
 }
 
 export function formatBasisPoints(value) {

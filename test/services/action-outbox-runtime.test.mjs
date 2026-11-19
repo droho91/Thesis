@@ -7,6 +7,7 @@ import { ethers } from "ethers";
 import { InstitutionalActionJournal } from "../../services/institutional-action-journal.mjs";
 import {
   ActiveExecutionTracker,
+  InstitutionalDemoRuntime,
   executeDurableTransaction,
   recoverUnresolvedActionJournal,
   transactionOutcomeIsUncertain,
@@ -111,7 +112,7 @@ class FakeSigner {
   }
 }
 
-async function fixture() {
+async function fixture(action = "deposit") {
   const directory = await mkdtemp(join(WRITABLE_TEMP_ROOT, "institutional-outbox-runtime-"));
   const path = join(directory, "action-journal.json");
   const context = {
@@ -130,8 +131,8 @@ async function fixture() {
   };
   await context.journal.prepare({
     requestId: REQUEST_ID,
-    action: "deposit",
-    label: "Activate voucher collateral",
+    action,
+    label: action === "repayAll" ? "Repay complete balance" : "Activate voucher collateral",
     lane: "Bank B",
     amount: "25.0",
   });
@@ -163,6 +164,54 @@ test("demo runtime facade preserves the durable action module exports", () => {
   assert.equal(executeDurableTransaction, directExecuteDurableTransaction);
   assert.equal(recoverUnresolvedActionJournal, directRecoverUnresolvedActionJournal);
   assert.equal(transactionOutcomeIsUncertain, directTransactionOutcomeIsUncertain);
+});
+
+test("full repayment renews a quote-sized allowance and records the actual accrued payment", async (t) => {
+  const context = await fixture("repayAll");
+  const runtime = new InstitutionalDemoRuntime({ activityWriter: async () => {} });
+  t.after(async () => { await runtime.close(); await context.cleanup(); });
+  const provider = new FakeProvider();
+  const signer = new FakeSigner(ethers.Wallet.createRandom(), provider);
+  const poolInterface = new ethers.Interface([
+    "function repayAll()",
+    "event Repaid(address indexed payer, address indexed borrower, uint256 amount, uint256 shares)",
+  ]);
+  const payment = ethers.parseEther("25.0001");
+  const log = poolInterface.encodeEventLog(poolInterface.getEvent("Repaid"), [signer.wallet.address, signer.wallet.address, payment, 25n]);
+  const mine = provider.mine.bind(provider);
+  provider.mine = (hash, status) => {
+    mine(hash, status);
+    provider.receipts.get(hash).logs = [log];
+  };
+  const approvals = [];
+  runtime.context = {
+    actionJournal: context.journal,
+    manifest: { accounts: { B: { user: signer.wallet.address } } },
+    contracts: {
+      debtTokenB: {
+        async balanceOf() { return ethers.parseEther("30"); },
+        async allowance() { return ethers.parseEther("25"); },
+        async approve(spender, amount) {
+          approvals.push({ spender, amount });
+          return { async wait() { return { status: 1 }; } };
+        },
+      },
+      lendingPoolB: {
+        runner: signer,
+        interface: poolInterface,
+        async getAddress() { return DESTINATION; },
+        repayAll: { async populateTransaction() { return { to: DESTINATION, data: poolInterface.encodeFunctionData("repayAll"), gasLimit: 100_000n }; } },
+      },
+    },
+    providers: {}, users: {}, owners: {}, relayers: {},
+  };
+  runtime.status = async () => ({ ready: true });
+  const result = await runtime.execute({ requestId: REQUEST_ID, action: "repayAll", amount: "25" });
+  assert.deepEqual(approvals, [{ spender: DESTINATION, amount: ethers.MaxUint256 }]);
+  assert.equal(result.operation.amount, "25.0001");
+  assert.equal(provider.broadcasts.length, 1);
+  assert.equal(ethers.Transaction.from(provider.broadcasts[0]).data, poolInterface.encodeFunctionData("repayAll"));
+  assert.equal(context.journal.get(REQUEST_ID).status, "completed");
 });
 
 test("restart rebroadcasts the exact staged raw transaction after a crash before broadcast", async (t) => {

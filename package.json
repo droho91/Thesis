@@ -23,7 +23,7 @@
     "besu:availability-test": "node scripts/verification/qbft-fault-tolerance.mjs",
     "demo:prepare": "npm run besu:up && npm run institutional:deploy && npm run institutional:governance",
     "demo:start": "npm run demo:prepare && npm run demo:ui",
-    "demo:reset": "npm run besu:down && npm run besu:generate && npm run demo:prepare",
+    "demo:reset": "node scripts/ops/demo/reset-state.mjs --check && npm run besu:down && node scripts/ops/demo/reset-state.mjs && npm run demo:prepare",
     "demo:ui": "node scripts/ui/serve.mjs",
     "demo:doctor": "node scripts/ops/demo/doctor.mjs",
     "institutional:deploy": "node scripts/ops/besu/health.mjs && npm run compile && node scripts/ops/deployment/deploy-stack.mjs",

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
 import { readJsonIfExists, writeJsonAtomic } from "../../../services/shared/json-file.mjs";
 import { createTransactionWaiter } from "../../../services/shared/transaction-receipt.mjs";
+import { seedInitialAccounts } from "./initial-funding.mjs";
 import {
   CHAIN_A_RPC,
   CHAIN_B_RPC,
@@ -506,9 +507,33 @@ async function seedIntegrationAccounts({ chainA, chainB, users, manifest }) {
   const userA = await users.A.getAddress();
   const userB = await users.B.getAddress();
   const ownerB = manifest.accounts.B.owner;
-  await ensureMinimumBalance(chainA.canonicalToken, userA, USER_CANONICAL_SEED, "seed Bank A canonical asset");
-  await ensureMinimumBalance(chainB.debtToken, userB, USER_REPAYMENT_BALANCE_SEED, "seed Bank B repayment balance");
-  await ensureMinimumBalance(chainB.debtToken, ownerB, LENDER_LIQUIDITY_SEED, "seed Bank B lender liquidity");
+  const contracts = { A: chainA, B: chainB };
+  await seedInitialAccounts({
+    manifest,
+    allocations: [
+      { chain: "A", contract: "canonicalToken", account: userA, amount: USER_CANONICAL_SEED, label: "seed Bank A canonical asset" },
+      { chain: "B", contract: "debtToken", account: userB, amount: USER_REPAYMENT_BALANCE_SEED, label: "seed Bank B repayment balance" },
+      { chain: "B", contract: "debtToken", account: ownerB, amount: LENDER_LIQUIDITY_SEED, label: "seed Bank B lender liquidity" },
+    ],
+    readBalance: (chain, contract, account, label) => readWithTransientRpcRetry(
+      () => contracts[chain][contract].balanceOf(account), { label },
+    ),
+    mint: (chain, contract, account, amount, label) => {
+      console.log(`[institutional:deploy] initialize ${label}`);
+      return contracts[chain][contract].mint(account, amount, txOptions());
+    },
+    confirm: async (chain, contract, transaction, label) => {
+      if (typeof transaction === "string") {
+        const hash = transaction;
+        transaction = await readWithTransientRpcRetry(
+          () => contracts[chain][contract].runner.provider.getTransaction(hash), { label },
+        );
+        if (!transaction) throw new Error(`Initial funding transaction ${hash} is not found; inspect it before retrying.`);
+      }
+      await waitForTx(transaction, label);
+    },
+    persist: () => saveManifest(manifest),
+  });
 }
 
 async function deployOrAttach(context, chainKey, name, artifact, args) {
@@ -545,6 +570,7 @@ async function deployOrAttach(context, chainKey, name, artifact, args) {
     transactionHash: transaction.hash,
     deploymentBlock: null,
   };
+  if (name === "canonicalToken" || name === "debtToken") entry.initialFunding = { accounts: {} };
   chain.contracts[name] = entry;
   await saveManifest(manifest);
   const receipt = await waitForTx(transaction, `deploy ${chainKey}.${name}`);
@@ -623,12 +649,6 @@ async function ensureRole(contract, roleName, account, label) {
   const role = await readWithTransientRpcRetry(() => contract[roleName](), { label: `${label} identifier` });
   if (await readWithTransientRpcRetry(() => contract.hasRole(role, account), { label })) return;
   await txStep(label, () => contract.grantRole(role, account, txOptions()));
-}
-
-async function ensureMinimumBalance(token, account, minimum, label) {
-  const balance = BigInt(await readWithTransientRpcRetry(() => token.balanceOf(account), { label }));
-  if (balance >= minimum) return;
-  await txStep(label, () => token.mint(account, minimum - balance, txOptions()));
 }
 
 async function ensureFreshOraclePrice(oracle, asset, expectedPrice, label) {

@@ -221,6 +221,122 @@ test("completed transfer keeps a dismissible notification", async ({ page }) => 
   await expect(toast).toHaveCount(0);
 });
 
+test("repayment Max closes the full debt in one action even after the quote accrues", async ({ page }) => {
+  let current = { ...statusFixture, balances: { ...statusFixture.balances, creditAvailable: "1000" } };
+  const requests = [];
+  await page.route("**/api/status", route => route.fulfill({ json: current }));
+  await page.route("**/api/action", async route => {
+    requests.push(route.request().postDataJSON());
+    current = { ...current, balances: { ...current.balances, outstandingDebt: "0" } };
+    await route.fulfill({ json: { ok: true, operation: { action: "repayAll", status: "completed" }, status: current } });
+  });
+  await page.locator("#refreshButton").click();
+  await page.locator("#workflowTabPosition").click();
+  await page.locator("#lendingMaxButton").click();
+  await expect(page.locator("#lendingSubmit")).toHaveText("Repay full debt");
+
+  current = { ...current, balances: { ...current.balances, outstandingDebt: "200.0001" } };
+  await page.locator("#refreshButton").click();
+  await expect(page.locator("#lendingAmount")).toHaveValue("200.0001");
+  await expect(page.locator("#lendingSubmit")).toHaveAttribute("data-action", "repayAll");
+  await page.locator("#lendingAmount").fill("50");
+  await expect(page.locator("#lendingSubmit")).toHaveAttribute("data-action", "repay");
+  await page.locator("#lendingMaxButton").click();
+  await page.locator("#lendingSubmit").click();
+  await expect(page.locator("#debtBalance")).toHaveText("0");
+  await expect(page.locator("#riskHealthLabel")).toHaveText("No active debt");
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({ action: "repayAll", amount: "200.0001" });
+});
+
+test("repayment Max uses only the available wallet balance when full repayment is unaffordable", async ({ page }) => {
+  let current = { ...statusFixture, balances: { ...statusFixture.balances, creditAvailable: "100" } };
+  const requests = [];
+  await page.route("**/api/status", route => route.fulfill({ json: current }));
+  await page.route("**/api/action", async route => {
+    requests.push(route.request().postDataJSON());
+    current = { ...current, balances: { ...current.balances, outstandingDebt: "100.0001", creditAvailable: "0" } };
+    await route.fulfill({ json: { ok: true, operation: { action: "repay", status: "completed" }, status: current } });
+  });
+  await page.locator("#refreshButton").click();
+  await page.locator("#workflowTabPosition").click();
+  await page.locator("#lendingMaxButton").click();
+  await expect(page.locator("#lendingAmount")).toHaveValue("100");
+  await expect(page.locator("#lendingSubmit")).toHaveAttribute("data-action", "repay");
+  await expect(page.locator("#lendingMessage")).toContainText("Add bCASH to repay in full");
+  await page.locator("#refreshButton").click();
+  await expect(page.locator("#lendingMessage")).toContainText("Add bCASH to repay in full");
+  await page.locator("#lendingAmount").fill("50");
+  await expect(page.locator("#lendingMessage")).toBeEmpty();
+  await page.locator("#lendingMaxButton").click();
+  await page.locator("#lendingSubmit").click();
+  await expect(page.locator("#lendingSubmit")).toBeDisabled();
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({ action: "repay", amount: "100" });
+});
+
+test("repayment Max blocks an unaffordable accrued balance and editing restores partial repayment", async ({ page }) => {
+  let current = { ...statusFixture, balances: { ...statusFixture.balances, creditAvailable: "200.00005" } };
+  await page.route("**/api/status", route => route.fulfill({ json: current }));
+  await page.locator("#refreshButton").click();
+  await page.locator("#workflowTabPosition").click();
+  await page.locator("#lendingMaxButton").click();
+  await expect(page.locator("#lendingSubmit")).toBeEnabled();
+  current = { ...current, balances: { ...current.balances, outstandingDebt: "200.0001" } };
+  await page.locator("#refreshButton").click();
+  await expect(page.locator("#lendingSubmit")).toHaveAttribute("data-action", "repayAll");
+  await expect(page.locator("#lendingSubmit")).toBeDisabled();
+  await expect(page.locator("#lendingSubmit")).toHaveAttribute("title", /insufficient/);
+  await page.locator("#lendingAmount").fill("50");
+  await expect(page.locator("#lendingSubmit")).toHaveAttribute("data-action", "repay");
+  await expect(page.locator("#lendingSubmit")).toBeEnabled();
+  await page.locator("#lendingMaxButton").click();
+  await expect(page.locator("#lendingSubmit")).toHaveAttribute("data-action", "repay");
+  await expect(page.locator("#lendingAmount")).toHaveValue("200.00005");
+});
+
+test("confirmed repayment history releases a stale retry before a new debt is repaid", async ({ page }) => {
+  const staleRequestId = "request-repayment-old-complete";
+  const completed = { requestId: staleRequestId, action: "repayAll", amount: "100", status: "completed" };
+  let current = {
+    ...statusFixture,
+    balances: { ...statusFixture.balances, creditAvailable: "1000" },
+    activity: { latest: completed, history: [completed] },
+  };
+  await page.evaluate(request => sessionStorage.setItem("institutional-request:repayAll", JSON.stringify(request)), completed);
+  const requests = [];
+  await page.route("**/api/status", route => route.fulfill({ json: current }));
+  await page.route("**/api/action", async route => {
+    const request = route.request().postDataJSON();
+    requests.push(request);
+    current = { ...current, balances: { ...current.balances, outstandingDebt: "0" } };
+    await route.fulfill({ json: { ok: true, operation: { ...request, status: "completed" }, status: current } });
+  });
+  await page.locator("#refreshButton").click();
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("institutional-request:repayAll"))).toBeNull();
+  await page.locator("#workflowTabPosition").click();
+  await page.locator("#lendingMaxButton").click();
+  await page.locator("#lendingSubmit").click();
+  await expect(page.locator("#debtBalance")).toHaveText("0");
+  expect(requests).toHaveLength(1);
+  expect(requests[0].requestId).not.toBe(staleRequestId);
+  expect(requests[0]).toMatchObject({ action: "repayAll", amount: "200" });
+});
+
+test("outstanding debt retains the borrowed principal when accrued interest is below display precision", async ({ page }) => {
+  const current = { ...statusFixture, balances: { ...statusFixture.balances, outstandingDebt: "2100.00001", creditAvailable: "2200" } };
+  await page.route("**/api/status", route => route.fulfill({ json: current }));
+  await page.locator("#refreshButton").click();
+  await expect(page.locator("#debtBalance")).toHaveText("2,100.0000…");
+  await page.locator("#workflowTabPosition").click();
+  await page.locator("#lendingMaxButton").click();
+  await expect(page.locator("#lendingAmount")).toHaveValue("2100.00001");
+  await expect(page.locator("#lendingSubmit")).toHaveText("Repay full debt");
+  await expectNoAccessibilityViolations(page, "Debt with sub-precision accrued interest");
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+  expect(overflow).toBe(false);
+});
+
 test("shared type roles use bundled fonts across views", async ({ page }) => {
   for (const weight of [400,500,600]) {
     expect(await page.evaluate(async w => (await document.fonts.load(`${w} 16px "Nunito"`)).length,weight)).toBeGreaterThan(0);

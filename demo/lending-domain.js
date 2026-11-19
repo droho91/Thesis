@@ -60,13 +60,13 @@ export function isSmallBalance(status) {
   return debt > 0n && debt < SMALL_BALANCE_THRESHOLD;
 }
 
-export function canRepaySmallBalance(status) {
-  return isSmallBalance(status)
-    && tokenUnits(status?.balances?.creditAvailable) >= tokenUnits(status?.balances?.outstandingDebt);
+export function canRepayDebt(status) {
+  const debt = tokenUnits(status?.balances?.outstandingDebt);
+  return debt > 0n && tokenUnits(status?.balances?.creditAvailable) >= debt;
 }
 
-export function lendingSubmissionAction(mode, status) {
-  return mode === "repay" && canRepaySmallBalance(status) ? "repayAll" : mode;
+export function lendingSubmissionAction(mode, { repayFullDebt = false } = {}) {
+  return mode === "repay" && repayFullDebt ? "repayAll" : mode;
 }
 
 export function validateAction(action, rawValue, status) {
@@ -84,8 +84,8 @@ export function validateAction(action, rawValue, status) {
     return invalid("Collateral withdrawal is paused by risk governance.");
   }
   if (action === "repayAll") {
-    if (!isSmallBalance(status)) return invalid("The remaining debt is above the exact small-balance repayment threshold.");
-    if (!canRepaySmallBalance(status)) return invalid("Wallet bCASH balance is insufficient to repay the complete debt.");
+    if (tokenUnits(status?.balances?.outstandingDebt) === 0n) return invalid("No outstanding debt remains.");
+    if (!canRepayDebt(status)) return invalid("Wallet bCASH balance is insufficient to repay the complete debt.");
     return { ok: true, value: status.balances.outstandingDebt, message: "" };
   }
 

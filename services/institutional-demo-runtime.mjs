@@ -207,7 +207,8 @@ export class InstitutionalDemoRuntime {
             existing,
           );
         }
-        if (request?.amount != null && String(request.amount).trim() !== "") {
+        // repayAll binds the request to closing the debt, not to a stale UI quote.
+        if (action !== "repayAll" && request?.amount != null && String(request.amount).trim() !== "") {
           let requestedAmount;
           try {
             requestedAmount = parseActionAmount(request.amount);
@@ -674,7 +675,8 @@ export class InstitutionalDemoRuntime {
       this.activeOperation.stage = "repaying-credit";
       transactionRequest = await pool.repay.populateTransaction(amount, TX_OPTIONS);
     } else if (action === "repayAll") {
-      await ensureAllowance(context.contracts.debtTokenB, await pool.getAddress(), context.manifest.accounts.B.user, amount);
+      const walletBalance = await context.contracts.debtTokenB.balanceOf(context.manifest.accounts.B.user);
+      await ensureAllowance(context.contracts.debtTokenB, await pool.getAddress(), context.manifest.accounts.B.user, walletBalance);
       this.activeOperation.stage = "repaying-complete-balance";
       transactionRequest = await pool.repayAll.populateTransaction(TX_OPTIONS);
     } else if (action === "withdraw") {

@@ -10,7 +10,7 @@
 | `npm run besu:health` | Kiểm tra validator, peer và block. |
 | `npm run besu:up` | Khởi động các node Besu. |
 | `docker compose -f networks/besu/docker-compose.yml stop` | Dừng node, giữ dữ liệu. |
-| `npm run demo:reset` | Xóa dữ liệu chain và tạo lại deployment. |
+| `npm run demo:reset` | Xóa chain, lịch sử demo và tạo lại deployment; dừng UI trước. |
 | `npm run compile` | Biên dịch hợp đồng. |
 | `npm test` | Test hợp đồng, service và liên kết thành phần UI; bao gồm invariant. |
 | `npm run test:browser` | Test UI desktop, không chụp ảnh. |

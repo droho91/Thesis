@@ -37,3 +37,13 @@ test("health ratio rendering uses scaled integers", () => {
   assert.equal(tokenRatioMeterPercent("1.5"), 66);
   assert.equal(tokenRatioMeterPercent(formatTokenUnits(TOKEN_SCALE * 100n)), 100);
 });
+
+test("tiny accrued fractions preserve the whole balance at each display precision", () => {
+  assert.equal(compactTokenAmount("2100.00001"), "2,100.0000…");
+  assert.equal(compactTokenAmount("100.000000000000000001"), "100.0000…");
+  assert.equal(compactTokenAmount("9007199254740993.000000000000000001"), "9,007,199,254,740,993.0000…");
+  assert.equal(compactTokenAmount("2100.00001", { maximumFractionDigits: 2 }), "2,100.00…");
+  assert.equal(compactTokenAmount("0.00001"), "<0.0001");
+  assert.equal(compactTokenAmount("2100"), "2,100");
+  assert.equal(compactTokenAmount("2100.0001"), "2,100.0001");
+});

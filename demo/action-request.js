@@ -26,21 +26,29 @@ export function createActionRequestStore({
   }
   const volatileIntents = new Map();
 
+  function readIntent(action) {
+    try {
+      const persisted = parsePersistedIntent(getStorage()?.getItem(`${keyPrefix}${action}`));
+      if (persisted) return persisted;
+    } catch {
+      // The in-memory intent remains authoritative when storage is unavailable.
+    }
+    return volatileIntents.get(action);
+  }
+
+  function clear(action) {
+    volatileIntents.delete(action);
+    try {
+      getStorage()?.removeItem(`${keyPrefix}${action}`);
+    } catch {
+      // The in-memory entry is still cleared even when storage is disabled.
+    }
+  }
+
   return Object.freeze({
     get(action, amount) {
       const requested = requireRequestedIntent(action, amount);
-      const key = `${keyPrefix}${action}`;
-      const volatileIntent = volatileIntents.get(action);
-      let storage = null;
-      let persistedIntent = null;
-      try {
-        storage = getStorage();
-        persistedIntent = parsePersistedIntent(storage?.getItem(key));
-      } catch {
-        // Volatile intent handling below remains authoritative when browser
-        // storage is disabled or unavailable.
-      }
-      const existing = persistedIntent || volatileIntent;
+      const existing = readIntent(action);
       if (existing) {
         assertSameIntent(existing, requested);
         volatileIntents.set(action, existing);
@@ -51,18 +59,20 @@ export function createActionRequestStore({
       // Retain the complete intent before a storage write that may throw.
       volatileIntents.set(action, created);
       try {
-        storage?.setItem(key, JSON.stringify(created));
+        getStorage()?.setItem(`${keyPrefix}${action}`, JSON.stringify(created));
       } catch {
         // The complete intent is already retained in memory.
       }
       return structuredClone(created);
     },
-    clear(action) {
-      volatileIntents.delete(action);
-      try {
-        getStorage()?.removeItem(`${keyPrefix}${action}`);
-      } catch {
-        // The in-memory entry is still cleared even when storage is disabled.
+    clear,
+    reconcile(operations) {
+      for (const operation of operations) {
+        if (!FINAL_OPERATION_STATES.has(operation?.status) || !validAction(operation.action) || !validRequestId(operation.requestId)) continue;
+        const intent = readIntent(operation.action);
+        if (intent && intent.requestId === operation.requestId && intent.action === operation.action) {
+          clear(operation.action);
+        }
       }
     },
   });
@@ -122,7 +132,8 @@ function parsePersistedIntent(value) {
 }
 
 function assertSameIntent(existing, requested) {
-  if (existing.action !== requested.action || existing.amount !== requested.amount) {
+  // Full repayment follows the accrued debt; its displayed quote may change on retry.
+  if (existing.action !== requested.action || (existing.action !== "repayAll" && existing.amount !== requested.amount)) {
     throw new ActionRequestIntentConflictError(existing);
   }
 }

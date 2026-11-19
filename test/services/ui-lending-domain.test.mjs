@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   LENDING_MODES,
-  canRepaySmallBalance,
+  canRepayDebt,
   healthPresentation,
   isSmallBalance,
   lendingSubmissionAction,
@@ -47,21 +47,24 @@ test("lending modes derive exact on-chain limits", () => {
   assert.equal(Object.isFrozen(LENDING_MODES.deposit), true);
 });
 
-test("small balances select exact repayment without floating-point tolerance", () => {
+test("full repayment requires an explicit intent and sufficient exact wallet balance", () => {
   const repayable = status({
     balances: { outstandingDebt: "0.009999999999999999", creditAvailable: "0.01" },
   });
   assert.equal(isSmallBalance(repayable), true);
-  assert.equal(canRepaySmallBalance(repayable), true);
-  assert.equal(lendingSubmissionAction("repay", repayable), "repayAll");
+  assert.equal(canRepayDebt(repayable), true);
+  assert.equal(lendingSubmissionAction("repay"), "repay");
+  assert.equal(lendingSubmissionAction("repay", { repayFullDebt: true }), "repayAll");
+  assert.equal(lendingSubmissionAction("deposit", { repayFullDebt: true }), "deposit");
 
   const threshold = status({ balances: { outstandingDebt: "0.01", creditAvailable: "1" } });
   assert.equal(isSmallBalance(threshold), false);
-  assert.equal(lendingSubmissionAction("repay", threshold), "repay");
+  assert.equal(canRepayDebt(threshold), true);
 
   const insufficient = status({ balances: { outstandingDebt: "0.009", creditAvailable: "0.008" } });
-  assert.equal(canRepaySmallBalance(insufficient), false);
-  assert.equal(lendingSubmissionAction("repay", insufficient), "repay");
+  assert.equal(canRepayDebt(insufficient), false);
+  assert.equal(canRepayDebt(status({ balances: { outstandingDebt: "0" } })), false);
+  assert.equal(validateAction("repay", "0.001", repayable).value, "0.001");
   assert.equal(tokenUnits("0.000000000000000001"), 1n);
   assert.equal(tokenUnits("invalid"), 0n);
 });
@@ -137,11 +140,14 @@ test("debt and collateral block withdrawal and settlement with precise guidance"
   );
 });
 
-test("exact small-balance repayment returns the complete recorded debt", () => {
-  const aboveThreshold = status({ balances: { outstandingDebt: "0.01", creditAvailable: "1" } });
+test("full repayment accepts any debt size and rejects zero or insufficient funds", () => {
+  for (const debt of ["0.000000000000000001", "0.009", "0.01", "100.000000000000000001"]) {
+    const payable = status({ balances: { outstandingDebt: debt, creditAvailable: "101" } });
+    assert.deepEqual(validateAction("repayAll", "", payable), { ok: true, value: debt, message: "" });
+  }
   assert.equal(
-    validateAction("repayAll", "", aboveThreshold).message,
-    "The remaining debt is above the exact small-balance repayment threshold.",
+    validateAction("repayAll", "", status({ balances: { outstandingDebt: "0" } })).message,
+    "No outstanding debt remains.",
   );
 
   const insufficient = status({ balances: { outstandingDebt: "0.009", creditAvailable: "0.008" } });
@@ -156,6 +162,7 @@ test("exact small-balance repayment returns the complete recorded debt", () => {
     value: "0.0090",
     message: "",
   });
+  assert.equal(validateAction("repayAll", "", status({ risk: { accrualCatchUpRequired: true } })).ok, false);
 });
 
 test("health presentation covers no-debt, danger, caution and healthy states", () => {

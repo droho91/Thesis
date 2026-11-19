@@ -4,6 +4,7 @@ import {
 } from "./action-request.js";
 import {
   LENDING_MODES,
+  canRepayDebt,
   healthPresentation,
   isSmallBalance,
   lendingSubmissionAction,
@@ -54,6 +55,7 @@ let currentStatus = null;
 let currentEvidence = null;
 let currentTab = "identity";
 let lendingMode = "deposit";
+let repayFullDebt = false;
 let busyAction = null;
 let refreshTimer = null;
 let evidenceRefreshedAt = 0;
@@ -142,7 +144,7 @@ function bindForms() {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const action = form === element("lendingForm")
-        ? lendingSubmissionAction(lendingMode, currentStatus)
+        ? lendingSubmissionAction(lendingMode, { repayFullDebt })
         : form.dataset.operationForm;
       const input = form.querySelector("input[name='amount']");
       await submitAction(action, input?.value, form);
@@ -151,9 +153,8 @@ function bindForms() {
   document.querySelectorAll(".amount-input input").forEach((input) => {
     input.addEventListener("input", () => {
       input.dataset.dirty = "true";
-      if (input.getAttribute("aria-invalid") === "true") {
-        setFormMessage(input.closest("form"), "");
-      }
+      if (input.id === "lendingAmount") repayFullDebt = false;
+      setFormMessage(input.closest("form"), "");
       renderAvailability();
     });
   });
@@ -165,8 +166,13 @@ function bindControls() {
     refreshFormalEvidence({ announceError: true }),
   ]));
   element("lendingMaxButton").addEventListener("click", () => {
+    setFormMessage(element("lendingForm"), "");
+    repayFullDebt = lendingMode === "repay" && canRepayDebt(currentStatus);
     setInputAmount(element("lendingAmount"), LENDING_MODES[lendingMode].limit(currentStatus), true);
     renderAvailability();
+    if (lendingMode === "repay" && !repayFullDebt && tokenUnits(currentStatus?.balances?.outstandingDebt) > 0n) {
+      setFormMessage(element("lendingForm"), "Wallet balance covers only part of the debt. Add bCASH to repay in full.");
+    }
   });
   document.querySelectorAll("[data-fill]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -353,6 +359,7 @@ function renderStatus(status) {
     renderUnavailable(status);
     return;
   }
+  actionRequests.reconcile([status.activity?.latest, ...(status.activity?.history || [])]);
   renderOverview(status);
   renderIdentity(status);
   renderRoute(status);
@@ -362,7 +369,6 @@ function renderStatus(status) {
   renderJourney(status);
   renderOperationProgress(status);
 
-  renderAvailability();
   primeEmptyInputs(status);
 }
 
@@ -800,6 +806,7 @@ function renderJourney(status) {
 }
 
 function renderAvailability() {
+  const lendingAction = renderLendingAction();
   const laneReady = Boolean(currentStatus?.laneReady);
   setSemanticDisabled(element("lendingMaxButton"), !laneReady || Boolean(busyAction));
   document.querySelectorAll("[data-fill]").forEach((button) => {
@@ -815,7 +822,7 @@ function renderAvailability() {
   const bridge = validateAction("bridge", element("bridgeAmount").value, currentStatus);
   const settlement = validateAction("return", element("returnAmount").value, currentStatus);
   const lending = validateAction(
-    lendingSubmissionAction(lendingMode, currentStatus),
+    lendingAction,
     element("lendingAmount").value,
     currentStatus,
   );
@@ -867,9 +874,9 @@ function updateSubmit(button, validation) {
 
 function setLendingMode(mode, { primeAmount = false } = {}) {
   if (!LENDING_MODES[mode]) return;
+  if (mode !== lendingMode) repayFullDebt = false;
   lendingMode = mode;
   const config = LENDING_MODES[mode];
-  const submitAction = lendingSubmissionAction(mode, currentStatus);
   document.querySelectorAll("[data-lending-mode]").forEach((button) => {
     const active = button.dataset.lendingMode === mode;
     button.classList.toggle("is-active", active);
@@ -881,21 +888,33 @@ function setLendingMode(mode, { primeAmount = false } = {}) {
   element("lendingForm").dataset.operationForm = mode;
   setText("lendingAmountLabel", config.label);
   setText("lendingUnit", config.unit);
+  if (primeAmount) setInputAmount(element("lendingAmount"), config.limit(currentStatus), true);
+  if (primeAmount) setFormMessage(element("lendingForm"), "");
+
+  renderAvailability();
+  syncWorkflowTabState();
+  if (currentStatus?.runtimeReadable) renderJourney(currentStatus);
+}
+
+function renderLendingAction() {
+  const config = LENDING_MODES[lendingMode];
+  if (currentStatus?.runtimeReadable && tokenUnits(currentStatus.balances?.outstandingDebt) === 0n) repayFullDebt = false;
+  const submitAction = lendingSubmissionAction(lendingMode, { repayFullDebt });
+  if (repayFullDebt && currentStatus?.runtimeReadable) {
+    setInputAmount(element("lendingAmount"), currentStatus.balances.outstandingDebt, true);
+  }
   setText("lendingLimitLabel", submitAction === "repayAll" ? "Exact outstanding balance" : config.limitLabel);
   setText(
     "lendingLimit",
     `${compactAmount(submitAction === "repayAll" ? currentStatus?.balances?.outstandingDebt : config.limit(currentStatus))} ${config.unit}`,
   );
   const submit = element("lendingSubmit");
-  submit.dataset.action = submitAction;
-  submit.innerHTML = `<i data-lucide="${submitAction === "repayAll" ? "circle-dollar-sign" : config.icon}"></i><span>${submitAction === "repayAll" ? "Repay full balance" : config.button}</span>`;
-  if (primeAmount) setInputAmount(element("lendingAmount"), config.limit(currentStatus), true);
-  setFormMessage(element("lendingForm"), "");
-  window.lucide?.createIcons();
-
-  renderAvailability();
-  syncWorkflowTabState();
-  if (currentStatus?.runtimeReadable) renderJourney(currentStatus);
+  if (submit.dataset.action !== submitAction) {
+    submit.dataset.action = submitAction;
+    submit.innerHTML = `<i data-lucide="${submitAction === "repayAll" ? "circle-dollar-sign" : config.icon}"></i><span>${submitAction === "repayAll" ? "Repay full debt" : config.button}</span>`;
+    window.lucide?.createIcons();
+  }
+  return submitAction;
 }
 
 function primeEmptyInputs(status) {
@@ -910,7 +929,7 @@ function primeEmptyInputs(status) {
       setInputAmount(input, value, false);
     }
   });
-  setLendingMode(lendingMode);
+  renderAvailability();
 }
 
 function openTab(tab, { focusTab = false } = {}) {
